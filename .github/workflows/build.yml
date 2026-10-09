@@ -36,7 +36,15 @@ jobs:
         run: node node_modules/electron/install.js
       - run: npm run setup:engine
       - run: npm run typecheck
-      - run: npm test
+      - name: Unit tests
+        shell: bash
+        # On failure, the failing tests are also posted as an annotation (readable without opening the log).
+        run: |
+          npm test > test.log 2>&1 && exit 0
+          cat test.log
+          MSG=$(grep -E "✖|Error|expected|actual|not ok|AssertionError|at .*test\.mjs" test.log | head -80 | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Unit tests failed::$MSG"
+          exit 1
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: npx electron-vite build && npx electron-builder --win --publish ${{ env.PUBLISH }}
