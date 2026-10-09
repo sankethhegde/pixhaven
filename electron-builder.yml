@@ -1,0 +1,105 @@
+appId: com.clearup.app
+productName: PixHaven
+copyright: Copyright © 2026 Sanketha R Hegade
+directories:
+  output: dist
+  buildResources: build
+# Note: a platform's "files" list replaces this one (it is not merged), so each platform repeats the base list.
+files:
+  - out/**
+  - package.json
+  - "!**/*.map"
+  - "!node_modules/@tesseract.js-data/**"          # language data ships in resources/ocr
+  - "!node_modules/onnxruntime-node/bin/**/darwin/**"
+  - "!node_modules/onnxruntime-node/bin/**/arm64/**"
+  - "!node_modules/tesseract.js-core/*.wasm.js"   # browser-only copies
+asarUnpack:
+  - "**/node_modules/sharp/**/*"
+  - "**/node_modules/@img/**/*"
+  - "**/node_modules/onnxruntime-node/**/*"
+  - "**/node_modules/onnxruntime-common/**/*"
+  - "**/node_modules/tesseract.js/**/*"
+  - "**/node_modules/tesseract.js-core/**/*"
+  - "out/main/sort-worker-*.js"
+extraResources:
+  - from: resources/models          # Fast model + face models only; quality models download on first use
+    to: models
+  - from: resources/ocr
+    to: ocr
+  - from: resources/geo             # offline place names (GeoNames, CC BY 4.0)
+    to: geo
+  - from: resources/licences
+    to: licences
+  - from: resources/icon.png
+    to: icon.png
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+  signAndEditExecutable: true
+  files:
+    - out/**
+    - package.json
+    - "!**/*.map"
+    - "!node_modules/@tesseract.js-data/**"
+    - "!node_modules/onnxruntime-node/bin/**/darwin/**"
+    - "!node_modules/onnxruntime-node/bin/**/arm64/**"
+    - "!node_modules/tesseract.js-core/*.wasm.js"
+    - "!node_modules/onnxruntime-node/bin/**/linux/**"
+    - "!node_modules/@img/sharp-*linux*/**"
+  extraResources:
+    - from: resources/bin/win
+      to: bin/win
+  extraFiles:
+    - from: build/cli/pixhaven.cmd     # command line: "pixhaven --help" from the install folder
+      to: pixhaven.cmd
+nsis:
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: PixHaven
+  artifactName: PixHaven-Setup-${version}.exe
+  uninstallDisplayName: PixHaven
+  deleteAppDataOnUninstall: false
+  include: build/installer.nsh
+
+# Linux packages must be built on Linux (WSL, or the GitHub Actions workflow in .github/workflows/build.yml).
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  icon: build/icon.png
+  category: Graphics
+  synopsis: Offline AI photo upscaler and organiser
+  description: Upscale photos with AI, sort them by person, date or place, and find duplicate or blurry shots. Fully offline.
+  maintainer: Sanketha R Hegade
+  executableName: pixhaven
+  artifactName: PixHaven-${version}-${arch}.${ext}
+  files:
+    - out/**
+    - package.json
+    - "!**/*.map"
+    - "!node_modules/@tesseract.js-data/**"
+    - "!node_modules/onnxruntime-node/bin/**/darwin/**"
+    - "!node_modules/onnxruntime-node/bin/**/arm64/**"
+    - "!node_modules/tesseract.js-core/*.wasm.js"
+    - "!node_modules/onnxruntime-node/bin/**/win32/**"
+    - "!node_modules/@img/sharp-win32*/**"
+  extraResources:
+    - from: resources/bin/linux
+      to: bin/linux
+deb:
+  depends: [libvulkan1, unzip, perl]          # perl: ExifTool (writing labels into files)
+  recommends: [mesa-vulkan-drivers]
+
+# Auto-update: add your GitHub repo to switch it on, e.g.
+# publish:
+#   provider: github
+#   owner: <your-github-user>
+#   repo: clearup
+npmRebuild: false

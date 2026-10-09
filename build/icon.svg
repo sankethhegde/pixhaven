@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- PixHaven: a round, glowing badge — an arched "haven" window holding a sunset photo, with AI sparkles. -->
+  <defs>
+    <radialGradient id="bg" cx="0.34" cy="0.28" r="0.85">
+      <stop offset="0" stop-color="#9b6bff"/>
+      <stop offset="0.45" stop-color="#5a2fe0"/>
+      <stop offset="1" stop-color="#1e0f5c"/>
+    </radialGradient>
+    <linearGradient id="glow" x1="0.2" y1="0.1" x2="0.9" y2="1">
+      <stop offset="0.55" stop-color="#ff4fa3" stop-opacity="0"/>
+      <stop offset="1" stop-color="#ff4fa3" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffe7a3"/>
+      <stop offset="0.5" stop-color="#ffb347"/>
+      <stop offset="1" stop-color="#ff5fa2"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd6a8"/>
+      <stop offset="0.55" stop-color="#ff8fb3"/>
+      <stop offset="1" stop-color="#b36bff"/>
+    </linearGradient>
+    <linearGradient id="hill1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6a3df0"/>
+      <stop offset="1" stop-color="#3a1aa8"/>
+    </linearGradient>
+    <linearGradient id="hill2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b1d9e"/>
+      <stop offset="1" stop-color="#22105f"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fff6d6"/>
+      <stop offset="0.6" stop-color="#ffd166"/>
+      <stop offset="1" stop-color="#ff9f43"/>
+    </radialGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="disc"><circle cx="256" cy="256" r="236"/></clipPath>
+    <clipPath id="window"><path d="M166 384V258a90 90 0 0 1 180 0v126z"/></clipPath>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="10"/></filter>
+  </defs>
+
+  <!-- disc, warm glow, rim -->
+  <circle cx="256" cy="256" r="246" fill="url(#rim)"/>
+  <circle cx="256" cy="256" r="236" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="236" fill="url(#glow)"/>
+  <circle cx="256" cy="256" r="218" fill="none" stroke="#ffffff" stroke-opacity="0.16" stroke-width="3"/>
+
+  <!-- the haven: an arched window with a sunset photo inside -->
+  <path d="M166 384V258a90 90 0 0 1 180 0v126z" fill="#1a0b4d" opacity="0.45" transform="translate(6 10)" filter="url(#soft)"/>
+  <g clip-path="url(#window)">
+    <rect x="160" y="160" width="192" height="230" fill="url(#sky)"/>
+    <circle cx="282" cy="262" r="34" fill="url(#sun)"/>
+    <path d="M150 330l60-58 40 34 44-46 74 70v70H150z" fill="url(#hill1)"/>
+    <path d="M150 352l52-30 48 28 50-36 62 44v40H150z" fill="url(#hill2)"/>
+  </g>
+  <path d="M166 384V258a90 90 0 0 1 180 0v126z" fill="none" stroke="#ffffff" stroke-width="14" stroke-linejoin="round"/>
+  <rect x="140" y="378" width="232" height="22" rx="11" fill="#ffffff"/>
+
+  <!-- AI sparkles -->
+  <path d="M378 118c6 34 22 50 56 56-34 6-50 22-56 56-6-34-22-50-56-56 34-6 50-22 56-56z" fill="#ffd166" filter="url(#soft)" opacity="0.7"/>
+  <path d="M378 118c6 34 22 50 56 56-34 6-50 22-56 56-6-34-22-50-56-56 34-6 50-22 56-56z" fill="#fff8e1"/>
+  <path d="M136 152c3 17 11 25 28 28-17 3-25 11-28 28-3-17-11-25-28-28 17-3 25-11 28-28z" fill="#ffffff" opacity="0.9"/>
+  <circle cx="420" cy="252" r="7" fill="#ffffff" opacity="0.75"/>
+
+  <!-- glassy highlight -->
+  <g clip-path="url(#disc)">
+    <ellipse cx="236" cy="96" rx="190" ry="96" fill="url(#shine)"/>
+  </g>
+</svg>

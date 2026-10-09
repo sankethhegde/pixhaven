@@ -1,0 +1,15 @@
+node_modules/
+out/
+dist/
+vendor/
+resources/bin/
+resources/models/
+resources/models-quality/
+resources/ocr/
+resources/geo/
+phase0/node_modules/
+phase0/testphotos/
+phase0/out/
+tests/.build/
+e2e-output/
+*.tsbuildinfo

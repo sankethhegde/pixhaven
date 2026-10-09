@@ -1,0 +1,3 @@
+Place names: GeoNames (https://www.geonames.org/), "cities15000" and "countryInfo" data.
+Licensed under the Creative Commons Attribution 4.0 License: https://creativecommons.org/licenses/by/4.0/
+ClearUp uses a reduced copy (name, country, position, population) for offline place lookup.

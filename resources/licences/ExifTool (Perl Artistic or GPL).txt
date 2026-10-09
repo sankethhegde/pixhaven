@@ -1,0 +1,8 @@
+ExifTool by Phil Harvey — https://exiftool.org
+Packaged by the exiftool-vendored project (https://github.com/photostructure/exiftool-vendored.js), version 13.59.3.
+
+This is free software; you can redistribute it and/or modify it under the same terms as Perl itself:
+either the Artistic License (https://dev.perl.org/licenses/artistic.html) or the GNU General Public License
+(https://www.gnu.org/licenses/gpl-1.0.html), at your option.
+
+The Windows build bundles a Perl runtime (Strawberry Perl), distributed under the same terms as Perl.
