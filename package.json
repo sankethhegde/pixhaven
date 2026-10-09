@@ -21,7 +21,8 @@
     "e2e:player": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-player.mjs e2e-output/player",
     "e2e:tags": "electron-vite build && node scripts/run-e2e-tags.mjs",
     "e2e:watch": "electron-vite build && node scripts/run-e2e-watch.mjs",
-    "test:scale": "node tests/index-scale.mjs"
+    "test:scale": "node tests/index-scale.mjs",
+    "release": "npm run typecheck && electron-vite build && electron-builder --win --publish always"
   },
   "dependencies": {
     "@tesseract.js-data/eng": "^1.0.0",

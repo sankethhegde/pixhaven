@@ -97,9 +97,11 @@ deb:
   depends: [libvulkan1, unzip, perl]          # perl: ExifTool (writing labels into files)
   recommends: [mesa-vulkan-drivers]
 
-# Auto-update: add your GitHub repo to switch it on, e.g.
-# publish:
-#   provider: github
-#   owner: <your-github-user>
-#   repo: clearup
+# Auto-update (electron-updater): installed copies check GitHub Releases of this repo 15 s after start.
+# Releases are made as drafts (tag v<version> on GitHub, or `npm run release` with GH_TOKEN) and go live on Publish.
+publish:
+  provider: github
+  owner: sankethhegde
+  repo: pixhaven
+  releaseType: draft
 npmRebuild: false

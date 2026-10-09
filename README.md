@@ -10,8 +10,7 @@ The media library browses every drive showing only photos and videos, with thumb
 and every common video format (bundled FFmpeg), plays every video, and keeps labels, star ratings and playlists for
 photos and videos; watched folders are indexed in the background. There is a command line too. Nothing is uploaded.
 
-Status: **Phases 0–5, v2.0 Phases A (Browse), B (Play), C (Labels and stars) and v2.1 (watched folders and polish) done.** Renamed from ClearUp to **PixHaven** in 0.6.0 (new round icon). Not done: code signing and landing page (skipped by choice); auto-update is wired but
-needs a GitHub repo; Linux packages must be built on Linux (WSL or the GitHub Actions workflow).
+Status: **Phases 0–5, v2.0 Phases A (Browse), B (Play), C (Labels and stars) and v2.1 (watched folders and polish) done.** Renamed from ClearUp to **PixHaven** in 0.6.0 (new round icon). Not done: code signing and landing page (skipped by choice); auto-update is on (GitHub Releases); Linux packages must be built on Linux (WSL or the GitHub Actions workflow).
 
 ## Setup
 
@@ -172,10 +171,24 @@ Explorer menu become PixHaven, and on first start `%APPDATA%ClearUp` (settings, 
 watched-folder index) moves to `%APPDATA%PixHaven`. Label exports made by ClearUp still import. Internal names stay
 as they were: the `clearup://` scheme, `.clearup` undo logs in sorted folders (so earlier sorts can still be undone).
 
-## Switching on auto-update
+## Releases and auto-update
 
-Create a GitHub repo, uncomment `publish:` in `electron-builder.yml` with your owner/repo, then publish a release
-with `GH_TOKEN=<token> npx electron-builder --win --publish always`. Installed copies check 15 s after start.
+Auto-update is on: installed copies (0.6.0 and later) check the GitHub Releases of
+[sankethhegde/pixhaven](https://github.com/sankethhegde/pixhaven) 15 s after start, download a newer version in the
+background and install it when PixHaven closes (Settings → Updates shows the state; "Restart and update" installs at once).
+
+To release a new version:
+
+1. Raise `"version"` in `package.json` (e.g. 0.6.1), commit and push.
+2. Tag it and push the tag: `git tag v0.6.1` then `git push origin v0.6.1`.
+3. GitHub Actions builds and tests Windows and Linux and uploads the installers to a **draft** release.
+4. On GitHub → Releases, check the draft, write what changed, and press **Publish release**. Installed copies pick it
+   up from then on. (Drafts are never offered as updates.)
+
+From this laptop instead of GitHub Actions: `set GH_TOKEN=<a token with "repo" access>` then `npm run release`
+(Windows installer only, also as a draft).
+
+The repository is public: update checks need no token. Making it private would stop updates from reaching installed copies.
 
 ## Known limits
 
