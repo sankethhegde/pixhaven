@@ -163,7 +163,7 @@ test('stars and labels written into files and sidecars, and cleaned again (TAG-0
   const m = await readTags(EXIFTOOL, mp4);
   assert.equal(m.rating, 4); assert.deepEqual(m.subject.sort(), ['Family', 'Goa 2024']);
   assert.equal(m.msRating, 75, 'Windows Explorer rating'); assert.deepEqual(m.category.sort(), ['Family', 'Goa 2024']);
-  assert.equal(Math.round(fs.statSync(mp4).mtimeMs / 1000), Math.round(mtime / 1000), 'file date kept');
+  assert.ok(Math.abs(fs.statSync(mp4).mtimeMs - mtime) < 2000, 'file date kept (to the second: ExifTool on Linux keeps whole seconds)');
   assert.deepEqual((await readTags(EXIFTOOL, path.join(dir, 'party.xmp'))).subject, ['Goa 2024']);
   assert.deepEqual((await readTags(EXIFTOOL, jpg)).subject.sort(), ['FromLightroom', 'Goa 2024']);
   // The file changed, but it is still recognised (new fingerprint stored).
