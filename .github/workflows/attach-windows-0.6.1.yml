@@ -1,0 +1,36 @@
+# One-off repair: the published 0.6.1 release is missing its Windows files (they went to a second draft when the
+# tag was re-made). Builds the Windows installer from the v0.6.1 commit and attaches it, replacing the stray blockmap.
+# Runs once when this file is pushed; delete the file afterwards.
+name: attach-windows-0.6.1
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/attach-windows-0.6.1.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  attach:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v0.6.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node node_modules/electron/install.js
+      - run: npm run setup:engine
+      - run: npx electron-vite build && npx electron-builder --win --publish never
+      - name: Attach to the published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -la dist
+          gh release upload v0.6.1 dist/PixHaven-Setup-0.6.1.exe dist/PixHaven-Setup-0.6.1.exe.blockmap dist/latest.yml --clobber --repo ${{ github.repository }}
+          gh release view v0.6.1 --repo ${{ github.repository }} --json assets --jq '.assets[].name'
