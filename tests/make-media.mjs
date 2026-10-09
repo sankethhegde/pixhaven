@@ -51,9 +51,13 @@ async function fetchRaw(dir) {
       console.log('Downloading', url);
       const res = await fetch(`https://raw.pixls.us/data/${url}`);
       if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
-      fs.writeFileSync(local, Buffer.from(await res.arrayBuffer()));
+      const part = `${local}.${process.pid}.part`;
+      fs.writeFileSync(part, Buffer.from(await res.arrayBuffer()));
+      try { fs.renameSync(part, local); } catch { fs.rmSync(part, { force: true }); }   // the other test file won the race
     }
-    fs.copyFileSync(local, path.join(dir, name));
+    for (let i = 0; ; i++) {                     // Windows: busy for a moment while the other test file renames it
+      try { fs.copyFileSync(local, path.join(dir, name)); break; } catch (e) { if (i > 20) throw e; await new Promise(r => setTimeout(r, 250)); }
+    }
   }
 }
 
@@ -150,7 +154,7 @@ export async function makePlayerFolder(dir) {
     }
     throw new Error(`Could not make ${name}`);
   };
-  try4k('4k hevc.mp4', [['-c:v', 'hevc_qsv', '-global_quality', '25', '-tag:v', 'hvc1'], ['-c:v', 'libkvazaar', '-kvazaar-params', 'preset=ultrafast', '-tag:v', 'hvc1']]);
+  try4k('4k hevc.mp4', [['-c:v', 'hevc_qsv', '-global_quality', '25', '-tag:v', 'hvc1'], ['-c:v', 'libkvazaar', '-kvazaar-params', 'preset=ultrafast:period=30', '-tag:v', 'hvc1']]);
   try4k('4k av1.mp4', [['-c:v', 'av1_qsv', '-global_quality', '30'], ['-c:v', 'libsvtav1', '-preset', '12']]);
   const srt = path.join(dir, 'tracks.srt.tmp');
   fs.writeFileSync(srt, '1\n00:00:01,000 --> 00:00:04,000\nEmbedded subtitle line\n\n2\n00:00:12,000 --> 00:00:15,000\nSecond embedded line\n');

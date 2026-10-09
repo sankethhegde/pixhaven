@@ -93,7 +93,9 @@ function encoderArgs(e: string, fps: number): string[] {
 export function streamArgs(file: string, p: MediaProbe, mode: Exclude<PlayMode, 'direct'>, start: number, audioIndex: number, encoder: string): string[] {
   const a = p.audio[audioIndex];
   const args = ['-v', 'error', '-nostdin'];
-  if (mode === 'transcode') args.push('-hwaccel', 'auto');                // GPU decoding where FFmpeg can (MPEG-2, VC-1, H.264…)
+  // GPU decoding where FFmpeg can (MPEG-2, VC-1, H.264…) on Windows (D3D11/DXVA). On Linux "auto" probes CUDA, VAAPI
+  // and Vulkan one after another and can stall on a machine without a working GPU, so it decodes on the CPU there.
+  if (mode === 'transcode' && process.platform === 'win32') args.push('-hwaccel', 'auto');
   if (start > 0) args.push('-ss', start.toFixed(3));
   args.push('-i', file, '-map', '0:V:0?');
   if (a) args.push('-map', `0:a:${audioIndex}`);
@@ -133,9 +135,15 @@ export async function keyframeAtOrBefore(file: string, p: MediaProbe, t: number)
 }
 
 /** A small frame for the seek-bar preview: nearest keyframe at or before `t`, only keyframes decoded (fast). */
-export function seekFrame(file: string, t: number, width = 192): Promise<Buffer> {
-  return run('ffmpeg', ['-v', 'error', '-skip_frame', 'nokey', '-noaccurate_seek', '-ss', Math.max(0, t).toFixed(2), '-i', file, '-map', '0:V:0',
-    '-frames:v', '1', '-vf', `scale=${width}:-2`, '-f', 'image2pipe', '-c:v', 'mjpeg', '-q:v', '6', '-'], 15000);
+export async function seekFrame(file: string, t: number, width = 192): Promise<Buffer> {
+  const tail = ['-map', '0:V:0', '-frames:v', '1', '-vf', `scale=${width}:-2`, '-f', 'image2pipe', '-c:v', 'mjpeg', '-q:v', '6', '-'];
+  const at = Math.max(0, t).toFixed(2);
+  try {
+    const jpg = await run('ffmpeg', ['-v', 'error', '-skip_frame', 'nokey', '-noaccurate_seek', '-ss', at, '-i', file, ...tail], 15000);
+    if (jpg.length) return jpg;
+  } catch { /* below */ }
+  // Few keyframes (screen recordings, some encoders): none at or after the jump point, so decode up to it instead.
+  return run('ffmpeg', ['-v', 'error', '-ss', at, '-i', file, ...tail], 20000);
 }
 
 // ---------- subtitles (PLAY-03) ----------

@@ -11,6 +11,7 @@ const { ThumbCache, ThumbQueue, setFfmpegDir } = await load('library/thumbs');
 const { listFolder, folderHasMedia, searchNames, isSystemName } = await load('library/browse');
 setFfmpegDir(FFMPEG_DIR);
 
+const WIN = process.platform === 'win32';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clearup-lib-'));
 const dir = path.join(tmp, 'media');
 const files = await makeMediaFolder(dir);
@@ -22,11 +23,12 @@ test('folder listing shows only photos, videos and folders that hold them (LIB-0
   assert.equal(l.entries.filter(e => e.kind !== 'folder').length, files.length);
   assert.ok(!names.includes('notes.txt') && !names.includes('report.pdf'));
   assert.equal(l.hiddenFiles, 2);
-  for (const sys of ['AppData', '.cache', '$Recycle.Bin']) assert.ok(!names.includes(sys), `${sys} hidden`);
+  // AppData is a system folder on Windows only; dot and $ folders everywhere.
+  for (const sys of [...(WIN ? ['AppData'] : []), '.cache', '$Recycle.Bin']) assert.ok(!names.includes(sys), `${sys} hidden`);
   assert.ok(names.includes('Goa trip') && names.includes('Documents only'));
   assert.equal(l.entries.filter(e => e.kind === 'video').length, 17);
   const all = await listFolder(dir, true);
-  assert.ok(all.entries.some(e => e.name === 'AppData'), 'shown when system folders are on');
+  assert.ok(all.entries.some(e => e.name === '.cache'), 'shown when system folders are on');
   assert.equal(await folderHasMedia(path.join(dir, 'Goa trip'), false), true);
   assert.equal(await folderHasMedia(path.join(dir, 'Documents only'), false), false);
   assert.ok(isSystemName('Program Files') === (process.platform === 'win32'));
@@ -108,7 +110,7 @@ test('search by name looks through subfolders, skipping system folders (LIB-07)'
   assert.ok(r.scanned > 30);
   const hidden = [];
   await searchNames(dir, 'hidden', false, ctl.signal, items => hidden.push(...items));
-  assert.equal(hidden.length, 0, 'files in AppData/.cache are not searched');
+  assert.deepEqual(hidden.map(f => f.path.split(/[\\/]/).slice(-2, -1)[0]), WIN ? [] : ['AppData'], 'system and dot folders are not searched');
   const multi = [];
   await searchNames(dir, 'CLIP mp4', false, ctl.signal, items => multi.push(...items));
   assert.deepEqual(multi.map(f => f.name).sort(), ['clip av1.mp4', 'clip h264.mp4']);
