@@ -57,11 +57,32 @@ async function fetchRaw(dir) {
   }
 }
 
+/**
+ * A real photo from phase0/testphotos when it was downloaded (phase0/fetch-test-photos.mjs), otherwise a made-up one
+ * — a fresh clone (GitHub Actions) has no test photos.
+ */
+async function samplePhoto() {
+  const dir = path.join(root, 'phase0', 'testphotos');
+  const real = fs.existsSync(dir) && fs.readdirSync(dir).find(f => /^Angela Merkel/.test(f));
+  if (real) return path.join(dir, real);
+  const file = path.join(root, 'vendor', 'testmedia', 'sample-photo.jpg');
+  if (!fs.existsSync(file)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1067"><defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7ab8ff"/><stop offset="1" stop-color="#ffd9a0"/></linearGradient></defs>
+      <rect width="1600" height="1067" fill="url(#s)"/><circle cx="1150" cy="330" r="120" fill="#ffcf4a"/>
+      <path d="M0 800 L400 420 L700 700 L1000 380 L1600 860 V1067 H0Z" fill="#3c6e47"/>
+      <path d="M0 950 L500 760 L900 900 L1600 780 V1067 H0Z" fill="#24452c"/></svg>`;
+    await sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toFile(file);
+  }
+  return file;
+}
+
 /** Returns the media files that must all show a thumbnail. */
 export async function makeMediaFolder(dir) {
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
-  const src = path.join(root, 'phase0', 'testphotos', fs.readdirSync(path.join(root, 'phase0', 'testphotos')).find(f => /^Angela Merkel/.test(f)));
+  const src = await samplePhoto();
   const photo = () => sharp(src).resize(1200);
   await photo().jpeg().toFile(path.join(dir, 'photo.jpg'));
   // Stored 1200×800 with EXIF orientation 6 (camera held upright): shown 800×1200.
