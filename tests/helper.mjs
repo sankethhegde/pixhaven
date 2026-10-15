@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export async function load(mod) {
-  const outfile = path.join(root, 'tests/.build', `${mod.replace(/[/]/g, '_')}.mjs`);
+  const outfile = path.join(root, 'tests/.build', `${mod.replace(/[/]/g, '_')}-${process.pid}.mjs`);   // one per test process: files run in parallel
   await build({
     entryPoints: [path.join(root, 'src/main', `${mod}.ts`)], outfile, bundle: true, platform: 'node', format: 'esm',
     alias: { '@shared': path.join(root, 'src/shared') }, logLevel: 'error', packages: 'external',

@@ -5,7 +5,7 @@ import { app } from 'electron';
 import type { Settings } from '@shared/types';
 import { log } from './logger';
 
-const SETTINGS_VERSION = 3;
+const SETTINGS_VERSION = 4;
 /** True on the first start after an update that switched writing labels into files on (v2.2). */
 export let writeTurnedOn = false;
 
@@ -45,6 +45,9 @@ export function getSettings(): Settings {
         // The new face model (ArcFace) has its own scale: 0.34 here is about as strict as 0.42 was, with far fewer mix-ups.
         current!.sort.strictness = DEFAULTS.sort.strictness;
       }
+      // v4 (0.7.1): the strictness slider covers 0.28–0.42 for ArcFace; values outside it (0.46 split one person into
+      // dozens of groups) go back to the tested default.
+      if ((saved.version ?? 1) < 4 && (current!.sort.strictness < 0.28 || current!.sort.strictness > 0.42)) current!.sort.strictness = DEFAULTS.sort.strictness;
       delete (current!.sort as { useOcr?: boolean }).useOcr;
       current!.version = SETTINGS_VERSION;
     } catch {

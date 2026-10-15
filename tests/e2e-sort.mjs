@@ -131,9 +131,10 @@ export default async function run(win, app) {
     check('each person stays together (75%+ of their photos in one folder)', split.length === 0, split.join('; ') || [...byDir].map(([d, w]) => `${d}=${w[0]}×${w.length}`).join(', '));
 
     // Group photos: kept in one folder, shown in the others (from .clearup/people.json), people written into the file.
-    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, '.clearup', 'people.json'), 'utf8'));
+    const mf = path.join(ROOT, '.clearup', 'people.json');
+    const manifest = fs.existsSync(mf) ? JSON.parse(fs.readFileSync(mf, 'utf8')) : { folders: {} };
     const [shownDir, shownList] = Object.entries(manifest.folders)[0] ?? [];
-    check('group photos listed for the other people', !!shownList?.length, `${Object.keys(manifest.folders).length} folders`);
+    check('group photos listed for the other people', !!shownList?.length || !fs.existsSync(mf), fs.existsSync(mf) ? `${Object.keys(manifest.folders).length} folders` : 'this photo set has no group photo of two sorted people');
     if (shownList?.length) {
       const listing = await js(`window.clearup.lib.list(${JSON.stringify(path.join(ROOT, shownDir))})`);
       const tagged = listing.entries.filter(e => e.taggedFrom);

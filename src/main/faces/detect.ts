@@ -11,8 +11,11 @@ const DET = 640;            // YuNet input is fixed 640×640
 const SCORE = 0.85;         // detector confidence
 export const CHIP = 112;    // fingerprint model input
 /** Bump when the fingerprint changes: faces made by an older model are fingerprinted again on the next scan. */
-export const FACE_MODEL = 2;
+export const FACE_MODEL = 3;   // 3: not-a-face filter (0.7.1)
 export const REC_FILE = 'arcface.onnx';
+/** Raw fingerprint strength below this = not a face (tattoos, jewellery, patterns): real faces measured 9–30, most 15+;
+ * the false detections found in a real folder measured 4.9 and 6.6. */
+export const NOT_A_FACE = 8;
 
 export interface Face {
   x: number; y: number; w: number; h: number;   // box in working-image pixels
@@ -68,14 +71,20 @@ export class FaceEngine {
       }
     }
     const kept = nms(faces);
+    const real: Face[] = [];
     for (const f of kept) {
       const chip = alignCrop(rgb, W, H, f.kps);
       f.sharpness = laplacianVariance(chip);
       f.quality = faceQuality(f, chip);
       f.usable = Math.min(f.w, f.h) >= minFace && f.sharpness >= minSharpness;
-      if (f.usable) f.emb = await this.fingerprint(chip);
+      if (f.usable) {
+        const { emb, strength } = await this.fingerprint(chip);
+        if (strength < NOT_A_FACE) continue;          // the detector was fooled: not a face at all
+        f.emb = emb;
+      }
+      real.push(f);
     }
-    return kept;
+    return real;
   }
 
   private async detect(img640: Buffer, s: number, ox: number, oy: number): Promise<Face[]> {
@@ -103,7 +112,7 @@ export class FaceEngine {
   }
 
   /** The chip as is and mirrored, fingerprints added up, then scaled to length 1. */
-  private async fingerprint(chip: Uint8Array): Promise<Float32Array> {
+  private async fingerprint(chip: Uint8Array): Promise<{ emb: Float32Array; strength: number }> {
     const N = CHIP * CHIP;
     const run = async (c: Uint8Array) => {
       const t = new Float32Array(3 * N);
@@ -115,8 +124,9 @@ export class FaceEngine {
     const f = Float32Array.from(a, (v, i) => v + b[i]);
     let n = 0; for (const v of f) n += v * v;
     n = Math.sqrt(n) || 1;
+    const strength = n / 2;                                   // length of the averaged raw fingerprint
     for (let i = 0; i < f.length; i++) f[i] /= n;
-    return f;
+    return { emb: f, strength };
   }
 }
 

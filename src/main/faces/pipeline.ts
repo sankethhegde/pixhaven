@@ -111,6 +111,14 @@ function overlap(a: { x: number; y: number; w: number; h: number }, b: { x: numb
 
 /** Group all usable faces of a folder into people (FACE-03). People the user kept stay as they are. */
 export function groupFolder(db: Db, fid: number, strictness: number): number {
+  // People from an earlier sort whose folder is gone (deleted or moved away) are no longer kept as they were.
+  tx(db, () => {
+    for (const p of db.prepare('SELECT id, dir FROM people WHERE folder_id = ? AND dir IS NOT NULL').all(fid) as { id: number; dir: string }[]) {
+      if (fs.existsSync(p.dir)) continue;
+      db.prepare('UPDATE people SET dir = NULL, keep = 0 WHERE id = ?').run(p.id);
+      db.prepare('DELETE FROM sort_dirs WHERE folder_id = ? AND dir = ?').run(fid, p.dir);
+    }
+  });
   const rows = db.prepare(`
     SELECT f.id, f.image_id, f.emb, f.quality, p.id AS pid, p.keep FROM faces f
     JOIN images i ON i.id = f.image_id LEFT JOIN people p ON p.id = f.person_id

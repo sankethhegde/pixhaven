@@ -145,7 +145,7 @@ export function review(fid: number): ReviewData {
     FROM people p LEFT JOIN faces f ON f.person_id = p.id AND f.removed = 0
     WHERE p.folder_id = ? GROUP BY p.id ORDER BY p.num`).all(fid) as { id: number; num: number; dir: string | null; photos: number }[];
   const chips = d.prepare('SELECT chip FROM faces WHERE person_id = ? AND removed = 0 ORDER BY sharpness * h DESC LIMIT 4');
-  const summaries: PersonSummary[] = people.filter(p => p.photos > 0 || p.dir).map(p => ({
+  const summaries: PersonSummary[] = people.filter(p => p.photos > 0 || (p.dir && fs.existsSync(p.dir))).map(p => ({
     id: p.id, num: p.num, label: personLabel(p), photos: p.photos, dir: p.dir,
     faceUrls: (chips.all(p.id) as { chip: string | null }[]).map(c => faceUrl(c.chip)).filter(Boolean),
     unsorted: p.photos < s.minPhotos && !p.dir,

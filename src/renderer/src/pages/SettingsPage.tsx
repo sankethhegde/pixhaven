@@ -118,10 +118,10 @@ export function SettingsPage({ settings, gpu, dedicated, version, onSettings, on
         </Card>
 
         <Card title="Sort by person">
-          <Row label="Face-match strictness" hint="Stricter keeps look-alikes apart but may split one person into two groups. Looser does the reverse. Applies the next time you scan a folder (scanning again is quick: only new photos are read).">
+          <Row label="Face-match strictness" hint="0.34 is the tested default. Stricter keeps look-alikes apart but splits one person into several groups sooner; looser does the reverse. Applies the next time you scan a folder (scanning again is quick: only new photos are read).">
             <div className="flex items-center gap-2 text-xs text-muted">
               Looser
-              <input type="range" min={0.26} max={0.46} step={0.01} value={settings.sort.strictness} aria-label="Face-match strictness"
+              <input type="range" min={0.28} max={0.42} step={0.01} value={settings.sort.strictness} aria-label="Face-match strictness"
                 onChange={e => setSort({ strictness: Number(e.target.value) })} className="w-32" />
               Stricter
             </div>
