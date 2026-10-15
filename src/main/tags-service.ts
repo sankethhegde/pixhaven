@@ -1,7 +1,9 @@
 // Labels and stars (v2.0 Phase C; photos too since v2.1): library.db location, daily backups, export/import, renaming
 // or moving files inside the app (their labels follow), playlists (saved filters), re-linking files moved outside the
-// app, and — when switched on — writing stars and labels into the files themselves (TAG-08).
+// app, and — when switched on — writing stars and labels into the files themselves (TAG-08). v2.2: what the files hold
+// is read back too (from PixHaven on another computer, Explorer, Lightroom…), so labels travel with the files.
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { app } from 'electron';
 import type { BackupInfo, FileWriteStatus, ImportResult, LabelInfo, MediaTags, Playlist, TaggedMedia, TagFilter } from '@shared/types';
@@ -11,6 +13,8 @@ import { log } from './logger';
 import { resourcesDir } from './engine';
 import { TagStore, fromCsv, quickFingerprint, toCsv, type ExportData, type FileRef } from './library/tags';
 import { writeTags, writeTarget } from './library/xmp';
+import { TagReader } from './library/file-tags';
+import { movedFile as manifestMoved } from './sorter/people-manifest';
 
 const KEEP_BACKUPS = 7;
 let store: TagStore | null = null;
@@ -46,11 +50,66 @@ const result = (paths: string[]) => ({ tags: tagStore().tagsFor(paths), labels: 
 
 export const labels = (): LabelInfo[] => tagStore().labels();
 
-/** Tags for the files in view, after re-linking any that were renamed or moved outside the app. */
+/** Tags for the files in view, after re-linking any that were renamed or moved outside the app. What the files
+ * themselves hold is read in the background; changes arrive through the "from files" event. */
 export async function forFiles(files: FileRef[]): Promise<{ tags: Record<string, MediaTags>; relinked: string[] }> {
   const m = media(files);
   const relinked = await tagStore().relink(m).catch(e => { log('warn', 'Re-linking failed', e); return [] as string[]; });
+  void readFolders(m);
   return { tags: tagStore().tagsFor(m.map(f => f.path)), relinked };
+}
+
+// ---------- reading what the files hold (v2.2) ----------
+
+let reader: TagReader | null = null;
+const fileReader = () => (reader ??= new TagReader(exiftoolPath()));
+let onFromFiles: (paths: string[]) => void = () => {};
+export const setOnFromFiles = (fn: (paths: string[]) => void) => { onFromFiles = fn; };
+const reading = new Set<string>();
+
+/** A folder's files are read when its listing changed since last time; tagged files also when they changed. */
+async function readFolders(files: FileRef[]): Promise<void> {
+  const byDir = new Map<string, FileRef[]>();
+  for (const f of files) { const d = path.dirname(f.path); byDir.set(d, [...(byDir.get(d) ?? []), f]); }
+  for (const [dir, list] of byDir) {
+    const k = dir.toLowerCase();
+    if (reading.has(k)) continue;
+    reading.add(k);
+    try {
+      const sig = crypto.createHash('sha1').update(list.map(f => `${f.path}|${f.size}|${Math.floor(f.mtime)}`).sort().join('|')).digest('hex');
+      const s = tagStore();
+      const todo = s.dirRead(dir) === sig ? list.filter(f => s.isTagged(f.path) && s.needsRead([f]).length) : s.needsRead(list);
+      await syncFromFiles(todo);
+      s.setDirRead(dir, sig);
+    } catch (e) { log('warn', `Could not read labels from files in ${dir}`, e); }
+    finally { reading.delete(k); }
+  }
+}
+
+/** Reads and merges a batch of files (also used by watched folders). Returns the files whose labels or stars changed. */
+export async function syncFromFiles(files: FileRef[]): Promise<string[]> {
+  const changed: string[] = [];
+  const behind: string[] = [];
+  for (let i = 0; i < files.length; i += 200) {
+    const part = files.slice(i, i + 200).filter(f => !f.path.startsWith('missing:'));
+    if (!part.length) continue;
+    const got = await fileReader().read(part.map(f => f.path));
+    for (const f of part) {
+      const ft = got.get(f.path);
+      if (!ft) continue;
+      const r = await tagStore().mergeFromFile(f, ft).catch(e => { log('warn', `Could not merge labels of ${f.path}`, e); return null; });
+      if (r?.changed) changed.push(f.path);
+      if (r?.behind) behind.push(f.path);
+    }
+  }
+  if (changed.length) { log('info', `Took labels or stars from ${changed.length} file(s)`); onFromFiles(changed); }
+  if (behind.length) queueWrite(behind);     // the file catches up with labels added in the app
+  return changed;
+}
+
+/** People named inside a photo (PixHaven's Sort by person, Lightroom, digiKam, Windows Photo Gallery…). */
+export async function peopleIn(file: string): Promise<string[]> {
+  return (await fileReader().read([file]).catch(() => new Map())).get(file)?.people ?? [];
 }
 
 export async function setStars(files: FileRef[], stars: number) {
@@ -133,6 +192,7 @@ export async function renameFile(from: string, newName: string): Promise<string>
   tagStore().moved(from, to);
   await moveSidecar(from, to);
   onMoved(from, to);
+  try { manifestMoved(from, to); } catch (e) { log('warn', 'Could not update the people list', e); }
   log('info', `Renamed ${from} → ${name}`);
   return to;
 }
@@ -157,11 +217,19 @@ export async function moveFiles(paths: string[], dest: string): Promise<{ moved:
       tagStore().moved(from, to);
       await moveSidecar(from, to);
       onMoved(from, to);
+      try { manifestMoved(from, to); } catch (e) { log('warn', 'Could not update the people list', e); }
       moved.push({ from, to });
     } catch (e) { failed.push({ path: from, reason: (e as Error).message }); }
   }
   log('info', `Moved ${moved.length} file(s) to ${dest}, ${failed.length} failed`);
   return { moved, failed };
+}
+
+/** After Sort by person: labels follow the moved photos, and photos the people were written into stay recognised. */
+export async function afterSort(moves: { from: string; to: string }[], changed: string[]): Promise<void> {
+  const s = tagStore();
+  for (const m of moves) { s.moved(m.from, m.to); onMoved(m.from, m.to); }
+  for (const p of changed) await s.refresh(p);
 }
 
 // ---------- re-linking files moved outside the app ----------
@@ -274,7 +342,16 @@ async function flushWrites(): Promise<void> {
     const now = [...toWrite].filter(p => !isBusy(p)).slice(0, 200);    // a file open in the player waits until it closes
     for (const p of now) toWrite.delete(p);
     const s = tagStore();
-    const jobs = now.filter(p => fs.existsSync(p)).map(p => ({ file: p, ...s.writeState(p) }));
+    // Anything another app put into these files since they were last read is merged first, so nothing is lost.
+    const refs = now.map(p => { try { const st = fs.statSync(p); return { path: p, size: st.size, mtime: st.mtimeMs }; } catch { return null; } }).filter((r): r is FileRef => !!r);
+    const unread = s.needsRead(refs);
+    if (unread.length) {
+      const got = await fileReader().read(unread.map(f => f.path)).catch(() => new Map());
+      const changed: string[] = [];
+      for (const f of unread) { const ft = got.get(f.path); if (ft && (await s.mergeFromFile(f, ft)).changed) changed.push(f.path); }
+      if (changed.length) onFromFiles(changed);
+    }
+    const jobs = refs.map(r => r.path).map(p => ({ file: p, ...s.writeState(p) }));
     if (jobs.length) {
       const res = await writeTags(exiftoolPath(), jobs);
       for (const r of res) {
@@ -290,6 +367,27 @@ async function flushWrites(): Promise<void> {
     if (toWrite.size && !writeTimer) writeTimer = setTimeout(() => void flushWrites(), [...toWrite].every(p => isBusy(p)) ? 10_000 : 500);
     onWriteStatus(writeStatus());
   }
+}
+
+/** Before quitting: writes still waiting go into the files now (up to 15 s; the rest is picked up at next start). */
+export async function flushNow(): Promise<void> {
+  if (writeTimer) { clearTimeout(writeTimer); writeTimer = null; }
+  const end = Date.now() + 15_000;
+  while ((toWrite.size || writing) && Date.now() < end) {
+    if (writing) { await new Promise(r => setTimeout(r, 100)); continue; }
+    if ([...toWrite].every(p => isBusy(p))) break;
+    await flushWrites();
+    if (writeTimer) { clearTimeout(writeTimer); writeTimer = null; }
+  }
+}
+export const hasPendingWrites = () => toWrite.size > 0 || writing;
+
+/** At start: changes the files never got (PixHaven closed before the write ran) are written now. */
+export function writeUnwritten(): number {
+  if (!getSettings().library.writeToFiles) return 0;
+  const paths = tagStore().unwritten().filter(p => fs.existsSync(p));
+  queueWrite(paths);
+  return paths.length;
 }
 
 /** Settings switch. Turning it on writes what is already labelled; turning it off leaves the files as they are. */
@@ -363,4 +461,4 @@ export function setLocation(dir: string, mode: 'move' | 'use'): string {
 }
 export const locationTaken = (dir: string) => fs.existsSync(path.join(dir, 'library.db'));
 
-export function close(): void { store?.close(); store = null; }
+export function close(): void { store?.close(); store = null; reader?.stop(); reader = null; }

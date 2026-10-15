@@ -1,15 +1,18 @@
-// Downloads the upscaling engine, face models, OCR data and place names into resources/ (run once after npm install).
+// Downloads the upscaling engine, face models and place names into resources/ (run once after npm install).
 // Works on Windows and Linux; each fetches the engine build for its own platform.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 
 const WIN = process.platform === 'win32';
 const RELEASE = 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/';
 const ENGINE_URL = RELEASE + (WIN ? 'realesrgan-ncnn-vulkan-20220424-windows.zip' : 'realesrgan-ncnn-vulkan-20220424-ubuntu.zip');
 const FACE = {
-  'yunet.onnx': 'https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx',
-  'sface.onnx': 'https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx',
+  'yunet.onnx': ['https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx'],
+  // v2.2: ArcFace ResNet-100 (ONNX Model Zoo, Apache-2.0), 8-bit: replaces SFace for telling people apart.
+  'arcface.onnx': ['https://huggingface.co/onnxmodelzoo/arcfaceresnet100-11-int8/resolve/c0ec783c5907f34e089495d6d0428e847fcededa/arcfaceresnet100-11-int8.onnx',
+    'c625ca68a422418c48aa84f73341337e0a92b111f327909005d1eec07c95f936'],
 };
 const zip = WIN ? 'vendor/dl/realesrgan-win.zip' : 'vendor/dl/realesrgan-linux.zip';
 const unpacked = WIN ? 'vendor/realesrgan' : 'vendor/realesrgan-linux';
@@ -22,12 +25,14 @@ function unzip(file, dir, ...members) {
   else execFileSync('unzip', ['-o', '-q', file, ...members.map(m => m + (m.includes('.') ? '' : '/*')), '-d', dir]);
 }
 
-async function download(url, dest) {
+async function download(url, dest, sha256) {
   if (fs.existsSync(dest)) return;
   console.log('Downloading', url);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
-  fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (sha256 && crypto.createHash('sha256').update(buf).digest('hex') !== sha256) throw new Error(`${url}: checksum does not match`);
+  fs.writeFileSync(dest, buf);
 }
 
 fs.mkdirSync('vendor/dl', { recursive: true });
@@ -36,7 +41,7 @@ if (!fs.existsSync(`${unpacked}/${EXE}`)) {
   fs.mkdirSync(unpacked, { recursive: true });
   unzip(zip, unpacked);
 }
-for (const d of [BIN_DIR, 'resources/models/face', 'resources/models-quality', 'resources/ocr']) fs.mkdirSync(d, { recursive: true });
+for (const d of [BIN_DIR, 'resources/models/face', 'resources/models-quality']) fs.mkdirSync(d, { recursive: true });
 for (const f of WIN ? [EXE, 'vcomp140.dll'] : [EXE]) fs.copyFileSync(`${unpacked}/${f}`, `${BIN_DIR}/${f}`);
 if (!WIN) fs.chmodSync(`${BIN_DIR}/${EXE}`, 0o755);
 // Only the compact "Fast" model ships in the installer; quality models download on first use (dev keeps a copy).
@@ -45,8 +50,9 @@ for (const f of fs.readdirSync(`${unpacked}/models`)) {
   fs.copyFileSync(`${unpacked}/models/${f}`, `${dest}/${f}`);
   if (dest === 'resources/models-quality') fs.rmSync(`resources/models/${f}`, { force: true });
 }
-for (const [name, url] of Object.entries(FACE)) await download(url, `resources/models/face/${name}`);
-fs.copyFileSync('node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz', 'resources/ocr/eng.traineddata.gz');
+for (const [name, [url, sha]] of Object.entries(FACE)) await download(url, `resources/models/face/${name}`, sha);
+fs.rmSync('resources/models/face/sface.onnx', { force: true });     // replaced by ArcFace in 0.7
+fs.rmSync('resources/ocr', { recursive: true, force: true });        // reading names from photos was removed in 0.7
 
 // Offline place names for "sort by place": GeoNames cities with 15,000+ people (CC BY 4.0).
 fs.mkdirSync('vendor/geo', { recursive: true });

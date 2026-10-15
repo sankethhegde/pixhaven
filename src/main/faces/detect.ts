@@ -1,12 +1,18 @@
-// Face detection (YuNet) + alignment + fingerprint (SFace) via onnxruntime-node. No Electron imports
-// (runs inside the scan worker thread). Proven in phase0/face-poc.mjs.
+// Face detection (YuNet) + alignment + fingerprint via onnxruntime-node. No Electron imports (runs inside the scan
+// worker thread). v2.2: the fingerprint is ArcFace (ResNet-100, ONNX Model Zoo, Apache-2.0, 8-bit) instead of SFace:
+// on the same test faces it keeps far fewer look-alikes together and holds on to a person across lighting, angle and
+// hair changes. Each face is read twice (as is and mirrored) and the two fingerprints averaged, which steadies turned
+// heads; each face also gets a quality score so small, blurry or sideways faces can't pull unrelated people together.
 import path from 'node:path';
 import sharp from 'sharp';
 import * as ort from 'onnxruntime-node';
 
 const DET = 640;            // YuNet input is fixed 640×640
 const SCORE = 0.85;         // detector confidence
-export const CHIP = 112;    // SFace input
+export const CHIP = 112;    // fingerprint model input
+/** Bump when the fingerprint changes: faces made by an older model are fingerprinted again on the next scan. */
+export const FACE_MODEL = 2;
+export const REC_FILE = 'arcface.onnx';
 
 export interface Face {
   x: number; y: number; w: number; h: number;   // box in working-image pixels
@@ -14,16 +20,19 @@ export interface Face {
   kps: [number, number][];                      // eyes, nose, mouth corners
   sharpness: number;                            // variance of Laplacian on the aligned chip
   usable: boolean;                              // big and sharp enough to recognise (FACE-02)
-  emb?: Float32Array;                           // 128-d L2-normalised fingerprint (usable faces only)
+  quality: number;                              // 0–1: size, sharpness, light and how far the head is turned
+  emb?: Float32Array;                           // 512-d L2-normalised fingerprint (usable faces only)
 }
 
 export class FaceEngine {
   private constructor(private det: ort.InferenceSession, private rec: ort.InferenceSession, readonly provider: string) {}
 
   static async create(modelsDir: string, preferGpu: boolean): Promise<FaceEngine> {
+    // No busy-waiting threads: the two models take turns, and spinning ones would just burn CPU while the other runs.
+    const opts = (ep: string[]) => ({ logSeverityLevel: 3 as const, executionProviders: ep, extra: { session: { intra_op: { allow_spinning: '0' } } } });
     const load = (ep: string[]) => Promise.all([
-      ort.InferenceSession.create(path.join(modelsDir, 'yunet.onnx'), { logSeverityLevel: 3, executionProviders: ep }),
-      ort.InferenceSession.create(path.join(modelsDir, 'sface.onnx'), { logSeverityLevel: 3, executionProviders: ep }),
+      ort.InferenceSession.create(path.join(modelsDir, 'yunet.onnx'), opts(ep)),
+      ort.InferenceSession.create(path.join(modelsDir, REC_FILE), opts(ep)),
     ]);
     if (preferGpu) {
       try { const [d, r] = await load(['dml', 'cpu']); return new FaceEngine(d, r, 'dml'); } catch { /* fall back to CPU */ }
@@ -62,6 +71,7 @@ export class FaceEngine {
     for (const f of kept) {
       const chip = alignCrop(rgb, W, H, f.kps);
       f.sharpness = laplacianVariance(chip);
+      f.quality = faceQuality(f, chip);
       f.usable = Math.min(f.w, f.h) >= minFace && f.sharpness >= minSharpness;
       if (f.usable) f.emb = await this.fingerprint(chip);
     }
@@ -86,18 +96,23 @@ export class FaceEngine {
         const bw = Math.exp(bb[i * 4 + 2]) * st, bh = Math.exp(bb[i * 4 + 3]) * st;
         const kps: [number, number][] = [];
         for (let k = 0; k < 5; k++) kps.push([(kp[i * 10 + 2 * k] + c) * st / s + ox, (kp[i * 10 + 2 * k + 1] + r) * st / s + oy]);
-        faces.push({ x: (cx - bw / 2) / s + ox, y: (cy - bh / 2) / s + oy, w: bw / s, h: bh / s, score, kps, sharpness: 0, usable: false });
+        faces.push({ x: (cx - bw / 2) / s + ox, y: (cy - bh / 2) / s + oy, w: bw / s, h: bh / s, score, kps, sharpness: 0, quality: 0, usable: false });
       }
     }
     return faces;
   }
 
+  /** The chip as is and mirrored, fingerprints added up, then scaled to length 1. */
   private async fingerprint(chip: Uint8Array): Promise<Float32Array> {
     const N = CHIP * CHIP;
-    const t = new Float32Array(3 * N);
-    for (let i = 0; i < N; i++) { t[i] = chip[i * 3]; t[N + i] = chip[i * 3 + 1]; t[2 * N + i] = chip[i * 3 + 2]; } // RGB planes
-    const out = await this.rec.run({ data: new ort.Tensor('float32', t, [1, 3, CHIP, CHIP]) });
-    const f = Float32Array.from(out.fc1.data as Float32Array);
+    const run = async (c: Uint8Array) => {
+      const t = new Float32Array(3 * N);
+      for (let i = 0; i < N; i++) { t[i] = c[i * 3]; t[N + i] = c[i * 3 + 1]; t[2 * N + i] = c[i * 3 + 2]; } // RGB planes, 0–255
+      const out = await this.rec.run({ data: new ort.Tensor('float32', t, [1, 3, CHIP, CHIP]) });
+      return out.fc1.data as Float32Array;
+    };
+    const a = await run(chip), b = await run(mirror(chip));
+    const f = Float32Array.from(a, (v, i) => v + b[i]);
     let n = 0; for (const v of f) n += v * v;
     n = Math.sqrt(n) || 1;
     for (let i = 0; i < f.length; i++) f[i] /= n;
@@ -106,6 +121,36 @@ export class FaceEngine {
 }
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+
+/** Left–right mirrored chip. */
+export function mirror(chip: Uint8Array): Uint8Array {
+  const out = new Uint8Array(chip.length);
+  for (let y = 0; y < CHIP; y++) for (let x = 0; x < CHIP; x++) for (let c = 0; c < 3; c++) out[(y * CHIP + x) * 3 + c] = chip[(y * CHIP + CHIP - 1 - x) * 3 + c];
+  return out;
+}
+
+/** How far the head is turned: nose offset from the middle of the eyes, in eye distances (0 = facing the camera). */
+export function yaw(kps: [number, number][]): number {
+  const [le, re, n] = kps;
+  const d = Math.hypot(re[0] - le[0], re[1] - le[1]) || 1;
+  return (n[0] - (le[0] + re[0]) / 2) / d;
+}
+
+/**
+ * 0–1: how much a fingerprint of this face can be trusted. Small, blurry, very dark or strongly turned faces give
+ * fingerprints that sit close to each other whoever they are — they may join a clear match, but never start or link
+ * groups (that is how unrelated people ended up in one folder).
+ */
+export function faceQuality(f: { w: number; h: number; kps: [number, number][] }, chip: Uint8Array): number {
+  const size = clamp01((Math.min(f.w, f.h) - 28) / (90 - 28));
+  const sharp = clamp01(Math.log(Math.max(1, laplacianVariance(chip)) / 15) / Math.log(20));
+  const turn = 1 - clamp01((Math.abs(yaw(f.kps)) - 0.3) / 0.45);
+  let sum = 0;
+  for (let y = 30; y < 100; y++) for (let x = 25; x < 87; x++) { const i = (y * CHIP + x) * 3; sum += 0.299 * chip[i] + 0.587 * chip[i + 1] + 0.114 * chip[i + 2]; }
+  const mean = sum / (70 * 62);
+  const light = clamp01((mean - 18) / 40) * clamp01((250 - mean) / 30);
+  return Math.min(size, sharp, turn, light);
+}
 
 function iou(a: Face, b: Face): number {
   const x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y), x2 = Math.min(a.x + a.w, b.x + b.w), y2 = Math.min(a.y + a.h, b.y + b.h);

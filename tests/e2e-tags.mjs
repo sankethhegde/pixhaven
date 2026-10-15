@@ -238,6 +238,7 @@ export default async function run(win, app) {
       await openFolder(LAPTOP);
       await sleep(1500);
       const st = await stateOf(LAPTOP);
+      fs.writeFileSync(path.join(OUT, 'laptop-state.json'), JSON.stringify({ st, expected }, null, 1));
       // Same videos, other folder: labels and stars follow the content.
       check('after export → import on another laptop, every label and star is back', JSON.stringify(st) === JSON.stringify(expected), `${Object.keys(st).length} of ${Object.keys(expected).length}`);
       await clickSel('[aria-label="Filter by labels and stars"]');
@@ -255,5 +256,7 @@ export default async function run(win, app) {
     await shot('zz-failure').catch(() => {});
   }
   fs.writeFileSync(path.join(OUT, `results-${STEP}.json`), JSON.stringify(results, null, 1));
+  // Like closing the window: labels still waiting go into the files first (app.exit skips before-quit).
+  for (let i = 0; i < 100 && (await win.webContents.executeJavaScript('window.clearup.tags.writeStatus()').catch(() => ({ pending: 0 }))).pending; i++) await sleep(200);
   app.exit(results.every(r => r.pass) ? 0 : 1);
 }

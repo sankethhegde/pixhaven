@@ -63,6 +63,10 @@ export function openDb(file: string): Db {
   db.exec(SCHEMA);
   // Added in Phase 5: which tool a sort record belongs to.
   try { db.exec("ALTER TABLE sorts ADD COLUMN kind TEXT NOT NULL DEFAULT 'people'"); } catch { /* already there */ }
+  // v2.2: which face model made the fingerprint (older ones are re-made on the next scan), and how reliable the face is.
+  const cols = (db.prepare('PRAGMA table_info(faces)').all() as { name: string }[]).map(c => c.name);
+  if (!cols.includes('model')) db.exec('ALTER TABLE faces ADD COLUMN model INTEGER NOT NULL DEFAULT 1');
+  if (!cols.includes('quality')) db.exec('ALTER TABLE faces ADD COLUMN quality REAL');
   return db;
 }
 

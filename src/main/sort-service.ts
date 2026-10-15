@@ -13,8 +13,9 @@ import { openDb, folderId, nextPersonNum, tx, type Db } from './db';
 import { getSettings } from './settings';
 import { resourcesDir } from './engine';
 import { isImageFile } from './image-io';
-import { buildPlan, personLabel, safeFolderName } from './sorter/plan';
-import { appendLog, renamePathsUnder } from './sorter/apply';
+import { buildPlan, personLabel } from './sorter/plan';
+import { sortedFolders } from './sorter/people-manifest';
+import { exiftool } from './tags-service';
 import type { ListedFile } from './faces/pipeline';
 import type { WorkerInput } from './faces/sort-worker';
 import { fileUrl } from './upscale-job';
@@ -67,12 +68,11 @@ export async function listImages(root: string, recurse: boolean, excludeDirs: st
 // ---------- worker plumbing ----------
 let current: { worker: Worker; root: string } | null = null;
 
-export function runWorker(input: Omit<WorkerInput, 'dbPath' | 'modelsDir' | 'ocrDir' | 'cacheDir' | 'thumbsDir' | 'settings' | 'preferGpu'> & Partial<WorkerInput>, ev: Partial<SortEvents>): Promise<any> {
+export function runWorker(input: Omit<WorkerInput, 'dbPath' | 'modelsDir' | 'thumbsDir' | 'settings' | 'preferGpu'> & Partial<WorkerInput>, ev: Partial<SortEvents>): Promise<any> {
   const s = getSettings();
   const full: WorkerInput = {
-    dbPath: dbPath(), modelsDir: path.join(resourcesDir(), 'models'), ocrDir: path.join(resourcesDir(), 'ocr'),
-    cacheDir: path.join(dataDir(), 'ocr-cache'), thumbsDir: path.join(dataDir(), String(input.folderId)),
-    settings: s.sort, preferGpu: !s.cpuOnly, ...input,
+    dbPath: dbPath(), modelsDir: path.join(resourcesDir(), 'models'), thumbsDir: path.join(dataDir(), String(input.folderId)),
+    settings: s.sort, preferGpu: !s.cpuOnly, exiftool: exiftool(), ...input,
   } as WorkerInput;
   return new Promise((resolve, reject) => {
     const worker = new Worker(workerPath, { workerData: full });
@@ -82,7 +82,7 @@ export function runWorker(input: Omit<WorkerInput, 'dbPath' | 'modelsDir' | 'ocr
       if (m.type === 'progress') ev.scan?.(m.progress);
       else if (m.type === 'apply') ev.apply?.(m.progress);
       else if (m.type === 'log') log('info', 'sort-worker', m.message);
-      // The result is the last message: end the worker right away (OCR/ONNX threads could keep it alive).
+      // The result is the last message: end the worker right away (ONNX threads could keep it alive).
       else if (m.type === 'result') { result = m.result; resolve(result); void worker.terminate(); }
       else if (m.type === 'error') { log('error', 'sort-worker', m.message); reject(new Error(m.message.split('\n')[0])); }
     });
@@ -111,14 +111,15 @@ export function folderStatus(root: string): FolderStatus {
   };
 }
 
-/** Scan (or re-scan) a folder through the job queue. Resolves when grouping and naming are done. */
+/** Scan (or re-scan) a folder through the job queue. Resolves when grouping is done. */
 export function scanFolder(root: string, ev: Pick<SortEvents, 'scan'>): { queueId: string; done: Promise<{ folderId: number; cancelled?: boolean }> } {
   const fid = folderId(getDb(), root)!;
   let cancelled = false;
   const job = queue.add('scan', `Sort by person: scan ${path.basename(root)}`, async () => {
     if (cancelled) return;
     ev.scan({ folder: root, phase: 'listing', done: 0, total: 0, faces: 0, people: 0 });
-    const files = await listImages(root, getSettings().sort.includeSubfolders, sortDirs(fid));
+    // Folders sorted before — on this computer, or (from the folder's own list) on another one — are left alone.
+    const files = await listImages(root, getSettings().sort.includeSubfolders, [...sortDirs(fid), ...sortedFolders(root)]);
     log('info', `Scan ${root}: ${files.length} images (${files.filter(f => f.cloud).length} online-only)`);
     const r = await runWorker({ task: 'scan', folderId: fid, root, files, keepDirs: sortDirs(fid) }, ev);
     cancelled = !!r?.cancelled;
@@ -140,15 +141,12 @@ export function review(fid: number): ReviewData {
   const s = getSettings().sort;
   const root = (d.prepare('SELECT path FROM folders WHERE id = ?').get(fid) as { path: string }).path;
   const people = d.prepare(`
-    SELECT p.id, p.num, p.name, p.name_source, p.name_detail, p.dir, COUNT(DISTINCT f.image_id) AS photos
+    SELECT p.id, p.num, p.dir, COUNT(DISTINCT f.image_id) AS photos
     FROM people p LEFT JOIN faces f ON f.person_id = p.id AND f.removed = 0
-    WHERE p.folder_id = ? GROUP BY p.id ORDER BY photos DESC, p.num`).all(fid) as
-    { id: number; num: number; name: string | null; name_source: string | null; name_detail: string | null; dir: string | null; photos: number }[];
+    WHERE p.folder_id = ? GROUP BY p.id ORDER BY p.num`).all(fid) as { id: number; num: number; dir: string | null; photos: number }[];
   const chips = d.prepare('SELECT chip FROM faces WHERE person_id = ? AND removed = 0 ORDER BY sharpness * h DESC LIMIT 4');
   const summaries: PersonSummary[] = people.filter(p => p.photos > 0 || p.dir).map(p => ({
-    id: p.id, num: p.num, name: p.name, label: personLabel(p),
-    source: p.name_source as PersonSummary['source'], photos: p.photos, dir: p.dir,
-    sourceDetail: p.name_source === 'typed' ? 'typed by you' : p.name_source === 'file' ? `from file name: ${p.name_detail}` : p.name_source === 'ocr' ? `read from text in ${p.name_detail}` : null,
+    id: p.id, num: p.num, label: personLabel(p), photos: p.photos, dir: p.dir,
     faceUrls: (chips.all(p.id) as { chip: string | null }[]).map(c => faceUrl(c.chip)).filter(Boolean),
     unsorted: p.photos < s.minPhotos && !p.dir,
   }));
@@ -157,13 +155,10 @@ export function review(fid: number): ReviewData {
     AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.image_id = i.id AND f.person_id IS NOT NULL AND f.removed = 0) ORDER BY path`).all(fid) as any[];
   const none = d.prepare("SELECT id, path, thumb FROM images WHERE folder_id = ? AND status = 'done' AND faces = 0 ORDER BY path").all(fid) as any[];
   const skipped = d.prepare("SELECT path, error FROM images WHERE folder_id = ? AND status IN ('skipped', 'error') ORDER BY path").all(fid) as { path: string; error: string | null }[];
-  const clashes = new Map<string, number[]>();
-  for (const p of summaries) if (p.name) { const k = p.name.toLowerCase(); clashes.set(k, [...(clashes.get(k) ?? []), p.id]); }
   return {
     folderId: fid, folder: root, people: summaries,
     cantRecognise: cant.map(ref), noFaces: none.map(ref),
     skipped: skipped.map(x => ({ path: x.path, reason: x.error ?? 'Skipped' })),
-    nameClashes: [...clashes.entries()].filter(([, ids]) => ids.length > 1).map(([, ids]) => ({ name: summaries.find(p => p.id === ids[0])!.name!, ids })),
     scanned: (d.prepare("SELECT COUNT(*) AS n FROM images WHERE folder_id = ? AND status = 'done'").get(fid) as { n: number }).n,
   };
 }
@@ -176,33 +171,6 @@ export function personPhotos(pid: number): PhotoRef[] {
   return rows.map(r => ({ imageId: r.imageId, faceId: r.faceId, name: path.basename(r.path), path: r.path, thumbUrl: r.thumb ? fileUrl(r.thumb) : '', faceUrl: faceUrl(r.chip), people: r.people }));
 }
 
-/** FACE-12: typed name wins; a person who already has a folder gets it renamed. Returns a clash instead of saving. */
-export function renamePerson(pid: number, rawName: string, allowClash = false): { ok: boolean; clashWith?: { id: number; label: string } } {
-  const d = getDb();
-  const name = rawName.replace(/\s+/g, ' ').trim() || null;
-  const p = d.prepare('SELECT id, folder_id, num, dir FROM people WHERE id = ?').get(pid) as { id: number; folder_id: number; num: number; dir: string | null };
-  if (name && !allowClash) {
-    const other = d.prepare('SELECT id, num, name FROM people WHERE folder_id = ? AND id != ? AND lower(name) = lower(?)').get(p.folder_id, pid, name) as { id: number; num: number; name: string } | undefined;
-    if (other) return { ok: false, clashWith: { id: other.id, label: personLabel(other) } };
-  }
-  if (p.dir && fs.existsSync(p.dir)) {
-    const target = path.join(path.dirname(p.dir), safeFolderName(name ?? personLabel({ name: null, num: p.num })));
-    if (target.toLowerCase() !== p.dir.toLowerCase()) {
-      if (fs.existsSync(target)) throw new Error(`A folder named "${path.basename(target)}" already exists there.`);
-      fs.renameSync(p.dir, target);
-      const root = (d.prepare('SELECT path FROM folders WHERE id = ?').get(p.folder_id) as { path: string }).path;
-      const sort = d.prepare("SELECT id FROM sorts WHERE folder_id = ? AND state = 'done' ORDER BY id DESC").get(p.folder_id) as { id: number } | undefined;
-      if (sort) appendLog(root, { sort: sort.id, op: 'rename-dir', from: p.dir, to: target, t: Date.now() });
-      renamePathsUnder(d, p.folder_id, p.dir, target);
-    } else if (target !== p.dir) {
-      fs.renameSync(p.dir, target); // only the letter case changed
-      renamePathsUnder(d, p.folder_id, p.dir, target);
-    }
-  }
-  d.prepare('UPDATE people SET name = ?, name_source = ?, name_detail = NULL, keep = 1 WHERE id = ?').run(name, name ? 'typed' : null, pid);
-  return { ok: true };
-}
-
 /** FACE-09 merge: all of `from`'s faces go to `into`. */
 export function mergePeople(fromId: number, intoId: number): void {
   const d = getDb();
@@ -212,7 +180,6 @@ export function mergePeople(fromId: number, intoId: number): void {
   if (from.dir && fs.existsSync(from.dir)) throw new Error(`${personLabel(from)} already has a folder from an earlier sort. Merge the other way round, or move those files by hand.`);
   tx(d, () => {
     d.prepare('UPDATE faces SET person_id = ? WHERE person_id = ?').run(intoId, fromId);
-    if (!into.name && from.name) d.prepare('UPDATE people SET name = ?, name_source = ?, name_detail = ? WHERE id = ?').run(from.name, from.name_source, from.name_detail, intoId);
     d.prepare('UPDATE people SET keep = 1 WHERE id = ?').run(intoId);
     d.prepare('DELETE FROM people WHERE id = ?').run(fromId);
   });
@@ -255,7 +222,6 @@ export function applySort(fid: number, ev: Pick<SortEvents, 'apply'>): Promise<A
   const plan = plans.get(fid) ?? makePlan(fid);
   const d = getDb();
   if (d.prepare("SELECT 1 FROM sorts WHERE folder_id = ? AND state = 'applying'").get(fid)) throw new Error('An earlier sort of this folder did not finish. Finish or undo it first.');
-  if (plan.freeBytes != null && plan.copyBytes > plan.freeBytes - 50e6) throw new Error('Not enough free disk space for the copies of group photos.');
   const sortId = Number(d.prepare("INSERT INTO sorts (folder_id, created, state, plan) VALUES (?, ?, 'applying', ?)").run(fid, Date.now(), JSON.stringify(plan)).lastInsertRowid);
   plans.delete(fid);
   let result: ApplyResult | null = null;

@@ -3,13 +3,17 @@
 //  • every copy is verified (size + SHA-1) before the job continues
 //  • group originals move to "Group photos" only after all their copies are verified (pass 2)
 //  • every action is appended to <root>/.clearup/sort-log.jsonl, which Undo replays backwards
+//  • v2.2: no copies — the people in each photo are written into it, and other people's folders list it in
+//    <root>/.clearup/people.json; an .xmp sidecar (RAW photos) moves together with its photo
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { ApplyProgress, ApplyResult, SortOp, SortPlan } from '../../shared/types';
 import { type Db, tx } from '../db';
+import { dropEmptyXmp, writePeople, writeTarget } from '../library/xmp';
+import { addShown, removeSort } from './people-manifest';
 
-export interface LogEntry { sort: number; op: 'mkdir' | 'move' | 'copy' | 'rename-dir'; from?: string; to: string; hash?: string; size?: number; t: number }
+export interface LogEntry { sort: number; op: 'mkdir' | 'move' | 'copy' | 'rename-dir' | 'tag'; from?: string; to: string; hash?: string; size?: number; people?: string[]; t: number }
 
 export const logPath = (root: string) => path.join(root, '.clearup', 'sort-log.jsonl');
 
@@ -66,6 +70,13 @@ function moveFile(from: string, to: string): void {
   }
 }
 
+/** A photo's .xmp sidecar (camera RAW) goes where the photo goes. Returns the sidecar move, if any. */
+function moveSidecar(from: string, to: string): { from: string; to: string } | null {
+  const a = writeTarget(from), b = writeTarget(to);
+  if (!a.sidecar || !fs.existsSync(a.target) || fs.existsSync(b.target)) return null;
+  try { moveFile(a.target, b.target); return { from: a.target, to: b.target }; } catch { return null; }
+}
+
 /** Is a planned op already done? (used when finishing an interrupted Apply) */
 function alreadyDone(op: SortOp): boolean {
   if (op.kind === 'mkdir') return fs.existsSync(op.to);
@@ -73,9 +84,10 @@ function alreadyDone(op: SortOp): boolean {
   return false; // copies are re-verified below
 }
 
-export async function applyPlan(db: Db, sortId: number, plan: SortPlan, onProgress: (p: ApplyProgress) => void, resume = false): Promise<ApplyResult> {
+export async function applyPlan(db: Db, sortId: number, plan: SortPlan, onProgress: (p: ApplyProgress) => void, resume = false, exiftool?: string): Promise<ApplyResult> {
   const root = plan.root;
-  const res: ApplyResult = { sortId, ok: true, moved: 0, copied: 0, groupMoved: 0, skipped: [] };
+  const res: ApplyResult = { sortId, ok: true, moved: 0, copied: 0, groupMoved: 0, tagged: 0, moves: [], files: [], skipped: [] };
+  const finalPath = new Map<SortOp, string>();       // where each photo is after its move (for tagging)
   const total = plan.ops.length;
   let done = 0;
   const tick = (phase: ApplyProgress['phase'], current?: string) => onProgress({ sortId, done, total, phase, current });
@@ -106,7 +118,8 @@ export async function applyPlan(db: Db, sortId: number, plan: SortPlan, onProgre
     tick('pass1', path.basename(op.to));
     const id = keyOf(op);
     try {
-      if (resume && alreadyDone(op)) { if (op.kind === 'move') setPath(op.to, op); done++; continue; }
+      if (op.kind === 'tag') { if (fs.existsSync(op.from!)) finalPath.set(op, op.from!); done++; continue; }
+      if (resume && alreadyDone(op)) { if (op.kind === 'move') { setPath(op.to, op); finalPath.set(op, op.to); } done++; continue; }
       if (blocked.has(id)) { done++; continue; }
       // Group photos: if the original can't be moved at the end, don't make copies either (no duplicates).
       const why = op.kind === 'move' || groupIds.has(id) ? canMove(id, op.from!) : (fs.existsSync(op.from!) ? null : 'File no longer exists');
@@ -117,6 +130,10 @@ export async function applyPlan(db: Db, sortId: number, plan: SortPlan, onProgre
         moveFile(op.from!, to);
         appendLog(root, { sort: sortId, op: 'move', from: op.from, to, t: Date.now() });
         setPath(to, op);
+        finalPath.set(op, to);
+        res.moves!.push({ from: op.from!, to });
+        const side = moveSidecar(op.from!, to);
+        if (side) appendLog(root, { sort: sortId, op: 'move', from: side.from, to: side.to, t: Date.now() });
         res.moved++;
       } else {
         let to = op.to;
@@ -167,6 +184,30 @@ export async function applyPlan(db: Db, sortId: number, plan: SortPlan, onProgre
     }
   }
 
+  // ---- v2.2: people written into the photos, and group photos listed in the other people's folders ----
+  const toTag = [...finalPath.entries()].filter(([op]) => op.people?.length);
+  if (toTag.length) {
+    const shown: { dir: string; file: string }[] = [];
+    for (const [op, file] of toTag) for (const o of op.alsoIn ?? []) if (fs.existsSync(o.dir)) shown.push({ dir: o.dir, file });
+    try { addShown(root, sortId, shown); res.tagged = new Set(shown.map(s => s.file)).size; }
+    catch (e) { res.skipped.push({ path: root, reason: `Could not save which folders show group photos: ${(e as Error).message}` }); }
+    if (exiftool) {
+      const setSize = db.prepare('UPDATE images SET size = ?, mtime = ? WHERE id = ?');
+      for (let i = 0; i < toTag.length; i += 100) {
+        const part = toTag.slice(i, i + 100);
+        tick('tagging', path.basename(part[0][1]));
+        const out = await writePeople(exiftool, part.map(([op, file]) => ({ file, add: op.people!, remove: [] }))).catch(e => part.map(([, file]) => ({ file, ok: false, error: String(e) })));
+        out.forEach((r, k) => {
+          const [op, file] = part[k];
+          if (!r.ok) { res.skipped.push({ path: file, reason: `People not written into the file: ${r.error ?? 'unknown error'}` }); return; }
+          appendLog(root, { sort: sortId, op: 'tag', to: file, people: op.people, t: Date.now() });
+          res.files!.push(file);
+          try { const st = fs.statSync(file); if (op.imageId != null) setSize.run(st.size, st.mtimeMs, op.imageId); } catch { /* gone */ }
+        });
+      }
+    }
+  }
+
   // ---- remember what this sort created, so later scans skip it and re-runs reuse the folders ----
   tx(db, () => {
     const addDir = db.prepare('INSERT OR IGNORE INTO sort_dirs (folder_id, dir) VALUES (?, ?)');
@@ -185,8 +226,16 @@ export async function applyPlan(db: Db, sortId: number, plan: SortPlan, onProgre
 }
 
 /** FACE-14: restore the folder to how it was before this sort (backwards through the log). */
-export function undoSort(db: Db, sortId: number, root: string, onProgress?: (p: ApplyProgress) => void): { restored: number; kept: { path: string; reason: string }[] } {
+export async function undoSort(db: Db, sortId: number, root: string, onProgress?: (p: ApplyProgress) => void, exiftool?: string): Promise<{ restored: number; kept: { path: string; reason: string }[] }> {
   const entries = readLog(root, sortId).reverse();
+  // v2.2: people written into the photos come out first (at the paths they have now), then the moves go back.
+  const tags = entries.filter(e => e.op === 'tag' && e.people?.length && fs.existsSync(e.to));
+  if (tags.length && exiftool) {
+    onProgress?.({ sortId, done: 0, total: entries.length, phase: 'undo', current: 'people tags' });
+    for (let i = 0; i < tags.length; i += 100) await writePeople(exiftool, tags.slice(i, i + 100).map(e => ({ file: e.to, add: [], remove: e.people! }))).catch(() => []);
+    await dropEmptyXmp(exiftool, tags.map(e => e.to)).catch(() => {});
+  }
+  try { removeSort(root, sortId); } catch { /* manifest unreadable: nothing to take out */ }
   const kept: { path: string; reason: string }[] = [];
   let restored = 0, done = 0;
   const fid = (db.prepare('SELECT folder_id FROM sorts WHERE id = ?').get(sortId) as { folder_id: number }).folder_id;
@@ -200,6 +249,7 @@ export function undoSort(db: Db, sortId: number, root: string, onProgress?: (p: 
   for (const e of entries) {
     onProgress?.({ sortId, done: done++, total: entries.length, phase: 'undo', current: path.basename(e.to) });
     try {
+      if (e.op === 'tag') continue;
       if (e.op === 'copy') {
         if (!fs.existsSync(e.to)) continue;
         if (sha1(e.to) === e.hash) { fs.rmSync(e.to); restored++; }

@@ -9,23 +9,17 @@ files:
   - out/**
   - package.json
   - "!**/*.map"
-  - "!node_modules/@tesseract.js-data/**"          # language data ships in resources/ocr
   - "!node_modules/onnxruntime-node/bin/**/darwin/**"
   - "!node_modules/onnxruntime-node/bin/**/arm64/**"
-  - "!node_modules/tesseract.js-core/*.wasm.js"   # browser-only copies
 asarUnpack:
   - "**/node_modules/sharp/**/*"
   - "**/node_modules/@img/**/*"
   - "**/node_modules/onnxruntime-node/**/*"
   - "**/node_modules/onnxruntime-common/**/*"
-  - "**/node_modules/tesseract.js/**/*"
-  - "**/node_modules/tesseract.js-core/**/*"
   - "out/main/sort-worker-*.js"
 extraResources:
   - from: resources/models          # Fast model + face models only; quality models download on first use
     to: models
-  - from: resources/ocr
-    to: ocr
   - from: resources/geo             # offline place names (GeoNames, CC BY 4.0)
     to: geo
   - from: resources/licences
@@ -43,10 +37,8 @@ win:
     - out/**
     - package.json
     - "!**/*.map"
-    - "!node_modules/@tesseract.js-data/**"
     - "!node_modules/onnxruntime-node/bin/**/darwin/**"
     - "!node_modules/onnxruntime-node/bin/**/arm64/**"
-    - "!node_modules/tesseract.js-core/*.wasm.js"
     - "!node_modules/onnxruntime-node/bin/**/linux/**"
     - "!node_modules/@img/sharp-*linux*/**"
   extraResources:
@@ -84,10 +76,8 @@ linux:
     - out/**
     - package.json
     - "!**/*.map"
-    - "!node_modules/@tesseract.js-data/**"
     - "!node_modules/onnxruntime-node/bin/**/darwin/**"
     - "!node_modules/onnxruntime-node/bin/**/arm64/**"
-    - "!node_modules/tesseract.js-core/*.wasm.js"
     - "!node_modules/onnxruntime-node/bin/**/win32/**"
     - "!node_modules/@img/sharp-win32*/**"
   extraResources:

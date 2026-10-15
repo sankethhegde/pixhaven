@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { mediaKind, type DriveInfo, type DriveKind, type FolderListing, type MediaEntry } from '../../shared/types';
+import { shownIn } from '../sorter/people-manifest';
 
 const IS_WIN = process.platform === 'win32';
 
@@ -113,6 +114,14 @@ export async function listFolder(dir: string, showSystem: boolean): Promise<Fold
       const s = stats[j];
       if (s) entries.push({ name: d.name, path: path.join(dir, d.name), kind: mediaKind(d.name)!, size: s.size, mtime: s.mtimeMs });
     });
+  }
+  // v2.2: a person's folder from Sort by person also shows the group photos kept in other people's folders.
+  let shown: string[] = [];
+  try { shown = shownIn(dir); } catch { /* list unreadable: just this folder's own files */ }
+  for (const f of shown) {
+    if (path.dirname(f).toLowerCase() === dir.toLowerCase() || !mediaKind(f)) continue;
+    const s = await fs.promises.stat(f).catch(() => null);
+    if (s) entries.push({ name: path.basename(f), path: f, kind: mediaKind(f)!, size: s.size, mtime: s.mtimeMs, taggedFrom: path.basename(path.dirname(f)) });
   }
   return { dir, parent, entries, hiddenFiles };
 }

@@ -105,16 +105,16 @@ async function sortCmd(pos: string[], opt: Record<string, string | true>): Promi
   if (opt.subfolders) overrideSettings({ sort: { ...getSettings().sort, includeSubfolders: true } });
   const st = sort.folderStatus(root);
   if (st.interrupted) throw new Error('An earlier sort of this folder did not finish. Open PixHaven to finish or undo it, or run "pixhaven undo".');
-  const { done } = sort.scanFolder(root, { scan: p => { if (p.phase === 'scanning') progress('Scanning', p.done, p.total); else if (p.phase !== 'done') err(p.phase === 'grouping' ? 'Grouping faces…' : p.phase === 'naming' ? 'Looking for names…' : ''); } });
+  const { done } = sort.scanFolder(root, { scan: p => { if (p.phase === 'scanning') progress('Scanning', p.done, p.total); else if (p.phase !== 'done') err(p.phase === 'grouping' ? 'Grouping faces…' : ''); } });
   const r = await done;
   const rev = sort.review(r.folderId);
   out(`People in ${root}:`);
-  for (const p of rev.people) out(`  ${p.label}\t${p.photos} photo(s)${p.unsorted ? '\t(→ Unsorted)' : ''}${p.sourceDetail ? `\t${p.sourceDetail}` : ''}`);
+  for (const p of rev.people) out(`  ${p.label}\t${p.photos} photo(s)${p.unsorted ? '\t(→ Unsorted)' : ''}`);
   const plan = sort.makePlan(r.folderId);
-  out(`Plan: ${plan.counts.folders} folders to create, ${plan.counts.moves} moves, ${plan.counts.copies} copies, ${plan.counts.groupMoves} to "Group photos", ${plan.counts.stays} stay.`);
+  out(`Plan: ${plan.counts.folders} folders to create, ${plan.counts.moves} moves, ${plan.counts.tagged} group photos also shown in other people's folders, ${plan.counts.stays} stay.`);
   if (!opt.apply) { out('Dry run only. Add --apply to move the files (review names in the app first if you like).'); return 0; }
   const res = await sort.applySort(r.folderId, { apply: p => progress('Applying', p.done, p.total) });
-  out(`Done: ${res.moved} moved, ${res.copied} copied, ${res.groupMoved} group originals moved, ${res.skipped.length} left in place.`);
+  out(`Done: ${res.moved} moved, ${res.tagged ?? 0} group photos tagged, ${res.skipped.length} left in place.`);
   for (const s of res.skipped) out(`  kept\t${s.path}\t${s.reason}`);
   return res.ok ? 0 : 1;
 }

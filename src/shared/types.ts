@@ -111,14 +111,11 @@ export interface SortSettings {
   minFaceSize: number;          // px on the ≤1280 working image (FACE-02)
   noFacesFolder: boolean;       // FACE-07 option
   minPhotos: number;            // FACE-16: smaller groups go to "Unsorted"
-  useOcr: boolean;              // FACE-11
 }
-
-export type NameSource = 'typed' | 'file' | 'ocr';
 
 export interface ScanProgress {
   folder: string;
-  phase: 'listing' | 'scanning' | 'grouping' | 'naming' | 'done' | 'cancelled' | 'error';
+  phase: 'listing' | 'scanning' | 'grouping' | 'done' | 'cancelled' | 'error';
   done: number;
   total: number;
   faces: number;
@@ -132,11 +129,8 @@ export interface ScanProgress {
 
 export interface PersonSummary {
   id: number;
-  label: string;               // name or "Person 03"
-  name: string | null;
+  label: string;               // "Person 3" (or the folder an earlier sort gave them)
   num: number;
-  source: NameSource | null;
-  sourceDetail: string | null; // e.g. "from file name: Ravi_bday.jpg"
   photos: number;
   faceUrls: string[];          // up to 4 face thumbnails
   dir: string | null;          // folder on disk after Apply
@@ -160,19 +154,20 @@ export interface ReviewData {
   cantRecognise: PhotoRef[];   // faces found, none usable
   noFaces: PhotoRef[];
   skipped: { path: string; reason: string }[];
-  nameClashes: { name: string; ids: number[] }[];
   scanned: number;
 }
 
-export type SortOpKind = 'mkdir' | 'move' | 'copy';
+export type SortOpKind = 'mkdir' | 'move' | 'copy' | 'tag';
 export interface SortOp {
   kind: SortOpKind;
-  pass: 0 | 1 | 2;             // 0 = folders, 1 = moves + copies, 2 = group originals last
+  pass: 0 | 1 | 2;             // 0 = folders, 1 = moves (+ copies in older plans), 2 = group originals last (older plans)
   from?: string;
   to: string;
   imageId?: number;
   personId?: number | null;
   bytes?: number;
+  people?: string[];           // v2.2: everyone in the photo, written into it as tags (PersonInImage)
+  alsoIn?: { label: string; dir: string }[];   // v2.2: other people's folders that show this photo
 }
 
 export interface SortTarget { key: string; label: string; dir: string; exists: boolean; personId: number | null }
@@ -183,12 +178,11 @@ export interface SortPlan {
   targets: SortTarget[];
   ops: SortOp[];
   stays: { path: string; reason: string }[];
-  counts: { folders: number; moves: number; copies: number; groupMoves: number; stays: number };
-  copyBytes: number;
+  counts: { folders: number; moves: number; tagged: number; stays: number };
   freeBytes: number | null;
 }
 
-export interface ApplyProgress { sortId: number; done: number; total: number; current?: string; phase: 'pass1' | 'pass2' | 'undo' | 'done' | 'error'; error?: string }
+export interface ApplyProgress { sortId: number; done: number; total: number; current?: string; phase: 'pass1' | 'pass2' | 'tagging' | 'undo' | 'done' | 'error'; error?: string }
 
 export interface ApplyResult {
   sortId: number;
@@ -196,6 +190,9 @@ export interface ApplyResult {
   moved: number;
   copied: number;
   groupMoved: number;
+  tagged?: number;             // v2.2: photos also shown in other people's folders
+  moves?: { from: string; to: string }[];
+  files?: string[];            // v2.2: photos the people were written into (where they are now)
   skipped: { path: string; reason: string }[];
 }
 
@@ -293,7 +290,10 @@ export interface LibrarySettings {
 export type DriveKind = 'fixed' | 'removable' | 'network' | 'cd' | 'place';
 export interface DriveInfo { path: string; name: string; kind: DriveKind; total?: number; free?: number }
 
-export interface MediaEntry { name: string; path: string; kind: 'folder' | MediaKind; size: number; mtime: number }
+export interface MediaEntry {
+  name: string; path: string; kind: 'folder' | MediaKind; size: number; mtime: number;
+  taggedFrom?: string;        // v2.2: a group photo shown in this person's folder, kept in the folder of this name
+}
 export interface FolderListing {
   dir: string;
   parent: string | null;

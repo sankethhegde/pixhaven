@@ -1,15 +1,13 @@
-// Sort-by-person pipeline steps that touch the database: scan images, group faces, name people.
+// Sort-by-person pipeline steps that touch the database: scan images, group faces into people.
 // No Electron imports — runs in the scan worker thread (and in tests).
 import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
 import type { SortSettings } from '../../shared/types';
 import { type Db, tx, embToBlob, blobToEmb, nextPersonNum } from '../db';
-import { openImage, readImageBuffer } from '../image-io';
-import { FaceEngine } from './detect';
+import { openImage } from '../image-io';
+import { FaceEngine, FACE_MODEL } from './detect';
 import { cluster } from './cluster';
-import { bestFileName } from './names-file';
-import type { NameReader } from './names-ocr';
 
 export interface ListedFile { path: string; size: number; mtime: number; cloud: boolean }
 export const MIN_SHARPNESS = 20; // variance of Laplacian on the 112-px chip; below = too blurry to recognise
@@ -43,6 +41,12 @@ export function syncImages(db: Db, fid: number, files: ListedFile[], keepDirs: s
       const inKept = keepDirs.some(d => g.path.toLowerCase().startsWith(d.toLowerCase() + path.sep));
       if (!inKept || !fs.existsSync(g.path)) del.run(g.id);
     }
+    // v2.2: fingerprints from an older face model are made again — sorted photos too, so the people already in
+    // folders keep recognising new photos (who is who is kept: see scanImage).
+    const stale = db.prepare(`SELECT DISTINCT i.id FROM images i JOIN faces f ON f.image_id = i.id
+      WHERE i.folder_id = ? AND i.status = 'done' AND f.usable = 1 AND f.model <> ?`).all(fid, FACE_MODEL) as { id: number }[];
+    const queued = new Set(todo);
+    for (const s of stale) if (!queued.has(s.id)) todo.push(s.id);
     db.prepare("UPDATE images SET error = 'Online-only file (not downloaded)' WHERE folder_id = ? AND status = 'skipped' AND error IS NULL").run(fid);
     return todo;
   });
@@ -68,13 +72,19 @@ export async function scanImage(db: Db, engine: FaceEngine, imageId: number, thu
   const thumb = path.join(thumbsDir, `img-${imageId}.jpg`);
   await sharp(data, raw).resize(320, 320, { fit: 'inside' }).jpeg({ quality: 78 }).toFile(thumb);
 
-  const ins = db.prepare('INSERT INTO faces (image_id, x, y, w, h, score, sharpness, usable, emb) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const ins = db.prepare('INSERT INTO faces (image_id, x, y, w, h, score, sharpness, usable, emb, model, quality, person_id, removed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const setChip = db.prepare('UPDATE faces SET chip = ? WHERE id = ?');
   const ids: number[] = [];
+  // A photo scanned again (new face model, or edited) keeps who is who for faces the user or an earlier sort settled.
+  const old = db.prepare(`SELECT f.x, f.y, f.w, f.h, f.person_id, f.removed, p.keep FROM faces f LEFT JOIN people p ON p.id = f.person_id
+    WHERE f.image_id = ?`).all(imageId) as { x: number; y: number; w: number; h: number; person_id: number | null; removed: number; keep: number | null }[];
+  const before = (f: { x: number; y: number; w: number; h: number }) => old.find(o => (o.keep || o.removed) && overlap(o, f) > 0.5);
   tx(db, () => {
     db.prepare('DELETE FROM faces WHERE image_id = ?').run(imageId);
     for (const f of faces) {
-      ids.push(Number(ins.run(imageId, f.x, f.y, f.w, f.h, f.score, f.sharpness, f.usable ? 1 : 0, f.emb ? embToBlob(f.emb) : null).lastInsertRowid));
+      const was = before(f);
+      ids.push(Number(ins.run(imageId, f.x, f.y, f.w, f.h, f.score, f.sharpness, f.usable ? 1 : 0, f.emb ? embToBlob(f.emb) : null, FACE_MODEL, f.quality,
+        was && !was.removed ? was.person_id : null, was?.removed ?? 0).lastInsertRowid));
     }
     db.prepare("UPDATE images SET status = 'done', error = NULL, faces = ?, width = ?, height = ?, thumb = ?, seen = 1 WHERE id = ?")
       .run(faces.length, W, H, thumb, imageId);
@@ -92,14 +102,21 @@ export async function scanImage(db: Db, engine: FaceEngine, imageId: number, thu
   return { faces: faces.length, embs: faces.filter(f => f.emb).map(f => f.emb!) };
 }
 
+/** Overlap of two boxes (intersection over union). */
+function overlap(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): number {
+  const x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y), x2 = Math.min(a.x + a.w, b.x + b.w), y2 = Math.min(a.y + a.h, b.y + b.h);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  return inter / (a.w * a.h + b.w * b.h - inter || 1);
+}
+
 /** Group all usable faces of a folder into people (FACE-03). People the user kept stay as they are. */
 export function groupFolder(db: Db, fid: number, strictness: number): number {
   const rows = db.prepare(`
-    SELECT f.id, f.image_id, f.emb, p.id AS pid, p.keep FROM faces f
+    SELECT f.id, f.image_id, f.emb, f.quality, p.id AS pid, p.keep FROM faces f
     JOIN images i ON i.id = f.image_id LEFT JOIN people p ON p.id = f.person_id
-    WHERE i.folder_id = ? AND f.usable = 1 AND f.removed = 0 AND f.emb IS NOT NULL`).all(fid) as
-    { id: number; image_id: number; emb: Uint8Array; pid: number | null; keep: number | null }[];
-  const result = cluster(rows.map(r => ({ id: r.id, imageId: r.image_id, emb: blobToEmb(r.emb), anchor: r.keep ? r.pid : null })), strictness);
+    WHERE i.folder_id = ? AND f.usable = 1 AND f.removed = 0 AND f.emb IS NOT NULL AND f.model = ?`).all(fid, FACE_MODEL) as
+    { id: number; image_id: number; emb: Uint8Array; quality: number | null; pid: number | null; keep: number | null }[];
+  const result = cluster(rows.map(r => ({ id: r.id, imageId: r.image_id, emb: blobToEmb(r.emb), anchor: r.keep ? r.pid : null, quality: r.quality ?? 1 })), strictness);
 
   return tx(db, () => {
     // Drop automatic people; their faces are re-assigned below.
@@ -117,41 +134,4 @@ export function groupFolder(db: Db, fid: number, strictness: number): number {
     db.prepare(`DELETE FROM people WHERE folder_id = ? AND dir IS NULL AND id NOT IN (SELECT DISTINCT person_id FROM faces WHERE person_id IS NOT NULL)`).run(fid);
     return (db.prepare('SELECT COUNT(*) AS n FROM people WHERE folder_id = ?').get(fid) as { n: number }).n;
   });
-}
-
-/** Photos where this person is the only recognised person (names are only taken from these). */
-export function singlePersonPhotos(db: Db, pid: number): { id: number; path: string; faceH: number }[] {
-  return db.prepare(`
-    SELECT i.id, i.path, MAX(f.h) AS faceH FROM images i JOIN faces f ON f.image_id = i.id
-    WHERE f.person_id = ? AND f.removed = 0 AND i.status = 'done'
-      AND (SELECT COUNT(DISTINCT f2.person_id) FROM faces f2 WHERE f2.image_id = i.id AND f2.person_id IS NOT NULL AND f2.removed = 0) = 1
-    GROUP BY i.id ORDER BY faceH DESC`).all(pid) as { id: number; path: string; faceH: number }[];
-}
-
-/** FACE-10/11: give unnamed people a name from file names, then (optionally) from text in their photos. */
-export async function nameFolder(db: Db, fid: number, reader: NameReader | null, onPerson?: (done: number, total: number) => void): Promise<void> {
-  const people = db.prepare("SELECT id FROM people WHERE folder_id = ? AND (name_source IS NULL OR name_source != 'typed') ORDER BY num").all(fid) as { id: number }[];
-  const set = db.prepare('UPDATE people SET name = ?, name_source = ?, name_detail = ? WHERE id = ?');
-  let done = 0;
-  for (const p of people) {
-    const photos = singlePersonPhotos(db, p.id);
-    const byFile = bestFileName(photos.map(ph => ph.path));
-    if (byFile) {
-      set.run(byFile.name, 'file', path.basename(byFile.from), p.id);
-    } else {
-      let found: { name: string; from: string } | null = null;
-      if (reader) {
-        // Stop at the first good name; look at a few of the clearest single-person photos only.
-        for (const ph of photos.slice(0, 4)) {
-          try {
-            const n = await reader.read(ph.path, readImageBuffer);
-            if (n) { found = { name: n, from: ph.path }; break; }
-          } catch { /* unreadable: try the next photo */ }
-        }
-      }
-      if (found) set.run(found.name, 'ocr', path.basename(found.from), p.id);
-      else set.run(null, null, null, p.id);
-    }
-    onPerson?.(++done, people.length);
-  }
 }

@@ -55,6 +55,19 @@ export class MediaIndex {
       CREATE TABLE IF NOT EXISTS dirs (path TEXT PRIMARY KEY ${CI}, root INTEGER NOT NULL, parent TEXT NOT NULL ${CI}, gen INTEGER NOT NULL) WITHOUT ROWID;
       CREATE INDEX IF NOT EXISTS dirs_parent ON dirs(parent);
       CREATE TABLE IF NOT EXISTS pending (root INTEGER NOT NULL, dir TEXT NOT NULL ${CI}, PRIMARY KEY (root, dir)) WITHOUT ROWID;`);
+    // v2.2: the modified time at which stars and labels were last read from the file (null = not read yet).
+    const cols = (this.db.prepare('PRAGMA table_info(files)').all() as { name: string }[]).map(c => c.name);
+    if (!cols.includes('tags_at')) this.db.exec('ALTER TABLE files ADD COLUMN tags_at INTEGER');
+  }
+
+  /** Files on connected drives whose stars and labels have not been read since they last changed. */
+  tagsTodo(limit: number): FileRef[] {
+    return this.db.prepare(`SELECT f.path, f.size, f.mtime FROM files f JOIN roots r ON r.id = f.root
+      WHERE r.offline = 0 AND (f.tags_at IS NULL OR f.tags_at <> f.mtime) LIMIT ?`).all(limit) as unknown as FileRef[];
+  }
+  tagsDone(files: FileRef[]): void {
+    const up = this.db.prepare('UPDATE files SET tags_at = mtime WHERE path = ?');
+    this.tx(() => { for (const f of files) up.run(f.path); });
   }
 
   close(): void { this.db.close(); }

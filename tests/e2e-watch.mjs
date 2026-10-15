@@ -231,7 +231,8 @@ export default async function run(win, app) {
       check('settings: watched folders card lists both', (await js(`document.querySelectorAll('[data-watched]').length`)) === 2);
       const surf = path.join(A, 'Goa 2024', 'surf.mp4');
       const surfDate = fs.statSync(surf).mtimeMs;
-      await clickSel('[role=switch][aria-label="Also write stars and labels into the files"]');
+      if ((await js(`document.querySelector('[role=switch][aria-label="Also write stars and labels into the files"]').getAttribute('aria-checked')`)) !== 'true')
+        await clickSel('[role=switch][aria-label="Also write stars and labels into the files"]');
       await waitFor(async () => (await js('window.clearup.tags.writeStatus()')).written >= 5, 30000);
       const ws = await js('window.clearup.tags.writeStatus()');
       await js(`document.querySelector('[aria-label="Watched folders settings"]').scrollIntoView({ block: 'start' })`);

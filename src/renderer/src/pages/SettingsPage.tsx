@@ -121,7 +121,7 @@ export function SettingsPage({ settings, gpu, dedicated, version, onSettings, on
           <Row label="Face-match strictness" hint="Stricter keeps look-alikes apart but may split one person into two groups. Looser does the reverse. Applies the next time you scan a folder (scanning again is quick: only new photos are read).">
             <div className="flex items-center gap-2 text-xs text-muted">
               Looser
-              <input type="range" min={0.3} max={0.55} step={0.01} value={settings.sort.strictness} aria-label="Face-match strictness"
+              <input type="range" min={0.26} max={0.46} step={0.01} value={settings.sort.strictness} aria-label="Face-match strictness"
                 onChange={e => setSort({ strictness: Number(e.target.value) })} className="w-32" />
               Stricter
             </div>
@@ -140,9 +140,6 @@ export function SettingsPage({ settings, gpu, dedicated, version, onSettings, on
           </Row>
           <Row label="Move photos without faces to “No faces”" hint="Off: they stay where they are.">
             <Toggle label="No faces folder" checked={settings.sort.noFacesFolder} onChange={v => setSort({ noFacesFolder: v })} />
-          </Row>
-          <Row label="Read names from text in photos" hint="Name badges, captions, ID cards. Offline, English. Slower on large folders.">
-            <Toggle label="Read names from text" checked={settings.sort.useOcr} onChange={v => setSort({ useOcr: v })} />
           </Row>
           <Row label="Saved face data" hint={`Face fingerprints and thumbnails, kept only on this computer${faceBytes != null ? ` (${fmtBytes(faceBytes)})` : ''}. Deleting it does not touch your photos.`}>
             {confirmDelete ? (

@@ -38,6 +38,14 @@ export function Viewer({ items, index, infos, onIndex, onClose, onUpscale, onSor
   useEffect(() => store.set('viewer.tags', tagsOpen ? '1' : '0'), [tagsOpen]);
   T.useTags();
   useEffect(() => { void T.loadFor([T.ref(item)]); }, [item]);
+  // v2.2: people named inside the photo (Sort by person on any computer, or another photo app).
+  const [people, setPeople] = useState<{ path: string; names: string[] } | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (item.kind === 'image') api.tags.peopleIn(item.path).then(names => { if (live) setPeople({ path: item.path, names }); }).catch(() => {});
+    return () => { live = false; };
+  }, [item.path, item.kind]);
+  const names = people?.path === item.path ? people.names : [];
 
   useEffect(() => {
     const el = stage.current!;
@@ -114,9 +122,11 @@ export function Viewer({ items, index, infos, onIndex, onClose, onUpscale, onSor
         <button onClick={onClose} className="h-9 w-9 rounded-lg hover:bg-white/10 flex items-center justify-center" aria-label="Close viewer"><Icon name="x" /></button>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 min-w-0"><span className="font-medium truncate" data-testid="viewer-name">{item.name}</span>
-            {(T.tagsOf(item.path)?.stars ?? 0) > 0 && <Stars value={T.tagsOf(item.path)!.stars} size={13} />}</div>
+            {(T.tagsOf(item.path)?.stars ?? 0) > 0 && <Stars value={T.tagsOf(item.path)!.stars} size={13} />}
+            {names.length > 0 && <span className="flex items-center gap-1 text-xs text-white/75 truncate" data-testid="viewer-people" title="People in this photo">
+              <Icon name="people" size={13} />{names.join(', ')}</span>}</div>
           <div className="text-xs text-white/60 truncate">
-            {[dims, fmtBytes(item.size), new Date(item.mtime).toLocaleString(), info?.duration ? fmtClock(info.duration) : '', `${index + 1} of ${items.length}`].filter(Boolean).join(' · ')}
+            {[dims, fmtBytes(item.size), new Date(item.mtime).toLocaleString(), info?.duration ? fmtClock(info.duration) : '', item.taggedFrom ? `kept in “${item.taggedFrom}”` : '', `${index + 1} of ${items.length}`].filter(Boolean).join(' · ')}
             {ready && pic.converted && <span className="ml-2 text-white/40">{raw ? 'Showing the camera\'s built-in preview' : 'Converted preview'}</span>}
           </div>
         </div>

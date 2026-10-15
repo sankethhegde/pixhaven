@@ -96,6 +96,7 @@ interface TagsApi {
   deletePlaylist(id: number): Promise<Playlist[]>;
   writeStatus(): Promise<FileWriteStatus>;
   setWriteToFiles(on: boolean): Promise<number>;
+  peopleIn(path: string): Promise<string[]>;
 }
 interface WatchApi {
   list(): Promise<WatchedFolder[]>;
@@ -116,6 +117,7 @@ interface Api {
   onWatchStatus(cb: (s: WatchedFolder[]) => void): Off;
   onWatchChanged(cb: (c: WatchChange) => void): Off;
   onWriteStatus(cb: (s: FileWriteStatus) => void): Off;
+  onTagsFromFiles(cb: (paths: string[]) => void): Off;
   tidy: TidyApi;
   onTidyProgress(cb: (p: ScanProgress) => void): Off;
   onTidyScanned(cb: (r: { folderId: number; cancelled?: boolean }) => void): Off;

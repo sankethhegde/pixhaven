@@ -3,8 +3,9 @@
 Offline AI image upscaler and photo organiser for Windows and Linux (Electron + React + TypeScript + Tailwind).
 Upscaling runs on the GPU through [realesrgan-ncnn-vulkan](https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan)
 (Intel Arc / Iris Xe, NVIDIA, AMD), or on the CPU through SwiftShader when no GPU works. "Sort by person" finds faces
-with YuNet + SFace (ONNX Runtime, DirectML on the GPU), groups them, reads names from file names and from text in photos
-(Tesseract.js, offline), and moves photos into one folder per person — after a review and a dry run, with full undo.
+with YuNet + ArcFace (ONNX Runtime, DirectML on the GPU), groups them into "Person 1", "Person 2"…, and moves each photo
+into one folder per person — group photos are tagged for the other people instead of copied — after a review and a dry
+run, with full undo.
 "Tidy up" finds duplicate and blurry photos and sorts folders by date or place (offline GeoNames data).
 The media library browses every drive showing only photos and videos, with thumbnails for phone HEIC, camera RAW
 and every common video format (bundled FFmpeg), plays every video, and keeps labels, star ratings and playlists for
@@ -16,7 +17,7 @@ Status: **Phases 0–5, v2.0 Phases A (Browse), B (Play), C (Labels and stars) a
 
 ```bash
 npm install
-npm run setup:engine     # downloads the engine, models, face models, OCR data, places, FFmpeg and ExifTool into resources/
+npm run setup:engine     # downloads the engine, models, face models, places, FFmpeg and ExifTool into resources/
 ```
 
 ## Commands
@@ -24,7 +25,7 @@ npm run setup:engine     # downloads the engine, models, face models, OCR data, 
 | Command | What it does |
 |---|---|
 | `npm run dev` | Run the app with hot reload (F12 opens DevTools) |
-| `npm test` | Unit tests: size planning, file naming, BMP reader, name rules, face grouping, dry run → apply → undo on real files |
+| `npm test` | Unit tests: size planning, file naming, BMP reader, face grouping (weak faces), labels read back from files, dry run → apply → undo on real files |
 | `npm run e2e` | Builds, opens the real app, drives the upscale UI and GPU engine (incl. queue, resume, cancel); screenshots + `results.json` in `e2e-output/` |
 | `npm run e2e:tidy` | Phase 5: Home theme switch, duplicates & blurry, sort by date / place, undo |
 | `npm run e2e:watch` | v2.1, two launches with their own app data: watch two folders, instant search from the index, keyboard shortcuts, labels and stars on a photo in the viewer, "Family, 4+ stars" over folders never opened, save a playlist and play it (goes on by itself), indexing paused during playback, live changes (new, moved with labels, renamed subfolder, deleted), photos not kept open, writing into MP4/JPG/.xmp and keeping it current; restart: everything kept, a file added while closed is found |
@@ -33,9 +34,9 @@ npm run setup:engine     # downloads the engine, models, face models, OCR data, 
 | `npm run e2e:player` | v2.0 Phase B: every test video plays (direct / repackaged / converted), 4K HEVC + AV1 on the hardware decoder with no dropped frames, sound tracks, subtitles, seeking, preview, speed, full screen, resume, recently played |
 | `npm run e2e:library` | v2.0 Phase A: drives, media-only browsing, a thumbnail for every format, list view, search, viewer, no-permission folder, a drive appearing (subst), a 5,000-file folder |
 | `node tests/make-media.mjs <folder>` | Builds the mixed-format test folder (17 photo formats incl. HEIC and 7 RAW, 17 video formats) |
-| `npm run e2e:sort` | Same for Sort by person: scan → names (file + OCR) → rename → dry run → apply → re-scan → undo, on 22 public test photos |
+| `npm run e2e:sort` | Same for Sort by person: scan → review → dry run → apply (no copies, people tagged, folders checked against the photos' real names) → re-scan → undo, on ~50 public test photos (`phase0/fetch-test-photos.mjs`, or set `CLEARUP_TESTPHOTOS`) |
 | `npm run dist` | Type-check, build and make the Windows installer `dist/PixHaven-Setup-<version>.exe` |
-| `PixHaven.exe --selftest out.json` | Installed app: GPU check, one real upscale, a face scan, OCR, a video thumbnail, an on-the-fly video conversion, labels export/import, ExifTool writing and the folder index; JSON report, then exits. Add `--cpu` to test CPU mode, `--with-download` to test the model download |
+| `PixHaven.exe --selftest out.json` | Installed app: GPU check, one real upscale, a face scan, a video thumbnail, an on-the-fly video conversion, labels export/import, ExifTool writing and reading back (labels, stars, people) and the folder index; JSON report, then exits. Add `--cpu` to test CPU mode, `--with-download` to test the model download |
 
 ## Command line
 
@@ -72,15 +73,17 @@ src/main/            Electron main process
   models.ts            quality models download on first use (pinned SHA-256)
   updater.ts           electron-updater (active once a publish target is configured)
   db.ts                face database (node:sqlite, built into Electron)
-  sort-service.ts      Sort by person: file listing (skips OneDrive online-only), worker, review/merge/split/rename
-  faces/               detect.ts (YuNet+SFace), cluster.ts, names-file.ts, names-ocr.ts, pipeline.ts, sort-worker.ts
-  sorter/              plan.ts (dry run), apply.ts (two-pass apply, verified copies, log, undo)
+  sort-service.ts      Sort by person: file listing (skips OneDrive online-only), worker, review/merge/split
+  faces/               detect.ts (YuNet + ArcFace, face quality), cluster.ts, pipeline.ts, sort-worker.ts
+  sorter/              plan.ts (dry run), apply.ts (apply, people written into photos, log, undo),
+                       people-manifest.ts (.clearup/people.json: group photos shown in other people's folders)
   tidy/                inspect.ts (SHA-1, dHash, blur, EXIF date/GPS), dupes.ts, organize.ts, geo.ts (offline places)
   tidy-service.ts      Tidy up: scan, results, previews, apply, Recycle Bin
   cli.ts               command-line mode (--cli)
   library-service.ts   media library: drives, folders, thumbnails, viewer previews, search
   tags-service.ts      labels and stars: library.db location, daily backups, export/import, rename/move in the app,
-                       playlists, re-linking moved files, writing into files (TAG-08)
+                       playlists, re-linking moved files, writing into files (TAG-08) and reading them back
+  library/file-tags.ts reads stars, labels and people out of files and sidecars (one ExifTool process kept open)
   watch-service.ts     watched folders: background indexing, live changes (one recursive watch per folder), offline drives
   player-service.ts    video player: sessions, clearup://media (byte ranges) and clearup://stream (FFmpeg), resume
   library/             browse.ts (drives, listing, system folders, search), thumbs.ts (cache + queue),
@@ -102,10 +105,20 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   GPU out-of-memory halves the tile size and retries. No working Vulkan GPU → CPU mode, with a warning.
 - **Upscale output:** `name_upscaled.ext` next to the original (or a chosen folder), never overwriting. EXIF kept.
   Re-running a folder skips images that already have a result (Settings → Upscaling folders).
-- **Sort by person:** default face-match strictness 0.42 (Phase 0: zero wrong merges). Names only come from
-  single-person photos. Apply runs in two passes; copies are hash-verified; group originals move last.
-  Every action is logged in `<folder>/.clearup/sort-log.jsonl`; Undo replays it backwards. An interrupted Apply
-  can be finished or undone next time. Folders made by a sort are skipped by later scans; re-runs add new photos.
+- **Sort by person (0.7):** fingerprints come from ArcFace ResNet-100 (ONNX Model Zoo, Apache-2.0, 8-bit, 65 MB), each
+  face read as is and mirrored. On test faces made darker, brighter, side-lit, smaller or blurred it still matched the
+  same person 97–100% of the time at the default strictness 0.34, against 84–97% for the old SFace at its 0.42 default,
+  with almost no wrong matches (SFace made 10–70× more at looser settings). Every face gets a quality score (size,
+  sharpness, light, head turn): weak faces never start or link groups — they only join a clear match (threshold + 0.05,
+  and 0.07 ahead of the next person), otherwise their photo stays put ("Couldn't recognise"). Fingerprints from the old
+  model are made again on the next scan; who-is-who the user settled (and sorted folders) is kept by face position.
+  People are "Person 1", "Person 2"… — names are no longer read from file names or text, and folders are never renamed.
+  A photo with several people moves once, to the person with the biggest face; everyone in it is written into the photo
+  (XMP `PersonInImage`, read by Lightroom, digiKam…), and the other people's folders show it from
+  `<folder>/.clearup/people.json` (relative paths, so it works on any drive or computer with PixHaven). No copies.
+  Every action is logged in `<folder>/.clearup/sort-log.jsonl`; Undo replays it backwards and takes the people out of
+  the photos again (photos without metadata of their own come back byte for byte). An interrupted Apply can be finished
+  or undone next time. Folders made by a sort — on this computer or listed in `people.json` — are skipped by later scans.
 - **Tidy up:** duplicates = same SHA-1, or dHash within 6 bits ("same picture", catches resized/re-saved copies;
   different photos measured 15+ bits apart) or 10 bits ("near-identical"). The suggested keeper has the most pixels, then
   is sharpest. Blurry = sharpest 4×4 tile's Laplacian variance below 150 (sharp photos measured 580+). Dates come from
@@ -152,12 +165,17 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   watched folders, or a renamed subfolder) keep their labels. A watched folder on an unplugged drive shows as offline,
   keeps its index and comes back when the drive does (checked every 30 s). Network drives that can't be watched are
   re-checked every 15 minutes.
-- **Write into files (TAG-08, Settings, off by default):** ExifTool writes stars (XMP Rating) and labels (XMP Subject)
-  into JPG/PNG/WEBP/TIFF/HEIC/AVIF/GIF and MP4/MOV (plus Microsoft's rating and category, which Explorer shows as
-  Rating and Tags); RAW files and other videos (MKV, AVI, WMV…) get `name.xmp` next to them, moved along when the file is
-  renamed or moved in the app. File dates are kept. Changes are written 1.5 s after the last edit, in batches; a file open
-  in the player waits. Only labels PixHaven wrote are ever removed from a file. Turning it on writes everything already
-  labelled; turning it off leaves files as they are.
+- **Write into files (TAG-08, Settings, on by default since 0.7):** ExifTool writes stars (XMP Rating) and labels (XMP
+  Subject) into JPG/PNG/WEBP/TIFF/HEIC/AVIF/GIF and MP4/MOV (plus Microsoft's rating and category, which Explorer shows as
+  Rating and Tags; for JPG/TIFF also Explorer's EXIF Rating and XPKeywords); RAW files and other videos (MKV, AVI, WMV…)
+  get `name.xmp` next to them, moved along when the file is renamed or moved in the app. File dates are kept. Changes are
+  written 1.5 s after the last edit, in batches; a file open in the player waits; anything still waiting is written
+  before PixHaven closes, and anything missed is written at the next start. Turning it off leaves files as they are.
+- **Read from files (0.7):** stars, labels and people inside files (and `.xmp` sidecars) — from PixHaven on another
+  computer, Explorer, Lightroom, a phone — are read when a folder is opened (in the background; only folders whose files
+  changed) and for watched folders after indexing. They are merged into library.db so each label shows once, whichever
+  fields or apps hold it: the first read adds them up, later reads apply only what changed in the file since. Storage:
+  one line per folder read, no copy of the files' tags. The viewer shows the people in a photo.
 - **Keyboard (Library):** arrows move (Shift selects), Enter opens, Space selects, 1–5/0 stars, L labels, F2 rename,
   Ctrl+F or / search, Backspace / Alt+← back, Alt+→, Alt+↑ up, F5 refresh, P play all, ? shows every shortcut (also in
   Settings).
@@ -193,10 +211,9 @@ The repository is public: update checks need no token. Making it private would s
 ## Known limits
 
 - Unsigned installer: SmartScreen shows "Unknown publisher" (More info → Run anyway). A certificate fixes it.
-- Installer is ~250 MB: Electron (~100 MB), ONNX Runtime + DirectML (~65 MB), FFmpeg (~150 MB unpacked), ExifTool (~35 MB unpacked), image library, OCR engine.
-- Ratings and labels other apps wrote into files are not read into PixHaven (writing only).
+- Installer is ~250 MB: Electron (~100 MB), ONNX Runtime + DirectML (~65 MB), FFmpeg (~150 MB unpacked), ExifTool (~35 MB unpacked), face models (~65 MB), image library.
+- A group photo moved or renamed outside PixHaven drops out of the other people's folders (its people stay inside the file).
 - DNG files from phones often carry only a small preview (e.g. 672×504); RAW files are never developed from sensor data.
-- Place names in file names ("Goa") can be read as a person's name; the review screen shows each name's source.
 - Sort by person: "minimum photos per person" defaults to 2 (changed from the doc's 1 so one-off faces go to "Unsorted").
 - "Send to Recycle Bin" can't be undone by PixHaven (restore from the bin); all moves can.
 - The Explorer right-click entry appears only after installing with the setup program.

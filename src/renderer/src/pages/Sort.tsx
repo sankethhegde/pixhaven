@@ -16,9 +16,10 @@ interface Props {
 }
 
 const base = (p: string) => p.split(/[\\/]/).pop() ?? p;
+const dirName = (p: string) => p.replace(/[\\/][^\\/]*$/, '');
 const PHASE: Record<ScanProgress['phase'], string> = {
   listing: 'Looking for photos…', scanning: 'Finding faces', grouping: 'Grouping faces into people…',
-  naming: 'Looking for names', done: 'Done', cancelled: 'Cancelled', error: 'Error',
+  done: 'Done', cancelled: 'Cancelled', error: 'Error',
 };
 
 export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, onUpscale }: Props) {
@@ -168,9 +169,9 @@ export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, o
             <span className="font-medium">{p ? PHASE[p.phase] : 'Starting…'}{paused ? ' (paused)' : ''}</span>
             <span className="text-muted tabular-nums">{p?.phase === 'scanning' && p.etaSeconds ? `about ${fmtDuration(p.etaSeconds)} left` : ''}</span>
           </div>
-          <ProgressBar value={p?.phase === 'scanning' ? frac : p?.phase === 'naming' && p.total ? p.done / p.total : p?.phase === 'listing' ? 0 : 1} />
+          <ProgressBar value={p?.phase === 'scanning' ? frac : p?.phase === 'listing' ? 0 : 1} />
           <div className="grid grid-cols-3 gap-3">
-            <Stat label="Photos scanned" value={p ? `${p.phase === 'naming' ? p.total || p.done : p.done} / ${p.total || '…'}` : '…'} />
+            <Stat label="Photos scanned" value={p ? `${p.done} / ${p.total || '…'}` : '…'} />
             <Stat label="Faces found" value={String(p?.faces ?? 0)} />
             <Stat label={p?.phase === 'scanning' ? 'People so far (estimate)' : 'People'} value={String(p?.people ?? 0)} />
           </div>
@@ -206,44 +207,52 @@ export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, o
 
   // ---------- dry run ----------
   if (step === 'dryrun' && plan) {
-    const byTarget = plan.targets.map(t => ({ t, ops: plan.ops.filter(o => o.kind !== 'mkdir' && isIn(o.to, t.dir)) }));
-    const lowSpace = plan.freeBytes != null && plan.copyBytes > plan.freeBytes - 50e6;
-    const nothing = plan.counts.moves + plan.counts.copies + plan.counts.groupMoves === 0;
+    const byTarget = plan.targets.map(t => ({
+      t, ops: plan.ops.filter(o => o.kind === 'move' && isIn(o.to, t.dir)),
+      shown: plan.ops.filter(o => o.alsoIn?.some(a => a.dir.toLowerCase() === t.dir.toLowerCase())),
+    }));
+    const nothing = plan.counts.moves + plan.ops.filter(o => o.kind === 'tag').length === 0;
     return (
       <Page title="Dry run: nothing has moved yet" wide
         actions={<>
           <Button variant="ghost" onClick={() => setStep('review')}><Icon name="back" size={16} />Back</Button>
-          <Button variant="primary" disabled={lowSpace || nothing} onClick={apply}>Apply</Button>
+          <Button variant="primary" disabled={nothing} onClick={apply}>Apply</Button>
         </>}>
         {error && <Notice tone="danger">{error}</Notice>}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Stat label="Folders to create" value={String(plan.counts.folders)} />
           <Stat label="Photos to move" value={String(plan.counts.moves)} />
-          <Stat label="Copies (group photos)" value={String(plan.counts.copies)} />
-          <Stat label="Originals to “Group photos” at the end" value={String(plan.counts.groupMoves)} />
+          <Stat label="Group photos (tagged, not copied)" value={String(plan.counts.tagged)} />
+          <Stat label="Staying where they are" value={String(plan.counts.stays)} />
         </div>
         <div className="text-sm text-muted">
-          Copies use {fmtBytes(plan.copyBytes)}{plan.freeBytes != null ? `; ${fmtBytes(plan.freeBytes)} free on this drive` : ''}.
-          {plan.counts.stays ? ` ${plan.counts.stays} photos stay where they are.` : ''}
+          Nothing is copied, so no extra disk space is used. A photo with several people moves once, to the folder of the
+          person whose face is biggest in it; everyone in it is written into the photo as a tag, and the other people's
+          folders show it too — in PixHaven on any computer, without setting anything up.
         </div>
-        {lowSpace && <Notice tone="danger">Not enough free disk space for the copies. Free up space and try again.</Notice>}
         {nothing && <Notice tone="info">Everything is already sorted. There is nothing to move.</Notice>}
         <div className="rounded-xl border border-line bg-panel divide-y divide-[var(--border)]">
-          {byTarget.map(({ t, ops }) => (
+          {byTarget.map(({ t, ops, shown }) => (
             <details key={t.key} className="group">
               <summary className="flex items-center gap-3 px-4 h-11 cursor-pointer list-none">
                 <Icon name="folder" size={16} className="text-muted" />
                 <span className="font-medium">{base(t.dir)}</span>
                 <span className="text-xs text-muted">{t.exists ? 'existing folder' : 'new folder'}</span>
                 <span className="ml-auto text-xs text-muted">
-                  {ops.filter(o => o.kind === 'move').length} moved{ops.some(o => o.kind === 'copy') ? `, ${ops.filter(o => o.kind === 'copy').length} copied` : ''}
+                  {ops.length} moved{shown.length ? `, ${shown.length} shown from other folders` : ''}
                 </span>
               </summary>
               <ul className="px-4 pb-3 text-xs space-y-1 max-h-64 overflow-auto">
                 {ops.map((o, i) => (
                   <li key={i} className="flex gap-2 selectable">
-                    <span className={`w-12 shrink-0 font-medium ${o.kind === 'copy' ? 'text-accent' : o.pass === 2 ? 'text-warn' : ''}`}>{o.kind === 'copy' ? 'copy' : o.pass === 2 ? 'last' : 'move'}</span>
-                    <span className="truncate">{o.from} → {base(o.to)}</span>
+                    <span className="w-12 shrink-0 font-medium">move</span>
+                    <span className="truncate">{o.from} → {base(o.to)}{(o.people?.length ?? 0) > 1 ? `  (tagged: ${o.people!.join(', ')})` : ''}</span>
+                  </li>
+                ))}
+                {shown.map((o, i) => (
+                  <li key={`s${i}`} className="flex gap-2 selectable">
+                    <span className="w-12 shrink-0 font-medium text-accent">tag</span>
+                    <span className="truncate">{base(o.to)}, kept in “{base(dirName(o.to))}”</span>
                   </li>
                 ))}
               </ul>
@@ -272,7 +281,7 @@ export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, o
       <Page title={p?.phase === 'undo' ? 'Undoing…' : 'Sorting…'}>
         <div className="rounded-2xl border border-line bg-panel p-6 space-y-3">
           <div className="text-sm font-medium">
-            {!p ? 'Starting…' : p.phase === 'pass1' ? 'Moving photos and copying group photos' : p.phase === 'pass2' ? 'Moving group originals to “Group photos”' : p.phase === 'undo' ? 'Putting every file back' : 'Finishing…'}
+            {!p ? 'Starting…' : p.phase === 'pass1' ? 'Moving photos' : p.phase === 'pass2' ? 'Moving group originals to “Group photos”' : p.phase === 'tagging' ? 'Writing the people into the photos' : p.phase === 'undo' ? 'Putting every file back' : 'Finishing…'}
           </div>
           <ProgressBar value={p && p.total ? p.done / p.total : 0} />
           <div className="text-xs text-muted truncate">{p?.current}</div>
@@ -288,10 +297,9 @@ export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, o
       {error && <Notice tone="danger">{error}</Notice>}
       <div className="rounded-2xl border border-line bg-panel p-6 space-y-4">
         {result && (
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <Stat label="Moved to person folders" value={String(result.moved)} />
-            <Stat label="Copies of group photos" value={String(result.copied)} />
-            <Stat label="Originals in “Group photos”" value={String(result.groupMoved)} />
+            <Stat label="Group photos tagged for other people" value={String(result.tagged ?? 0)} />
           </div>
         )}
         {undone && <div className="text-sm">{undone.restored} changes reversed. The folder is back the way it was{undone.kept.length ? ', except for the items below' : ''}.</div>}

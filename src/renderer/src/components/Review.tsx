@@ -1,4 +1,5 @@
-// Review people before anything moves (FACE-08/09): name, merge (drag a card onto another), remove, split.
+// Review people before anything moves (FACE-08/09): merge (drag a card onto another), remove, split.
+// v2.2: people are "Person 1", "Person 2"… — names are no longer guessed or typed, and folders keep these names.
 import { useEffect, useState, type DragEvent } from 'react';
 import type { PersonSummary, PhotoRef, ReviewData } from '@shared/types';
 import { api, errorText } from '../api';
@@ -21,20 +22,6 @@ export function Review({ data, onChanged, onUpscale }: Props) {
     try { await fn(); onChanged(); } catch (e) { setError(errorText(e)); }
   };
 
-  const rename = async (p: PersonSummary, name: string) => {
-    if ((name.trim() || null) === p.name) return;
-    try {
-      const r = await api.sort.rename(p.id, name);
-      if (r.clashWith) {
-        setConfirm({
-          text: `${r.clashWith.label} already has the name “${name.trim()}”. Are they the same person? Merging puts all their photos together.`,
-          ok: `Merge with ${r.clashWith.label}`,
-          run: () => act(async () => { await api.sort.merge(p.id, r.clashWith!.id); await api.sort.rename(r.clashWith!.id, name, true); }),
-        });
-      } else onChanged();
-    } catch (e) { setError(errorText(e)); }
-  };
-
   const merge = (from: number, into: number) => {
     const a = data.people.find(x => x.id === from)!, b = data.people.find(x => x.id === into)!;
     setConfirm({ text: `Put all ${a.photos} photo${a.photos === 1 ? '' : 's'} of ${a.label} into ${b.label}?`, ok: 'Merge', run: () => act(() => api.sort.merge(from, into)) });
@@ -46,26 +33,18 @@ export function Review({ data, onChanged, onUpscale }: Props) {
   return (
     <div className="space-y-6">
       {error && <Notice tone="danger">{error}</Notice>}
-      {data.nameClashes.map(c => (
-        <Notice key={c.name} tone="warn">
-          <div className="flex items-center gap-3 flex-wrap">
-            <span>{c.ids.length} people are named “{c.name}”. Are they the same person?</span>
-            <Button className="h-7" onClick={() => act(async () => { for (const id of c.ids.slice(1)) await api.sort.merge(id, c.ids[0]); })}>Merge them</Button>
-          </div>
-        </Notice>
-      ))}
 
       <section>
         <div className="flex items-baseline justify-between mb-3">
           <h2 className="font-semibold">People <span className="text-muted font-normal">({people.length})</span></h2>
-          <span className="text-xs text-muted">Type a name on a card. Drag one card onto another to merge. Click the photos to fix mistakes.</span>
+          <span className="text-xs text-muted">Drag one card onto another if they are the same person. Click the photos to fix mistakes.</span>
         </div>
         <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
           {people.map(p => (
             <PersonCard key={p.id} p={p} dragging={dragging}
               onDragStart={() => setDragging(p.id)} onDragEnd={() => setDragging(null)}
               onDropOn={() => { if (dragging && dragging !== p.id) merge(dragging, p.id); setDragging(null); }}
-              onRename={n => rename(p, n)} onOpen={() => setOpen(p)} />
+              onOpen={() => setOpen(p)} />
           ))}
         </div>
       </section>
@@ -77,7 +56,7 @@ export function Review({ data, onChanged, onUpscale }: Props) {
               <PersonCard key={p.id} p={p} dragging={dragging}
                 onDragStart={() => setDragging(p.id)} onDragEnd={() => setDragging(null)}
                 onDropOn={() => { if (dragging && dragging !== p.id) merge(dragging, p.id); setDragging(null); }}
-                onRename={n => rename(p, n)} onOpen={() => setOpen(p)} />
+                onOpen={() => setOpen(p)} />
             ))}
           </div>
         </Group>
@@ -107,13 +86,11 @@ export function Review({ data, onChanged, onUpscale }: Props) {
   );
 }
 
-function PersonCard({ p, dragging, onDragStart, onDragEnd, onDropOn, onRename, onOpen }: {
+function PersonCard({ p, dragging, onDragStart, onDragEnd, onDropOn, onOpen }: {
   p: PersonSummary; dragging: number | null; onDragStart: () => void; onDragEnd: () => void; onDropOn: () => void;
-  onRename: (n: string) => void; onOpen: () => void;
+  onOpen: () => void;
 }) {
-  const [name, setName] = useState(p.name ?? '');
   const [over, setOver] = useState(false);
-  useEffect(() => setName(p.name ?? ''), [p.name]);
   const canDrop = dragging !== null && dragging !== p.id;
   return (
     <div draggable onDragStart={(e: DragEvent) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(); }} onDragEnd={onDragEnd}
@@ -125,13 +102,10 @@ function PersonCard({ p, dragging, onDragStart, onDragEnd, onDropOn, onRename, o
       <button onClick={onOpen} className="w-full grid grid-cols-2 gap-1 rounded-lg overflow-hidden aspect-square bg-panel-2" aria-label={`Show photos of ${p.label}`}>
         {p.faceUrls.slice(0, 4).map((u, i) => <img key={i} src={u} alt="" draggable={false} className={`w-full h-full object-cover ${p.faceUrls.length === 1 ? 'col-span-2 row-span-2' : ''}`} />)}
       </button>
-      <input value={name} placeholder={p.label} aria-label={`Name for ${p.label}`}
-        onChange={e => setName(e.target.value)} onBlur={() => onRename(name)}
-        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setName(p.name ?? ''); } }}
-        className="w-full h-8 rounded-md border border-line bg-panel px-2 text-sm font-medium placeholder:text-muted" />
+      <div className="font-medium text-sm truncate" data-testid="person-label">{p.label}</div>
       <div className="flex items-center justify-between text-xs text-muted gap-2">
         <span className="whitespace-nowrap">{p.photos} photo{p.photos === 1 ? "" : "s"}</span>
-        <span className="truncate" title={p.sourceDetail ?? ''}>{p.dir ? 'Has a folder' : p.sourceDetail ?? 'No name found'}</span>
+        {p.dir && <span className="truncate">Has a folder</span>}
       </div>
     </div>
   );

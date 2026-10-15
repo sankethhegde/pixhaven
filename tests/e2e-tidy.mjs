@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import sharp from 'sharp';
 
 const OUT = process.env.CLEARUP_E2E_DIR;
-const SRC = path.resolve('phase0/testphotos');
+const SRC = path.resolve(process.env.CLEARUP_TESTPHOTOS ?? 'phase0/testphotos');
 const ROOT = path.join(OUT, 'Pics');
 const results = [];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -20,7 +20,7 @@ async function makeFixtures() {
   fs.mkdirSync(ROOT, { recursive: true });
   const pick = re => fs.readdirSync(SRC).find(f => re.test(f));
   const merkel = pick(/^Angela Merkel 2019/), macron = pick(/^Emmanuel Macron August/), ardern = pick(/^Rt Hon Jacinda/);
-  const modi = pick(/^PM Modi/), obama = pick(/^Obama Portrait/);
+  const modi = pick(/^PM Modi/) ?? pick(/Modi/), obama = pick(/^Obama Portrait/);
   fs.copyFileSync(path.join(SRC, merkel), path.join(ROOT, 'merkel.jpg'));
   fs.copyFileSync(path.join(SRC, merkel), path.join(ROOT, 'merkel (copy).jpg'));                       // identical file
   await sharp(path.join(SRC, macron)).jpeg({ quality: 90 }).toFile(path.join(ROOT, 'macron.jpg'));

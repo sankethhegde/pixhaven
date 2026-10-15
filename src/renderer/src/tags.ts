@@ -63,6 +63,12 @@ export async function reloadAll() {
   changed();
   for (let i = 0; i < refs.length; i += 2000) await loadFor(refs.slice(i, i + 2000));
 }
+/** Labels or stars found inside files (written on another computer or by another app): refresh those on screen. */
+api.onTagsFromFiles(paths => {
+  const refs = paths.map(p => state.refs.get(key(p))).filter((r): r is Ref => !!r);
+  void api.tags.labels().then(l => { state.labels = l; return refs.length ? loadFor(refs) : changed(); });
+});
+
 /** A file renamed or moved by the app: its tags move with it. */
 export function movedLocally(from: string, to: string) {
   const t = state.tags.get(key(from));

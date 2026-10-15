@@ -71,6 +71,10 @@ export class TagStore {
     // v2.1: labels last written into the file (TAG-08), as a JSON list of names; null = never written.
     const cols = (this.db.prepare('PRAGMA table_info(media)').all() as { name: string }[]).map(c => c.name);
     if (!cols.includes('written')) this.db.exec('ALTER TABLE media ADD COLUMN written TEXT');
+    // v2.2: what the file itself held the last time it was read or written ({ s, l, size, mtime }), so a change made by
+    // another app (or on another computer) is noticed and merged; plus one line per folder already read.
+    if (!cols.includes('synced')) this.db.exec('ALTER TABLE media ADD COLUMN synced TEXT');
+    this.db.exec(`CREATE TABLE IF NOT EXISTS dir_reads (dir TEXT PRIMARY KEY ${CI}, sig TEXT NOT NULL) WITHOUT ROWID`);
   }
 
   close(): void { this.db.close(); }
@@ -251,6 +255,16 @@ export class TagStore {
     return done;
   }
 
+  /** A file changed by the app itself (people written in by a sort): new size and fingerprint, read again later. */
+  async refresh(p: string): Promise<void> {
+    const row = this.rowByPath(p);
+    if (!row) return;
+    const st = await fs.promises.stat(p).catch(() => null);
+    if (!st) return;
+    const fp = await quickFingerprint(p, st.size).catch(() => null);
+    if (fp) this.db.prepare('UPDATE media SET size = ?, mtime = ?, fingerprint = ?, synced = NULL WHERE id = ?').run(st.size, Math.floor(st.mtimeMs), fp, row.id);
+  }
+
   /** Rows whose files are missing right now (unplugged drive, moved away, or imported and not found yet). */
   missingCount(): number {
     let n = 0;
@@ -269,6 +283,74 @@ export class TagStore {
   allPaths(): string[] { return (this.db.prepare('SELECT path FROM media').all() as { path: string }[]).map(r => r.path).filter(p => !p.startsWith('missing:')); }
   pathsWithLabel(id: number): string[] {
     return (this.db.prepare('SELECT m.path FROM media m JOIN media_labels ml ON ml.media_id = m.id WHERE ml.label_id = ?').all(id) as { path: string }[]).map(r => r.path);
+  }
+
+  // ---------- reading from files (v2.2) ----------
+
+  /** Files whose tags may differ from what the file held when last read or written (or that were never read). */
+  needsRead(files: FileRef[]): FileRef[] {
+    const get = this.db.prepare('SELECT synced FROM media WHERE path = ?');
+    return files.filter(f => {
+      const r = get.get(f.path) as { synced: string | null } | undefined;
+      if (!r) return true;
+      if (!r.synced) return true;
+      const s = JSON.parse(r.synced) as { size: number; mtime: number };
+      return s.size !== f.size || s.mtime !== Math.floor(f.mtime);
+    });
+  }
+  /**
+   * Files whose contents are behind the library: changed in the app, but not written yet (PixHaven was closed before
+   * the write ran, or the file was busy). Rows never written or read count too.
+   */
+  unwritten(): string[] {
+    const rows = this.db.prepare(`SELECT m.path, m.stars, m.synced, (SELECT json_group_array(l.name) FROM media_labels ml JOIN labels l ON l.id = ml.label_id
+      WHERE ml.media_id = m.id) AS names FROM media m WHERE m.path NOT LIKE 'missing:%'`).all() as { path: string; stars: number; synced: string | null; names: string }[];
+    const key = (s: number, l: string[]) => `${s}|${l.map(x => x.toLowerCase()).sort().join('|')}`;
+    return rows.filter(r => {
+      if (!r.synced) return true;
+      const s = JSON.parse(r.synced) as { s: number; l: string[] };
+      return key(s.s, s.l) !== key(r.stars, JSON.parse(r.names) as string[]);
+    }).map(r => r.path).concat([...this.pendingClean.keys()]);
+  }
+
+  /** A folder's listing fingerprint when its files were last read: unchanged = nothing new to read. */
+  dirRead(dir: string): string | null { return (this.db.prepare('SELECT sig FROM dir_reads WHERE dir = ?').get(dir) as { sig: string } | undefined)?.sig ?? null; }
+  setDirRead(dir: string, sig: string): void { this.db.prepare('INSERT OR REPLACE INTO dir_reads (dir, sig) VALUES (?, ?)').run(dir, sig); }
+
+  /**
+   * Merges what a file holds into the library, so each label shows once whether it came from the app or the file.
+   * First time: labels are added up, and the file's stars count when the app had none. Later: only what changed in the
+   * file since it was last read or written is applied (a label someone added or took off, new stars).
+   * Returns true when the library changed, and whether the file now lacks something the library has.
+   */
+  async mergeFromFile(f: FileRef, ft: { stars: number; labels: string[] }): Promise<{ changed: boolean; behind: boolean }> {
+    const state = JSON.stringify({ s: ft.stars, l: ft.labels, size: f.size, mtime: Math.floor(f.mtime) });
+    let row = this.db.prepare('SELECT id, stars, synced FROM media WHERE path = ?').get(f.path) as { id: number; stars: number; synced: string | null } | undefined;
+    if (!row && !ft.stars && !ft.labels.length) return { changed: false, behind: false };
+    const base = row?.synced ? JSON.parse(row.synced) as { s: number; l: string[]; size: number; mtime: number } : null;
+    if (base && base.size === f.size && base.mtime === Math.floor(f.mtime)) return { changed: false, behind: false };
+    if (!row) row = { id: await this.ensure(f), stars: 0, synced: null };
+    const id = row.id;
+    const lower = (a: string[]) => new Set(a.map(x => x.toLowerCase()));
+    const have = () => (this.db.prepare('SELECT l.id, l.name FROM media_labels ml JOIN labels l ON l.id = ml.label_id WHERE ml.media_id = ?').all(id) as { id: number; name: string }[]);
+    let changed = false;
+    this.tx(() => {
+      const add = this.db.prepare('INSERT OR IGNORE INTO media_labels (media_id, label_id) VALUES (?, ?)');
+      const mine = lower(have().map(l => l.name));
+      const fileL = lower(ft.labels);
+      const baseL = base ? lower(base.l) : null;
+      for (const l of ft.labels) if (!mine.has(l.toLowerCase()) && (!baseL || !baseL.has(l.toLowerCase()))) { add.run(id, this.labelId(l)); changed = true; }
+      if (baseL) for (const l of have()) if (baseL.has(l.name.toLowerCase()) && !fileL.has(l.name.toLowerCase())) {
+        this.db.prepare('DELETE FROM media_labels WHERE media_id = ? AND label_id = ?').run(id, l.id); changed = true;
+      }
+      const stars = base ? (ft.stars !== base.s ? ft.stars : row!.stars) : (row!.stars || ft.stars);
+      if (stars !== row!.stars) { this.db.prepare('UPDATE media SET stars = ?, updated = ? WHERE id = ?').run(stars, Date.now(), id); changed = true; }
+      this.db.prepare('UPDATE media SET written = ?, synced = ? WHERE id = ?').run(JSON.stringify(ft.labels), state, id);
+      this.prune([id]);
+    });
+    const now = this.writeState(f.path);
+    const behind = this.isTagged(f.path) && (now.stars !== ft.stars || now.labels.some(l => !lower(ft.labels).has(l.toLowerCase())));
+    return { changed, behind };
   }
 
   // ---------- writing into files (TAG-08) ----------
@@ -290,7 +372,9 @@ export class TagStore {
     if (!row) return;
     const st = await fs.promises.stat(p).catch(() => null);
     const fp = st ? await quickFingerprint(p, st.size).catch(() => null) : null;
-    if (st && fp) this.db.prepare('UPDATE media SET size = ?, mtime = ?, fingerprint = ?, written = ? WHERE id = ?').run(st.size, Math.floor(st.mtimeMs), fp, JSON.stringify(labels), row.id);
+    const stars = (this.db.prepare('SELECT stars FROM media WHERE id = ?').get(row.id) as { stars: number }).stars;
+    const synced = st ? JSON.stringify({ s: stars, l: labels, size: st.size, mtime: Math.floor(st.mtimeMs) }) : null;
+    if (st && fp) this.db.prepare('UPDATE media SET size = ?, mtime = ?, fingerprint = ?, written = ?, synced = ? WHERE id = ?').run(st.size, Math.floor(st.mtimeMs), fp, JSON.stringify(labels), synced, row.id);
     else this.db.prepare('UPDATE media SET written = ? WHERE id = ?').run(JSON.stringify(labels), row.id);
   }
 

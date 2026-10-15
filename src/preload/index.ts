@@ -39,7 +39,6 @@ const api = {
     regroup: (fid: number) => invoke('sort:regroup', fid),
     review: (fid: number) => invoke('sort:review', fid),
     person: (pid: number) => invoke('sort:person', pid),
-    rename: (pid: number, name: string, allowClash?: boolean) => invoke('sort:rename', pid, name, allowClash),
     merge: (from: number, into: number) => invoke('sort:merge', from, into),
     removeFace: (faceId: number) => invoke('sort:removeFace', faceId),
     split: (pid: number, faceIds: number[]) => invoke('sort:split', pid, faceIds),
@@ -113,6 +112,7 @@ const api = {
     deletePlaylist: (id: number) => invoke('tags:deletePlaylist', id),
     writeStatus: () => invoke('tags:writeStatus'),
     setWriteToFiles: (on: boolean) => invoke('tags:setWriteToFiles', on),
+    peopleIn: (p: string) => invoke('tags:peopleIn', p),
   },
   watch: {
     list: () => invoke('watch:list'),
@@ -125,6 +125,7 @@ const api = {
   onWatchStatus: listen('watch:status'),
   onWatchChanged: listen('watch:changed'),
   onWriteStatus: listen('tags:writeStatus'),
+  onTagsFromFiles: listen('tags:fromFiles'),
   onLibThumb: listen('lib:thumb'),
   onLibSearch: listen('lib:search'),
   onTidyProgress: listen('tidy:progress'),

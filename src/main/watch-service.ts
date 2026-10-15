@@ -165,12 +165,37 @@ async function pump(): Promise<void> {
     pushStatus();
   }
   pushStatus();
+  void readFileTags();
+}
+
+/**
+ * v2.2: stars and labels inside the indexed files (written by PixHaven on another computer, Explorer, Lightroom…) are
+ * read in the background after indexing, a batch at a time, so "Tagged" shows them without opening each folder.
+ */
+let tagReading = false;
+async function readFileTags(): Promise<void> {
+  if (tagReading || closing) return;
+  tagReading = true;
+  try {
+    for (;;) {
+      if (running || closing) break;                  // indexing first; this starts again when it's done
+      await gate();
+      if (closing) break;
+      const batch = idx().tagsTodo(200);
+      if (!batch.length) break;
+      const changed = await tags.syncFromFiles(batch).catch(e => { log('warn', 'Reading labels from files failed', e); return null; });
+      if (changed === null) break;
+      idx().tagsDone(batch);
+      if (changed.length) sendChange({ dirs: [...new Set(changed.map(p => path.dirname(p)))], added: 0, removed: 0, relinked: 0 });
+    }
+  } finally { tagReading = false; }
 }
 
 async function changed(dirs: string[], c: DirChange): Promise<void> {
   let relinked = 0;
   if (c.added.length) relinked = (await tags.relinkAdded(c.added)).length;
   if (c.added.length || c.removed.length || relinked) sendChange({ dirs, added: c.added.length, removed: c.removed.length, relinked });
+  if (c.added.length) void readFileTags();
 }
 
 // ---------- live changes ----------

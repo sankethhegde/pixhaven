@@ -47,8 +47,8 @@ export function buildOrganizePlan(fid: number, root: string, rows: OrganizeRow[]
   const mkdirs: SortOp[] = list.filter(t => !t.exists).map(t => ({ kind: 'mkdir', pass: 0, to: t.dir, personId: null }));
   return {
     folderId: fid, root, targets: list, ops: [...mkdirs, ...ops], stays,
-    counts: { folders: mkdirs.length, moves: ops.length, copies: 0, groupMoves: 0, stays: stays.length },
-    copyBytes: 0, freeBytes,
+    counts: { folders: mkdirs.length, moves: ops.length, tagged: 0, stays: stays.length },
+    freeBytes,
   };
 }
 
@@ -63,7 +63,7 @@ export function buildSetAsidePlan(fid: number, root: string, files: { path: stri
   return {
     folderId: fid, root, targets: [{ key: dir, label: folderName, dir, exists, personId: null }],
     ops: [...(exists || !ops.length ? [] : [{ kind: 'mkdir' as const, pass: 0 as const, to: dir, personId: null }]), ...ops], stays: [],
-    counts: { folders: exists ? 0 : 1, moves: ops.length, copies: 0, groupMoves: 0, stays: 0 },
-    copyBytes: 0, freeBytes,
+    counts: { folders: exists ? 0 : 1, moves: ops.length, tagged: 0, stays: 0 },
+    freeBytes,
   };
 }

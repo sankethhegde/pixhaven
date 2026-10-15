@@ -39,3 +39,19 @@ test('anchors keep their faces and attract new ones, but never merge with each o
   assert.ok(a.some(g => g.faceIds.includes(3)));
   assert.ok(groups.some(g => g.anchor == null && g.faceIds.join() === '4'));
 });
+
+test('weak faces (small, blurry, turned away) never start or link groups; they join only a clear match', () => {
+  // Two different people, plus weak "in-between" faces that sit close to both: before v2.2 they chained them together.
+  const mid = norm(base[0].map((x, i) => x + base[1][i]));
+  const faces = [];
+  let id = 0;
+  for (let i = 0; i < 4; i++) faces.push({ id: id++, imageId: id, emb: near(0, 0.3), quality: 0.9, k: 0 });
+  for (let i = 0; i < 4; i++) faces.push({ id: id++, imageId: id, emb: near(1, 0.3), quality: 0.9, k: 1 });
+  for (let i = 0; i < 3; i++) faces.push({ id: id++, imageId: id, emb: mid, quality: 0.1, k: -1 });
+  const clear = id; faces.push({ id: id++, imageId: id, emb: near(0, 0.2), quality: 0.1, k: 0 });
+  const { groups } = cluster(faces, 0.42);
+  assert.equal(groups.length, 2, 'weak faces make no group of their own');
+  for (const g of groups) assert.equal(new Set(g.faceIds.map(i => faces[i].k)).size, 1, 'no mixed group');
+  assert.ok(groups.some(g => g.faceIds.includes(clear)), 'a weak face that clearly matches still joins');
+  assert.ok(!groups.some(g => g.faceIds.some(i => faces[i].k === -1)), 'unclear weak faces stay unassigned');
+});

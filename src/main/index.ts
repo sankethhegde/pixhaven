@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, powerMonitor, protocol, shell } from 'electron';
 import type { JobItem, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery } from '@shared/types';
 import { IMAGE_EXTENSIONS } from '@shared/types';
-import { getSettings, updateSettings } from './settings';
+import { getSettings, updateSettings, writeTurnedOn } from './settings';
 import { detectGpu, hasDedicatedGpu } from './gpu-detect';
 import { cleanTemp, inspectImage, quickSize, saveResult, scanFolder, UpscaleJob, friendlyError, isImageFile, setGpuWorks } from './upscale-job';
 import { log, logDir } from './logger';
@@ -114,14 +114,6 @@ async function selfTest(outFile: string): Promise<void> {
     const r = await scan.done;
     const st = sort.folderStatus(dir);
     report.faceScan = { ok: st.scannedImages === 1, scanned: st.scannedImages, seconds: (Date.now() - t) / 1000, folderId: r.folderId };
-    // Offline OCR with the bundled language file.
-    const { NameReader } = await import('./faces/names-ocr');
-    const { readImageBuffer } = await import('./image-io');
-    const ocrImg = path.join(dir, 'name.png');
-    await sharp(Buffer.from('<svg width="600" height="200"><rect width="600" height="200" fill="white"/><text x="40" y="130" font-size="90" font-family="Arial" font-weight="bold">ASHA</text></svg>')).png().toFile(ocrImg);
-    const reader = new NameReader(path.join(resourcesDir(), 'ocr'), path.join(app.getPath('temp'), 'clearup-selftest-ocr'));
-    report.ocr = await reader.read(ocrImg, readImageBuffer);
-    await reader.close();
     // Media library: the bundled FFmpeg makes a short video, and the thumbnail cache reads it back.
     library.init(() => {});
     const { execFileSync } = await import('node:child_process');
@@ -159,12 +151,21 @@ async function selfTest(outFile: string): Promise<void> {
     const w = await writeTags(tags.exiftool(), [{ file: tagged, stars: 4, labels: ['Self-test'], previous: [] }]);
     const rt = await readTags(tags.exiftool(), tagged).catch(() => ({ rating: 0, subject: [] as string[] }));
     report.writeFiles = { ok: w[0].ok && rt.rating === 4 && rt.subject.includes('Self-test'), error: w[0].error };
+    // v2.2: reading them back (stay-open ExifTool), and people written into a photo by Sort by person.
+    const { TagReader } = await import('./library/file-tags');
+    const { writePeople } = await import('./library/xmp');
+    const photo = path.join(dir, 'test.jpg');
+    const wp = await writePeople(tags.exiftool(), [{ file: photo, add: ['Person 1', 'Person 2'], remove: [] }]);
+    const tr = new TagReader(tags.exiftool());
+    const got = await tr.read([tagged, photo]);
+    tr.stop();
+    report.readFiles = { ok: wp[0].ok && got.get(tagged)?.stars === 4 && !!got.get(tagged)?.labels.includes('Self-test') && got.get(photo)?.people.join() === 'Person 1,Person 2' };
     const { MediaIndex } = await import('./library/media-index');
     const ix = new MediaIndex(path.join(dir, 'index.db'));
     await ix.scan(ix.addRoot(dir));
     report.index = { ok: ix.query({ text: 'tagged' }).total === 1 };
     ix.close();
-    report.ok = item.state === 'done' && item.outWidth === 128 && st.scannedImages === 1 && report.ocr === 'Asha'
+    report.ok = item.state === 'done' && item.outWidth === 128 && st.scannedImages === 1 && (report.readFiles as { ok: boolean }).ok
       && (report.library as { ok: boolean }).ok && (report.player as { ok: boolean }).ok && (report.labels as { ok: boolean }).ok
       && (report.writeFiles as { ok: boolean }).ok && (report.index as { ok: boolean }).ok;
   } catch (e) {
@@ -228,8 +229,13 @@ app.whenReady().then(async () => {
   // v2.1: watched folders, labels following files moved inside them, and (optionally) writing labels into files.
   tags.setOnMoved((from, to) => watch.moved(from, to));
   tags.setWriteHooks(p => player.isOpen(p), s => send('tags:writeStatus', s));
+  tags.setOnFromFiles(paths => send('tags:fromFiles', paths));
   tags.setAfterImport(() => void tags.relinkFromIndex(s => watch.bySize(s)).then(n => { if (n) send('watch:changed', { dirs: [], added: 0, removed: 0, relinked: n }); }));
   watch.init(s => send('watch:status', s), c => send('watch:changed', c));
+  // Labels changed just before PixHaven was last closed reach their files now.
+  if (!writeTurnedOn && !process.argv.includes('--selftest')) setTimeout(() => { const n = tags.writeUnwritten(); if (n) log('info', `Writing labels left over from last time into ${n} file(s)`); }, 3000);
+  // 0.7: labels are kept in the files from now on — the ones already given go in once, in the background.
+  if (writeTurnedOn && !process.argv.includes('--selftest')) setTimeout(() => { const n = tags.setWriteToFiles(true); log('info', `Writing labels into files switched on: ${n} file(s) queued`); }, 15_000);
 
   createWindow();
   queue.onChange(items => send('queue:update', items));
@@ -245,6 +251,14 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => { for (const j of jobs.values()) j.job.cancel(); sort.cancelScan(); });
+// Labels changed in the last moments still go into their files before PixHaven closes.
+let flushedOnQuit = false;
+app.on('before-quit', e => {
+  if (flushedOnQuit || !tags.hasPendingWrites()) return;
+  e.preventDefault();
+  flushedOnQuit = true;
+  void tags.flushNow().catch(() => {}).finally(() => app.quit());
+});
 app.on('quit', () => { cleanTemp(true); watch.close(); tags.close(); });
 
 /** GEN-04: low-spec mode follows the GPU until the user sets it themselves. */
@@ -397,14 +411,15 @@ handle('sort:cancel', () => sort.cancelScan());
 handle('sort:regroup', (fid: number) => sort.regroup(fid, { scan: p => send('sort:progress', p) }));
 handle('sort:review', (fid: number) => sort.review(fid));
 handle('sort:person', (pid: number) => sort.personPhotos(pid));
-handle('sort:rename', (pid: number, name: string, allowClash?: boolean) => sort.renamePerson(pid, name, allowClash));
 handle('sort:merge', (from: number, into: number) => sort.mergePeople(from, into));
 handle('sort:removeFace', (faceId: number) => sort.removeFace(faceId));
 handle('sort:split', (pid: number, faceIds: number[]) => sort.splitPerson(pid, faceIds));
 handle('sort:plan', (fid: number) => sort.makePlan(fid));
 handle('sort:apply', async (fid: number) => {
   const r = await sort.applySort(fid, { apply: p => send('sort:apply-progress', p) });
-  notifyDone('PixHaven: photos sorted', `${r.moved + r.groupMoved} moved, ${r.copied} copied.`);
+  // Labels follow the moved photos; people were written into them, so their fingerprints are refreshed too.
+  await tags.afterSort(r.moves ?? [], r.files ?? []).catch(e => log('warn', 'Updating labels after the sort failed', e));
+  notifyDone('PixHaven: photos sorted', `${r.moved} moved${r.tagged ? `, ${r.tagged} group photos tagged for other people` : ''}.`);
   return r;
 });
 handle('sort:finish', (sortId: number) => sort.finishSort(sortId, { apply: p => send('sort:apply-progress', p) }));
@@ -503,6 +518,7 @@ handle('tags:savePlaylist', (name: string, filter: TagFilter, id?: number) => ta
 handle('tags:deletePlaylist', (id: number) => tags.deletePlaylist(id));
 handle('tags:writeStatus', () => tags.writeStatus());
 handle('tags:setWriteToFiles', (on: boolean) => tags.setWriteToFiles(on));
+handle('tags:peopleIn', (p: string) => tags.peopleIn(p));
 
 // ---- watched folders (v2.1) ----
 handle('watch:list', () => watch.status());

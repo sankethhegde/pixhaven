@@ -4,28 +4,34 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import sharp from 'sharp';
 import { load } from './helper.mjs';
 
 const { openDb, folderId } = await load('db');
-const { buildPlan } = await load('sorter/plan');
+const { buildPlan, personLabel } = await load('sorter/plan');
 const { applyPlan, undoSort, readLog } = await load('sorter/apply');
+const { shownIn, readManifest, sortedFolders, movedFile } = await load('sorter/people-manifest');
+const { TagReader } = await load('library/file-tags');
 
-const SETTINGS = { includeSubfolders: false, strictness: 0.42, minFaceSize: 40, noFacesFolder: false, minPhotos: 1, useOcr: false };
+const EXIFTOOL = path.resolve(process.platform === 'win32' ? 'resources/bin/win/exiftool/exiftool.exe' : 'resources/bin/linux/exiftool/exiftool');
+const HAS_EXIFTOOL = fs.existsSync(EXIFTOOL);
+const SETTINGS = { includeSubfolders: false, strictness: 0.36, minFaceSize: 40, noFacesFolder: false, minPhotos: 1 };
 
-/** The doc's example: beach.jpg (Ravi + Asha), ravi1.jpg (Ravi), IMG_0042.jpg (Asha), sunset.jpg (no face). */
-function setup() {
+/** beach.jpg (Person 1 big + Person 2 small), ravi1.jpg (Person 1), IMG_0042.jpg (Person 2), sunset.jpg (no face). */
+async function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clearup-sort-'));
-  const files = { 'beach.jpg': 'B', 'ravi1.jpg': 'R', 'IMG_0042.jpg': 'A', 'sunset.jpg': 'S' };
-  for (const [f, c] of Object.entries(files)) fs.writeFileSync(path.join(root, f), c.repeat(1000));
+  const colours = { 'beach.jpg': '#48c', 'ravi1.jpg': '#c84', 'IMG_0042.jpg': '#4c8', 'sunset.jpg': '#c48' };
+  for (const [f, c] of Object.entries(colours)) await sharp({ create: { width: 64, height: 48, channels: 3, background: c } }).jpeg().toFile(path.join(root, f));
   const db = openDb(path.join(root, '..', path.basename(root) + '.db'));
   const fid = folderId(db, root);
-  const img = (f, faces) => Number(db.prepare("INSERT INTO images (folder_id, path, size, mtime, status, faces) VALUES (?, ?, 1000, 0, 'done', ?)").run(fid, path.join(root, f), faces).lastInsertRowid);
-  const person = (num, name) => Number(db.prepare("INSERT INTO people (folder_id, num, name, name_source) VALUES (?, ?, ?, 'file')").run(fid, num, name).lastInsertRowid);
-  const face = (imageId, pid) => db.prepare('INSERT INTO faces (image_id, usable, person_id) VALUES (?, 1, ?)').run(imageId, pid);
-  const ravi = person(1, 'Ravi'), asha = person(2, 'Asha');
-  const beach = img('beach.jpg', 2); face(beach, ravi); face(beach, asha);
-  face(img('ravi1.jpg', 1), ravi);
-  face(img('IMG_0042.jpg', 1), asha);
+  const img = (f, faces) => Number(db.prepare("INSERT INTO images (folder_id, path, size, mtime, status, faces) VALUES (?, ?, ?, 0, 'done', ?)")
+    .run(fid, path.join(root, f), fs.statSync(path.join(root, f)).size, faces).lastInsertRowid);
+  const person = num => Number(db.prepare('INSERT INTO people (folder_id, num) VALUES (?, ?)').run(fid, num).lastInsertRowid);
+  const face = (imageId, pid, size = 100) => db.prepare('INSERT INTO faces (image_id, usable, person_id, x, y, w, h) VALUES (?, 1, ?, 0, 0, ?, ?)').run(imageId, pid, size, size);
+  const p1 = person(1), p2 = person(2);
+  const beach = img('beach.jpg', 2); face(beach, p2, 60); face(beach, p1, 140);
+  face(img('ravi1.jpg', 1), p1);
+  face(img('IMG_0042.jpg', 1), p2);
   img('sunset.jpg', 0);
   return { root, db, fid };
 }
@@ -42,81 +48,117 @@ const snapshot = dir => {
   return out;
 };
 
-test('dry run follows the sorting rules', () => {
-  const { root, db, fid } = setup();
-  const plan = buildPlan(db, fid, root, SETTINGS);
-  assert.deepEqual(plan.counts, { folders: 3, moves: 2, copies: 2, groupMoves: 1, stays: 1 });
-  assert.deepEqual(plan.stays.map(s => [path.basename(s.path), s.reason]), [['sunset.jpg', 'No faces']]);
-  assert.equal(plan.copyBytes, 2000);
-  const pass2 = plan.ops.filter(o => o.pass === 2);
-  assert.equal(pass2.length, 1);
-  assert.equal(path.relative(root, pass2[0].to), path.join('Group photos', 'beach.jpg'));
+test('people are "Person 1", "Person 2" — or the folder an earlier sort gave them', () => {
+  assert.equal(personLabel({ num: 3 }), 'Person 3');
+  assert.equal(personLabel({ num: 12, dir: null }), 'Person 12');
+  assert.equal(personLabel({ num: 1, dir: path.join('D:', 'Photos', 'Ravi') }), 'Ravi');
 });
 
-test('apply builds the folder exactly like the doc example, and undo restores it', async () => {
-  const { root, db, fid } = setup();
+test('dry run: a group photo moves once, to the person with the biggest face, and is tagged for the others', async () => {
+  const { root, db, fid } = await setup();
+  const plan = buildPlan(db, fid, root, SETTINGS);
+  assert.deepEqual(plan.counts, { folders: 2, moves: 3, tagged: 1, stays: 1 });
+  assert.ok(!plan.ops.some(o => o.kind === 'copy' || o.pass === 2), 'no copies, no "Group photos"');
+  assert.ok(!plan.targets.some(t => /group/i.test(t.label)));
+  const beach = plan.ops.find(o => o.from?.endsWith('beach.jpg'));
+  assert.equal(path.relative(root, beach.to), path.join('Person 1', 'beach.jpg'));
+  assert.deepEqual(beach.people, ['Person 1', 'Person 2']);
+  assert.deepEqual(beach.alsoIn.map(a => path.relative(root, a.dir)), ['Person 2']);
+  assert.deepEqual(plan.stays.map(s => [path.basename(s.path), s.reason]), [['sunset.jpg', 'No faces']]);
+});
+
+test('apply: no copies, people written into the photos, other folders list them; undo restores everything',
+  { timeout: 60000, skip: !HAS_EXIFTOOL && 'ExifTool not set up (npm run setup:engine)' }, async () => {
+  const { root, db, fid } = await setup();
   const before = snapshot(root);
   const plan = buildPlan(db, fid, root, SETTINGS);
   const sortId = Number(db.prepare("INSERT INTO sorts (folder_id, created, state, plan) VALUES (?, ?, 'applying', ?)").run(fid, Date.now(), JSON.stringify(plan)).lastInsertRowid);
   const phases = [];
-  const res = await applyPlan(db, sortId, plan, p => phases.push(p.phase));
-  assert.deepEqual([res.ok, res.moved, res.copied, res.groupMoved, res.skipped.length], [true, 2, 2, 1, 0]);
-  // Pass 2 (group originals) only starts after every pass-1 op.
-  assert.ok(phases.lastIndexOf('pass1') < phases.indexOf('pass2'));
-  const after = Object.keys(snapshot(root)).sort();
-  assert.deepEqual(after, ['Asha/', path.join('Asha', 'IMG_0042.jpg'), path.join('Asha', 'beach.jpg'),
-    'Group photos/', path.join('Group photos', 'beach.jpg'),
-    'Ravi/', path.join('Ravi', 'beach.jpg'), path.join('Ravi', 'ravi1.jpg'), 'sunset.jpg'].sort());
-  assert.equal(readLog(root, sortId).length, 3 + 2 + 2 + 1);
-  // DB follows the files; folders are remembered
-  assert.ok(db.prepare('SELECT path FROM images WHERE path LIKE ?').get('%Group photos%beach.jpg'));
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sort_dirs').get().n, 3);
+  const res = await applyPlan(db, sortId, plan, p => phases.push(p.phase), false, EXIFTOOL);
+  assert.deepEqual([res.ok, res.moved, res.copied, res.tagged, res.skipped.length], [true, 3, 0, 1, 0], JSON.stringify(res.skipped));
+  assert.ok(phases.includes('tagging'));
+  assert.deepEqual(Object.keys(snapshot(root)).sort(), ['Person 1/', path.join('Person 1', 'beach.jpg'), path.join('Person 1', 'ravi1.jpg'),
+    'Person 2/', path.join('Person 2', 'IMG_0042.jpg'), 'sunset.jpg'].sort());
+  // Person 2's folder shows the group photo kept in Person 1's folder.
+  assert.deepEqual(shownIn(path.join(root, 'Person 2')), [path.join(root, 'Person 1', 'beach.jpg')]);
+  assert.deepEqual(shownIn(path.join(root, 'Person 1')), []);
+  assert.deepEqual(readManifest(root).folders, { 'Person 2': [{ file: 'Person 1/beach.jpg', sort: sortId }] });
+  // The people travel inside the photos.
+  const r = new TagReader(EXIFTOOL);
+  const tags = await r.read([path.join(root, 'Person 1', 'beach.jpg'), path.join(root, 'Person 2', 'IMG_0042.jpg')]);
+  r.stop();
+  assert.deepEqual(tags.get(path.join(root, 'Person 1', 'beach.jpg')).people, ['Person 1', 'Person 2']);
+  assert.deepEqual(tags.get(path.join(root, 'Person 2', 'IMG_0042.jpg')).people, ['Person 2']);
+  assert.equal(res.files.length, 3);
+  // DB follows the files (size too, so a re-scan doesn't read them again); folders are remembered.
+  const row = db.prepare('SELECT path, size FROM images WHERE path LIKE ?').get('%Person 1%beach.jpg');
+  assert.equal(row.size, fs.statSync(row.path).size);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sort_dirs').get().n, 2);
+  // On a computer without this face data, a scan leaves the sorted folders alone.
+  assert.deepEqual(sortedFolders(root).map(d => path.relative(root, d)).sort(), ['Person 1', 'Person 2']);
 
-  // A re-run finds nothing left to do.
   const again = buildPlan(db, fid, root, SETTINGS);
-  assert.deepEqual([again.counts.moves, again.counts.copies, again.counts.groupMoves], [0, 0, 0]);
+  assert.equal(again.counts.moves, 0);
 
-  const u = undoSort(db, sortId, root);
+  const u = await undoSort(db, sortId, root, undefined, EXIFTOOL);
   assert.equal(u.kept.length, 0);
-  assert.deepEqual(snapshot(root), before);
-  assert.equal(db.prepare("SELECT state FROM sorts WHERE id = ?").get(sortId).state, 'undone');
+  assert.deepEqual(snapshot(root), before, "every file back, byte for byte");
+  const r2 = new TagReader(EXIFTOOL);
+  const back = await r2.read([path.join(root, 'beach.jpg')]);
+  r2.stop();
+  assert.deepEqual(back.get(path.join(root, 'beach.jpg')).people, [], 'people taken out again');
+  assert.ok(!fs.existsSync(path.join(root, '.clearup', 'people.json')));
+  assert.equal(db.prepare('SELECT state FROM sorts WHERE id = ?').get(sortId).state, 'undone');
+  assert.ok(readLog(root, sortId).length > 0);
+});
+
+test('the list of shown photos follows a photo renamed inside the app', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clearup-manifest-'));
+  fs.mkdirSync(path.join(root, 'Person 1')); fs.mkdirSync(path.join(root, 'Person 2'));
+  fs.writeFileSync(path.join(root, 'Person 1', 'a.jpg'), 'x');
+  const { addShown } = await load('sorter/people-manifest');
+  addShown(root, 1, [{ dir: path.join(root, 'Person 2'), file: path.join(root, 'Person 1', 'a.jpg') }]);
+  fs.renameSync(path.join(root, 'Person 1', 'a.jpg'), path.join(root, 'Person 1', 'b.jpg'));
+  movedFile(path.join(root, 'Person 1', 'a.jpg'), path.join(root, 'Person 1', 'b.jpg'));
+  assert.deepEqual(shownIn(path.join(root, 'Person 2')), [path.join(root, 'Person 1', 'b.jpg')]);
 });
 
 test('undo removes nested folders it created', async () => {
-  const { root, db, fid } = setup();
+  const { root, db, fid } = await setup();
   const before = snapshot(root);
-  const plan = { folderId: fid, root, targets: [], stays: [], counts: {}, copyBytes: 0, freeBytes: null,
+  const plan = { folderId: fid, root, targets: [], stays: [], counts: {}, freeBytes: null,
     ops: [{ kind: 'mkdir', pass: 0, to: path.join(root, 'India', 'Bengaluru') },
           { kind: 'move', pass: 1, from: path.join(root, 'sunset.jpg'), to: path.join(root, 'India', 'Bengaluru', 'sunset.jpg') }] };
   const sortId = Number(db.prepare("INSERT INTO sorts (folder_id, created, state) VALUES (?, ?, 'applying')").run(fid, Date.now()).lastInsertRowid);
   await applyPlan(db, sortId, plan, () => {});
   assert.ok(fs.existsSync(path.join(root, 'India', 'Bengaluru', 'sunset.jpg')));
-  undoSort(db, sortId, root);
+  await undoSort(db, sortId, root);
   assert.deepEqual(snapshot(root), before);
 });
 
 test('never overwrites, and keeps read-only files in place', async () => {
-  const { root, db, fid } = setup();
-  fs.mkdirSync(path.join(root, 'Ravi'));
-  fs.writeFileSync(path.join(root, 'Ravi', 'ravi1.jpg'), 'already here');
+  const { root, db, fid } = await setup();
+  fs.mkdirSync(path.join(root, 'Person 1'));
+  fs.writeFileSync(path.join(root, 'Person 1', 'ravi1.jpg'), 'already here');
   fs.chmodSync(path.join(root, 'IMG_0042.jpg'), 0o444);
   const plan = buildPlan(db, fid, root, SETTINGS);
   assert.ok(plan.stays.some(s => s.path.endsWith('IMG_0042.jpg') && s.reason === 'Read-only file'));
-  assert.ok(plan.ops.some(o => o.to.endsWith(path.join('Ravi', 'ravi1 (2).jpg'))));
+  assert.ok(plan.ops.some(o => o.to.endsWith(path.join('Person 1', 'ravi1 (2).jpg'))));
   const sortId = Number(db.prepare("INSERT INTO sorts (folder_id, created, state) VALUES (?, ?, 'applying')").run(fid, Date.now()).lastInsertRowid);
   await applyPlan(db, sortId, plan, () => {});
-  assert.equal(fs.readFileSync(path.join(root, 'Ravi', 'ravi1.jpg'), 'utf8'), 'already here');
-  assert.ok(fs.existsSync(path.join(root, 'Ravi', 'ravi1 (2).jpg')));
+  assert.equal(fs.readFileSync(path.join(root, 'Person 1', 'ravi1.jpg'), 'utf8'), 'already here');
+  assert.ok(fs.existsSync(path.join(root, 'Person 1', 'ravi1 (2).jpg')));
   assert.ok(fs.existsSync(path.join(root, 'IMG_0042.jpg')));
   fs.chmodSync(path.join(root, 'IMG_0042.jpg'), 0o644);
 });
 
-test('"No faces" folder option and minimum photos per person', () => {
-  const { root, db, fid } = setup();
+test('"No faces" folder option and minimum photos per person', async () => {
+  const { root, db, fid } = await setup();
   const plan = buildPlan(db, fid, root, { ...SETTINGS, noFacesFolder: true, minPhotos: 2 });
   assert.ok(plan.ops.some(o => o.from?.endsWith('sunset.jpg') && o.to.includes(path.join('No faces', 'sunset.jpg'))));
-  // Ravi and Asha both have 2 photos → still get folders; nobody goes to Unsorted.
+  // Both people have 2 photos → still get folders; nobody goes to Unsorted.
   assert.ok(!plan.targets.some(t => t.key === 'unsorted'));
   const p3 = buildPlan(db, fid, root, { ...SETTINGS, minPhotos: 3 });
   assert.ok(p3.targets.some(t => t.key === 'unsorted'));
+  assert.ok(p3.ops.every(o => o.kind === 'mkdir' || !o.people?.length), 'nobody with a folder: no people tags');
 });

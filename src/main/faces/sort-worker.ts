@@ -1,4 +1,4 @@
-// Worker thread for Sort by person. Tasks: scan (→ group → name), regroup, apply, finish, undo.
+// Worker thread for Sort by person. Tasks: scan (→ group), regroup, apply, finish, undo.
 // Scan results are saved after every image, so a cancelled or crashed scan resumes where it stopped.
 // Apply/undo hash every file, so they also run here to keep the window responsive.
 import { parentPort, workerData } from 'node:worker_threads';
@@ -6,8 +6,7 @@ import path from 'node:path';
 import type { ScanProgress, SortPlan, SortSettings } from '../../shared/types';
 import { openDb } from '../db';
 import { FaceEngine } from './detect';
-import { NameReader } from './names-ocr';
-import { syncImages, scanImage, groupFolder, nameFolder, type ListedFile } from './pipeline';
+import { syncImages, scanImage, groupFolder, type ListedFile } from './pipeline';
 import { applyPlan, undoSort } from '../sorter/apply';
 import { syncPhotoInfo, inspectRow } from '../tidy/inspect';
 
@@ -21,11 +20,10 @@ export interface WorkerInput {
   files: ListedFile[];
   keepDirs: string[];
   modelsDir: string;
-  ocrDir: string;
-  cacheDir: string;
   thumbsDir: string;
   settings: SortSettings;
   preferGpu: boolean;
+  exiftool?: string;
 }
 
 const input = workerData as WorkerInput;
@@ -45,7 +43,7 @@ async function main(): Promise<void> {
   const s = input.settings;
 
   if (input.task === 'apply' || input.task === 'finish') {
-    const res = await applyPlan(db, input.sortId!, input.plan!, p => parentPort!.postMessage({ type: 'apply', progress: p }), input.task === 'finish');
+    const res = await applyPlan(db, input.sortId!, input.plan!, p => parentPort!.postMessage({ type: 'apply', progress: p }), input.task === 'finish', input.exiftool);
     parentPort!.postMessage({ type: 'result', result: res });
     db.close();
     return;
@@ -70,7 +68,7 @@ async function main(): Promise<void> {
     return;
   }
   if (input.task === 'undo') {
-    const res = undoSort(db, input.sortId!, input.root, p => parentPort!.postMessage({ type: 'apply', progress: p }));
+    const res = await undoSort(db, input.sortId!, input.root, p => parentPort!.postMessage({ type: 'apply', progress: p }), input.exiftool);
     parentPort!.postMessage({ type: 'result', result: res });
     db.close();
     return;
@@ -111,14 +109,6 @@ async function main(): Promise<void> {
   post({ phase: 'grouping', done: input.files.length, total: input.files.length, faces });
   const people = groupFolder(db, input.folderId, s.strictness);
 
-  const reader = s.useOcr ? new NameReader(input.ocrDir, input.cacheDir) : null;
-  try {
-    await nameFolder(db, input.folderId, reader, (d, t) => {
-      if (!cancelled) post({ phase: 'naming', done: d, total: t, faces, people });
-    });
-  } finally {
-    await reader?.close();
-  }
   post({ phase: 'done', done: input.files.length, total: input.files.length, faces, people });
   parentPort!.postMessage({ type: 'result', result: { people } });
   db.close();

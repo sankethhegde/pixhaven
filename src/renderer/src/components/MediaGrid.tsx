@@ -99,7 +99,11 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
       cells.push(
         <div key={e.path} {...common} className={`absolute rounded-xl p-1.5 cursor-default ${sel ? 'bg-accent-soft ring-2 ring-accent' : 'hover:bg-panel-2'} ${foc ? 'outline-2 outline-dashed outline-offset-2 outline-accent' : ''}`}
           style={{ left: left + c * (tile + GAP), top: 8 + r * rowH, width: tile, height: tile + LABEL }}>
-          <Thumb entry={e} info={info} px={tile - 12} offline={(e as { offline?: boolean }).offline} />
+          <div className="relative">
+            <Thumb entry={e} info={info} px={tile - 12} offline={(e as { offline?: boolean }).offline} />
+            {e.taggedFrom && <span className="absolute left-1 top-1 max-w-[85%] truncate rounded bg-black/65 text-white text-[10px] px-1.5 py-0.5" data-testid="tagged-badge"
+              title={`Tagged here. The photo is kept in “${e.taggedFrom}”.`}>Tagged · {e.taggedFrom}</span>}
+          </div>
           <div className="mt-1 text-xs leading-tight line-clamp-1 break-all text-center px-0.5">{e.name}</div>
           <div className="mt-1 flex justify-center overflow-hidden">{tagRow(e, size === 's' ? 0 : size === 'm' ? 1 : 2, true)}</div>
         </div>,
@@ -109,7 +113,8 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
         <div key={e.path} {...common} className={`absolute left-0 right-0 flex items-center gap-3 px-3 text-sm border-b border-line ${sel ? 'bg-accent-soft' : 'hover:bg-panel-2'} ${foc ? 'outline-2 outline-dashed -outline-offset-2 outline-accent' : ''}`}
           style={{ top: i * LIST_ROW, height: LIST_ROW }}>
           <div className="w-7 h-7 shrink-0"><Thumb entry={e} info={info} px={28} small /></div>
-          <div className="flex-1 min-w-0 truncate">{e.name}{showFolder && <span className="text-muted text-xs ml-2">{showFolder(e)}</span>}</div>
+          <div className="flex-1 min-w-0 truncate">{e.name}{showFolder && <span className="text-muted text-xs ml-2">{showFolder(e)}</span>}
+            {e.taggedFrom && <span className="text-muted text-xs ml-2">tagged, kept in “{e.taggedFrom}”</span>}</div>
           <div className="w-16 text-xs text-muted">{e.kind === 'folder' ? 'Folder' : ext(e.name).toUpperCase()}</div>
           <div className="w-20 text-xs text-muted text-right">{e.kind === 'folder' ? '' : fmtBytes(e.size)}</div>
           <div className="w-40 text-xs text-muted">{fmtDate(e.mtime)}</div>
