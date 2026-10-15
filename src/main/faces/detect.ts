@@ -8,10 +8,13 @@ import sharp from 'sharp';
 import * as ort from 'onnxruntime-node';
 
 const DET = 640;            // YuNet input is fixed 640×640
-const SCORE = 0.85;         // detector confidence
+// Detector confidence. A photo where nothing reaches minScore gets a second chance at secondChance (faces half hidden
+// by a phone in a mirror selfie, heavy filters); measured on a real folder, using the lower bar for every photo
+// would add doubtful detections to photos that already had faces.
+export const detector = { minScore: 0.85, secondChance: 0.72 };
 export const CHIP = 112;    // fingerprint model input
 /** Bump when the fingerprint changes: faces made by an older model are fingerprinted again on the next scan. */
-export const FACE_MODEL = 3;   // 3: not-a-face filter (0.7.1)
+export const FACE_MODEL = 4;   // 3: not-a-face filter, 4: second-chance detection (0.7.2)
 export const REC_FILE = 'arcface.onnx';
 /** Raw fingerprint strength below this = not a face (tattoos, jewellery, patterns): real faces measured 9–30, most 15+;
  * the false detections found in a real folder measured 4.9 and 6.6. */
@@ -70,7 +73,9 @@ export class FaceEngine {
         if (y + DET >= H) break;
       }
     }
-    const kept = nms(faces);
+    const all = nms(faces);
+    const sure = all.filter(f => f.score >= detector.minScore);
+    const kept = sure.length ? sure : all;
     const real: Face[] = [];
     for (const f of kept) {
       const chip = alignCrop(rgb, W, H, f.kps);
@@ -99,7 +104,7 @@ export class FaceEngine {
       const cols = DET / st;
       for (let i = 0; i < cls.length; i++) {
         const score = Math.sqrt(clamp01(cls[i]) * clamp01(obj[i]));
-        if (score < SCORE) continue;
+        if (score < Math.min(detector.minScore, detector.secondChance)) continue;
         const c = i % cols, r = Math.floor(i / cols);
         const cx = (c + bb[i * 4]) * st, cy = (r + bb[i * 4 + 1]) * st;
         const bw = Math.exp(bb[i * 4 + 2]) * st, bh = Math.exp(bb[i * 4 + 3]) * st;

@@ -43,3 +43,47 @@ test('a person with very different looks stays one group (nearest-face linkage)'
   const kept = groups.find(g => g.anchor === 100);
   assert.ok(fresh.every(i => kept.faceIds.includes(i)), groups.map(g => g.anchor + ':' + g.faceIds.length).join(' '));
 });
+
+test('a one-off photo joins the person it is clearly closest to, never one of two equally close people', () => {
+  const faces = [];
+  let id = 0;
+  for (const k of [0, 1]) for (let i = 0; i < 5; i++) faces.push({ id: id++, imageId: id, emb: near(k, 0.3), quality: 0.9 });
+  // Below the threshold for person 0, but nobody else is near.
+  const clear = id; faces.push({ id: id++, imageId: id, emb: norm(base[0].map((x, i) => x + base[3][i] * 2.1)), quality: 0.9 });
+  // Halfway between person 0 and person 1.
+  const torn = id; faces.push({ id: id++, imageId: id, emb: norm(base[0].map((x, i) => x + base[1][i] + base[2][i] * 2.2)), quality: 0.9 });
+  const { groups } = cluster(faces, 0.42);
+  const of = i => groups.find(g => g.faceIds.includes(i));
+  assert.ok(of(clear).faceIds.includes(0), 'joined person 0: ' + groups.map(g => g.faceIds.join(',')).join(' | '));
+  assert.ok(!of(torn) || of(torn).faceIds.length === 1, 'not given to either person');
+});
+
+test('anchors keep their faces and attract new ones, but never merge with each other', () => {
+  const faces = [
+    { id: 1, imageId: 1, emb: near(0), anchor: 100 },
+    { id: 2, imageId: 2, emb: near(0), anchor: 200 },   // user kept a split
+    { id: 3, imageId: 3, emb: near(0) },
+    { id: 4, imageId: 4, emb: near(1) },
+  ];
+  const { groups } = cluster(faces, 0.42);
+  const a = groups.filter(g => g.anchor != null);
+  assert.equal(a.length, 2);
+  assert.ok(a.some(g => g.faceIds.includes(3)));
+  assert.ok(groups.some(g => g.anchor == null && g.faceIds.join() === '4'));
+});
+
+test('weak faces (small, blurry, turned away) never start or link groups; they join only a clear match', () => {
+  // Two different people, plus weak "in-between" faces that sit close to both: before v2.2 they chained them together.
+  const mid = norm(base[0].map((x, i) => x + base[1][i]));
+  const faces = [];
+  let id = 0;
+  for (let i = 0; i < 4; i++) faces.push({ id: id++, imageId: id, emb: near(0, 0.3), quality: 0.9, k: 0 });
+  for (let i = 0; i < 4; i++) faces.push({ id: id++, imageId: id, emb: near(1, 0.3), quality: 0.9, k: 1 });
+  for (let i = 0; i < 3; i++) faces.push({ id: id++, imageId: id, emb: mid, quality: 0.1, k: -1 });
+  const clear = id; faces.push({ id: id++, imageId: id, emb: near(0, 0.2), quality: 0.1, k: 0 });
+  const { groups } = cluster(faces, 0.42);
+  assert.equal(groups.length, 2, 'weak faces make no group of their own');
+  for (const g of groups) assert.equal(new Set(g.faceIds.map(i => faces[i].k)).size, 1, 'no mixed group');
+  assert.ok(groups.some(g => g.faceIds.includes(clear)), 'a weak face that clearly matches still joins');
+  assert.ok(!groups.some(g => g.faceIds.some(i => faces[i].k === -1)), 'unclear weak faces stay unassigned');
+});

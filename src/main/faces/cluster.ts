@@ -24,6 +24,8 @@ const KNN = 5;
 const KNN_PENALTY = 0.05;
 const SAME_PHOTO = 0.1;
 const CLASH_SHARE = 0.2;     // groups sharing up to this share of photos may still merge (collages)
+const ORPHAN_BELOW = 0.04;   // a leftover face joins a person at threshold − this (nearest 3 faces)…
+const ORPHAN_LEAD = 0.1;     // …when that person is clearly closer than anyone else
 export interface ClusterResult { groups: { anchor: number | null; faceIds: number[] }[] }
 
 interface Group { anchor: number | null; sum: Float32Array; n: number; faces: number[]; members: Float32Array[]; images: Map<number, number>; alive: boolean }
@@ -56,6 +58,7 @@ export function cluster(faces: ClusterFace[], threshold: number): ClusterResult 
   const D = faces[0].emb.length;
   const groups: Group[] = [];
   const byAnchor = new Map<number, Group>();
+  const byId = new Map(faces.map(f => [f.id, f]));
   const newGroup = (anchor: number | null): Group => ({ anchor, sum: new Float32Array(D), n: 0, faces: [], members: [], images: new Map(), alive: true });
   const put = (g: Group, f: ClusterFace) => { add(g.sum, f.emb); g.n++; g.faces.push(f.id); g.members.push(f.emb); g.images.set(f.imageId, (g.images.get(f.imageId) ?? 0) + 1); };
 
@@ -126,5 +129,31 @@ export function cluster(faces: ClusterFace[], threshold: number): ClusterResult 
     if (best && b1 >= threshold + WEAK_EXTRA && b1 - b2 >= WEAK_LEAD) { best.faces.push(f.id); best.images.set(f.imageId, 1); }
   }
 
-  return { groups: live.map(g => ({ anchor: g.anchor, faceIds: g.faces })) };
+  // 5. Leftovers: a face alone in its group, or a weak face still unassigned, joins a person with 2+ photos when its
+  //    nearest faces there are close (threshold − ORPHAN_BELOW) and that person is clearly closer than any other
+  //    (ORPHAN_LEAD ahead). On a real folder different people never came closer than 0.29 this way, while one-off
+  //    photos of a known person (filters, turned heads) scored 0.31–0.39 with nobody else above 0.24.
+  const near3 = (e: Float32Array, g: Group) => {
+    const s = g.members.map(m => dot(e, m)).sort((a, b) => b - a).slice(0, 3);
+    return s.reduce((a, b) => a + b, 0) / (s.length || 1);
+  };
+  const people = live.filter(g => g.images.size >= 2 && g.members.length);
+  const placed = new Set(live.flatMap(g => g.faces));
+  const leftovers: { f: ClusterFace; from: Group | null }[] = [
+    ...live.filter(g => g.images.size < 2 && g.anchor == null).flatMap(g => g.faces.map(id => ({ f: byId.get(id)!, from: g }))),
+    ...faces.filter(f => f.anchor == null && !placed.has(f.id)).map(f => ({ f, from: null })),
+  ];
+  for (const { f, from } of leftovers) {
+    let best: Group | null = null, b1 = -1, b2 = -1;
+    for (const g of people) {
+      if (g === from) continue;
+      const sim = near3(f.emb, g);
+      if (sim > b1) { b2 = b1; b1 = sim; best = g; } else if (sim > b2) b2 = sim;
+    }
+    if (!best || best.images.has(f.imageId) || b1 < threshold - ORPHAN_BELOW || b1 - b2 < ORPHAN_LEAD) continue;
+    best.faces.push(f.id); best.images.set(f.imageId, 1);
+    if (from) { from.faces = from.faces.filter(id => id !== f.id); from.n--; }
+  }
+
+  return { groups: live.filter(g => g.faces.length).map(g => ({ anchor: g.anchor, faceIds: g.faces })) };
 }
