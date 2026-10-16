@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import sharp from 'sharp';
+sharp.cache(false);
 
 const OUT = process.env.CLEARUP_E2E_DIR;
 const SRC = path.resolve(process.env.CLEARUP_TESTPHOTOS ?? 'phase0/testphotos');
@@ -72,7 +73,7 @@ export default async function run(win, app) {
     win.webContents.setBackgroundThrottling(false);
     fs.mkdirSync(OUT, { recursive: true });
     const readOnly = makeFixtures();
-    const before = snapshot(ROOT);
+    let before = snapshot(ROOT);
     const total = Object.keys(before).length;
     await waitFor('What would you like to do?');
 
@@ -92,6 +93,32 @@ export default async function run(win, app) {
     check('people are "Person N", no names guessed or typed', people.length > 0 && people.every(p => /^Person \d+$/.test(p.label))
       && (await js(`document.querySelectorAll('[data-person] input').length`)) === 0, people.map(p => p.label).join(', '));
     await shot('02-review');
+
+    // v2.3, optional: upscale one low-resolution photo in place.
+    const lowTitle = await js(`[...document.querySelectorAll('section button')].map(b => b.innerText).find(t => t.startsWith('Low resolution')) ?? ''`);
+    const lowCount = Number(lowTitle.match(/\((\d+)\)/)?.[1] ?? 0);
+    check('low-resolution photos are listed', lowCount > 0, lowTitle);
+    if (lowCount > 0) {
+      await js(`[...document.querySelectorAll('section button')].find(b => b.innerText.startsWith('Low resolution')).click()`);
+      await sleep(400);
+      await click('Select none');
+      const target = await js(`(() => { const l = document.querySelector('[data-testid=lowres] ~ div label'); l.querySelector('input').click(); return l.title; })()`);
+      const was = await sharp(target).metadata(), wasTime = fs.statSync(target).mtimeMs;
+      await sleep(300);
+      await shot('02b-lowres');
+      await click('Upscale 1 and replace');
+      await click('Upscale and replace');
+      const end = Date.now() + 180000;
+      while (Date.now() < end && (await sharp(target).metadata().catch(() => was)).width === was.width) await sleep(1000);
+      await sleep(2000);
+      const now = await sharp(target).metadata();
+      check('upscaled in place: same name and format, 2× or 4× bigger, same date', now.format === was.format && now.width >= was.width * 2 && Math.abs(fs.statSync(target).mtimeMs - wasTime) < 2000,
+        `${was.width}×${was.height} → ${now.width}×${now.height}`);
+      check('no extra files left beside it', fs.readdirSync(ROOT).filter(f => /pixhaven-upscale|_upscaled/.test(f)).length === 0);
+      const after = Number((await js(`[...document.querySelectorAll('section button')].map(b => b.innerText).find(t => t.startsWith('Low resolution')) ?? '(0)'`)).match(/\((\d+)\)/)?.[1] ?? 0);
+      check('it leaves the list', after === lowCount - 1, `${lowCount} → ${after}`);
+      before = snapshot(ROOT);
+    }
 
     await click('Next: dry run');
     await waitFor('Dry run: nothing has moved yet');

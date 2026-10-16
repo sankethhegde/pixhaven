@@ -67,6 +67,9 @@ export function openDb(file: string): Db {
   const cols = (db.prepare('PRAGMA table_info(faces)').all() as { name: string }[]).map(c => c.name);
   if (!cols.includes('model')) db.exec('ALTER TABLE faces ADD COLUMN model INTEGER NOT NULL DEFAULT 1');
   if (!cols.includes('quality')) db.exec('ALTER TABLE faces ADD COLUMN quality REAL');
+  // v2.3: the photo's own size (upright), for "upscale low-resolution photos".
+  const icols = (db.prepare('PRAGMA table_info(images)').all() as { name: string }[]).map(c => c.name);
+  if (!icols.includes('orig_w')) db.exec('ALTER TABLE images ADD COLUMN orig_w INTEGER; ALTER TABLE images ADD COLUMN orig_h INTEGER;');
   return db;
 }
 

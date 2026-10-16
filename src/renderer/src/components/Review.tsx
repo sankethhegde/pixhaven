@@ -1,7 +1,7 @@
 // Review people before anything moves (FACE-08/09): merge (drag a card onto another), remove, split.
 // v2.2: people are "Person 1", "Person 2"… — names are no longer guessed or typed, and folders keep these names.
 import { useEffect, useState, type DragEvent } from 'react';
-import type { PersonSummary, PhotoRef, ReviewData } from '@shared/types';
+import type { JobUpdate, PersonSummary, PhotoRef, ReviewData } from '@shared/types';
 import { api, errorText } from '../api';
 import { Button, Icon, Notice } from './ui';
 
@@ -61,6 +61,7 @@ export function Review({ data, onChanged, onUpscale }: Props) {
           </div>
         </Group>
       )}
+      <LowRes photos={data.lowRes} onDone={onChanged} onError={setError} />
       <PhotoGroup title="Couldn't recognise" hint="Faces were found but are too small, blurry or turned away. These photos stay where they are." photos={data.cantRecognise} />
       <PhotoGroup title="No faces" hint="These stay where they are, unless “No faces” folder is on in Settings." photos={data.noFaces} />
       {data.skipped.length > 0 && (
@@ -182,6 +183,80 @@ function Group({ title, hint, children }: { title: string; hint?: string; childr
       </button>
       {openG && <div className="px-4 pb-4">{children}</div>}
     </section>
+  );
+}
+
+/**
+ * v2.3, optional: photos with few pixels (Instagram, WhatsApp, screenshots) can be upscaled in place — each keeps its
+ * name, format, date, people and labels; the original goes to the Recycle Bin.
+ */
+function LowRes({ photos, onDone, onError }: { photos: ReviewData['lowRes']; onDone: () => void; onError: (e: string) => void }) {
+  const [sel, setSel] = useState<Set<string>>(() => new Set(photos.map(p => p.path)));
+  const [ask, setAsk] = useState(false);
+  const [jobs, setJobs] = useState<string[]>([]);
+  const [prog, setProg] = useState<Record<string, JobUpdate>>({});
+  useEffect(() => setSel(new Set(photos.map(p => p.path))), [photos]);
+  useEffect(() => api.onJobUpdate(u => { if (jobs.includes(u.jobId)) setProg(p => ({ ...p, [u.jobId]: u })); }), [jobs]);
+  const ups = jobs.map(j => prog[j]).filter(Boolean);
+  const running = jobs.length > 0 && !(ups.length === jobs.length && ups.every(u => u.finished));
+  useEffect(() => {
+    if (!jobs.length || running) return;
+    const failed = ups.flatMap(u => u.items.filter(i => i.state === 'failed'));
+    if (failed.length) onError(`${failed.length} photo(s) could not be upscaled: ${failed.slice(0, 3).map(i => `${i.name} (${i.error})`).join('; ')}`);
+    setJobs([]); setProg({}); onDone();
+  }, [running]);           // eslint-disable-line react-hooks/exhaustive-deps
+  if (!photos.length) return null;
+  const done = ups.reduce((n, u) => n + u.done, 0), total = ups.reduce((n, u) => n + u.total, 0) || sel.size;
+  const start = async () => {
+    setAsk(false);
+    try { setJobs(await api.sort.upscaleLow(photos.filter(p => sel.has(p.path)).map(p => ({ path: p.path, width: p.width, height: p.height })))); }
+    catch (e) { onError(errorText(e)); }
+  };
+  const toggle = (p: string) => setSel(s => { const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n; });
+  return (
+    <Group title={`Low resolution — upscale recommended (${photos.length})`} hint="Optional. Small photos (under 2 megapixels) look sharper upscaled.">
+      <div className="flex items-center gap-2 flex-wrap mb-3 text-sm" data-testid="lowres">
+        {running ? (
+          <div className="flex-1 min-w-60">
+            <div className="text-sm mb-1">Upscaling {Math.min(done + 1, total)} of {total}…</div>
+            <div className="h-2 rounded-full bg-panel-2 overflow-hidden"><div className="h-full bg-accent transition-all" style={{ width: `${(done / total) * 100}%` }} /></div>
+          </div>
+        ) : <>
+          <span className="mr-auto text-muted">{sel.size} of {photos.length} selected</span>
+          <Button className="h-8" variant="ghost" onClick={() => setSel(new Set(photos.map(p => p.path)))}>Select all</Button>
+          <Button className="h-8" variant="ghost" onClick={() => setSel(new Set())}>Select none</Button>
+          <Button className="h-8" variant="primary" disabled={!sel.size} onClick={() => setAsk(true)}><Icon name="sparkle" size={15} />Upscale {sel.size} and replace</Button>
+        </>}
+      </div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))' }}>
+        {photos.slice(0, 500).map(p => (
+          <label key={p.path} title={p.path} className={`relative cursor-pointer rounded-md ${sel.has(p.path) ? 'ring-2 ring-accent' : ''}`}>
+            <img src={p.thumbUrl} alt={p.name} loading="lazy" className="w-full aspect-square object-cover rounded-md bg-panel-2" />
+            <input type="checkbox" checked={sel.has(p.path)} disabled={running} onChange={() => toggle(p.path)} aria-label={`Upscale ${p.name}`}
+              className="absolute left-1.5 top-1.5 h-4 w-4 accent-[var(--accent)]" />
+            <span className="absolute right-1 bottom-6 rounded bg-black/65 text-white text-[10px] px-1">{p.width}×{p.height}</span>
+            <div className="text-[11px] text-muted truncate mt-0.5">{p.name}</div>
+          </label>
+        ))}
+      </div>
+      {ask && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6" role="dialog" aria-modal="true">
+          <div className="bg-panel rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="font-semibold">Upscale {sel.size} photo{sel.size === 1 ? '' : 's'} and replace them?</div>
+            <ul className="text-sm leading-relaxed list-disc pl-5 space-y-1 text-muted">
+              <li>Each photo becomes 2× bigger (4× when very small), in the same format and with the same name.</li>
+              <li>Its date, people and labels are kept.</li>
+              <li>The originals go to the Recycle Bin, so you can restore them from there.</li>
+              <li>This runs in the background; you can keep reviewing.</li>
+            </ul>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setAsk(false)}>Cancel</Button>
+              <Button variant="primary" onClick={start}>Upscale and replace</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Group>
   );
 }
 

@@ -16,7 +16,6 @@ interface SortApi {
   regroup(fid: number): Promise<void>;
   review(fid: number): Promise<ReviewData>;
   person(pid: number): Promise<PhotoRef[]>;
-  rename(pid: number, name: string, allowClash?: boolean): Promise<{ ok: boolean; clashWith?: { id: number; label: string } }>;
   merge(from: number, into: number): Promise<void>;
   removeFace(faceId: number): Promise<void>;
   split(pid: number, faceIds: number[]): Promise<number>;
@@ -27,6 +26,7 @@ interface SortApi {
   personFiles(pid: number): Promise<{ path: string; width: number; height: number }[]>;
   dataSize(): Promise<number>;
   deleteData(): Promise<void>;
+  upscaleLow(files: { path: string; width: number; height: number }[]): Promise<string[]>;
 }
 export interface FolderScan { files: { path: string; width: number; height: number }[]; skipped: number; unreadable: string[] }
 export type PathKind = 'folder' | 'image' | 'other' | 'missing';

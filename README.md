@@ -119,6 +119,12 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   Every action is logged in `<folder>/.clearup/sort-log.jsonl`; Undo replays it backwards and takes the people out of
   the photos again (photos without metadata of their own come back byte for byte). An interrupted Apply can be finished
   or undone next time. Folders made by a sort — on this computer or listed in `people.json` — are skipped by later scans.
+- **Upscale low-resolution photos (0.7.4, optional):** after a scan, the review lists photos under 2 megapixels or
+  1,600 px on the long side (JPG, PNG, WEBP), all ticked. "Upscale and replace" makes each 2× bigger (4× under 720 px) in
+  the same format, with the Photo model when downloaded (else Fast). The result keeps the name, date, EXIF and XMP
+  (people, labels); the original goes to the Recycle Bin. Face data and labels are updated, so nothing is scanned again.
+- **Face detection details (0.7.1–0.7.4):** a photo with no face at 0.85 confidence is read again at 0.72; detections with a
+  weak fingerprint (tattoos, jewellery) and small detections inside a bigger face (close-ups seen through a tile) are dropped.
 - **Tidy up:** duplicates = same SHA-1, or dHash within 6 bits ("same picture", catches resized/re-saved copies;
   different photos measured 15+ bits apart) or 10 bits ("near-identical"). The suggested keeper has the most pixels, then
   is sharpest. Blurry = sharpest 4×4 tile's Laplacian variance below 150 (sharp photos measured 580+). Dates come from

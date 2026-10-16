@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, powerMonitor, protocol, shell } from 'electron';
-import type { JobItem, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery } from '@shared/types';
+import type { JobItem, JobUpdate, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery } from '@shared/types';
 import { IMAGE_EXTENSIONS } from '@shared/types';
 import { getSettings, updateSettings, writeTurnedOn } from './settings';
 import { detectGpu, hasDedicatedGpu } from './gpu-detect';
@@ -325,21 +325,51 @@ handle('image:size', (p: string) => quickSize(p));
 handle('folder:scan', (p: string) => scanFolder(p));
 
 // ---- upscaling, through the job queue ----
-handle('job:start', async (req: { files: { path: string; width: number; height: number }[]; opts: UpscaleOptions; mode: 'single' | 'folder' }) => {
-  updateSettings({ last: req.opts });
-  const job = new UpscaleJob(req.files, req.opts, getSettings(), req.mode, u => {
-    send('job:update', u);
-    if (u.finished) {
-      jobs.delete(u.jobId);
-      if (req.mode === 'folder') notifyDone('PixHaven: folder finished', `${u.items.filter(i => i.state === 'done').length} of ${u.total} images upscaled.`);
-    }
+function startUpscale(files: { path: string; width: number; height: number }[], opts: UpscaleOptions, mode: 'single' | 'folder' | 'replace',
+  label: string, onFinished?: (u: JobUpdate) => void | Promise<void>): string {
+  const job = new UpscaleJob(files, opts, getSettings(), mode, u => {
+    if (!u.finished) { send('job:update', u); return; }
+    jobs.delete(u.jobId);
+    // The window hears "finished" only after the follow-up work (e.g. recording replaced photos) is done.
+    void Promise.resolve(onFinished?.(u)).catch(e => log('warn', 'After upscaling', e)).finally(() => send('job:update', u));
   });
-  const label = req.mode === 'single' ? `Upscale ${path.basename(req.files[0].path)}` : `Upscale ${req.files.length} images`;
   job.announce(); // before queuing: a job with nothing to do can finish immediately
-  jobOpts.set(job.id, req.opts);
+  jobOpts.set(job.id, opts);
   const q = queue.add('upscale', label, () => job.run(), () => job.cancel());
   jobs.set(job.id, { job, queueId: q.id });
   return job.id;
+}
+handle('job:start', async (req: { files: { path: string; width: number; height: number }[]; opts: UpscaleOptions; mode: 'single' | 'folder' }) => {
+  updateSettings({ last: req.opts });
+  const label = req.mode === 'single' ? `Upscale ${path.basename(req.files[0].path)}` : `Upscale ${req.files.length} images`;
+  return startUpscale(req.files, req.opts, req.mode, label, u => {
+    if (req.mode === 'folder') notifyDone('PixHaven: folder finished', `${u.items.filter(i => i.state === 'done').length} of ${u.total} images upscaled.`);
+  });
+});
+// v2.3 (Sort by person, optional): low-resolution photos upscaled in place — same format, originals to the Recycle Bin.
+// Under 720 px on the long side 4×, otherwise 2×; the Photo model when it is downloaded, else Fast.
+handle('sort:upscaleLow', (files: { path: string; width: number; height: number }[]) => {
+  const groups = new Map<string, typeof files>();
+  for (const f of files) {
+    const ext = path.extname(f.path).toLowerCase();
+    const format = ext === '.png' ? 'png' : ext === '.webp' ? 'webp' : 'jpg';
+    const factor = Math.max(f.width, f.height) < 720 ? 4 : 2;
+    const k = `${format}|${factor}`;
+    groups.set(k, [...(groups.get(k) ?? []), f]);
+  }
+  const model = modelStatus().photo ? 'photo' : 'fast';
+  const ids: string[] = [];
+  for (const [k, list] of groups) {
+    const [format, factor] = k.split('|');
+    const opts: UpscaleOptions = { size: { kind: 'scale', factor: Number(factor) as 2 | 4 }, model, format: format as UpscaleOptions['format'], jpgQuality: 95 };
+    ids.push(startUpscale(list, opts, 'replace', `Upscale and replace ${list.length} photo(s)`, async u => {
+      const done = u.items.filter(i => i.state === 'done').map(i => i.input);
+      await sort.afterUpscale(done);
+      await tags.afterSort([], done).catch(() => {});
+      notifyDone('PixHaven: photos upscaled', `${done.length} of ${u.total} photos upscaled and replaced.`);
+    }));
+  }
+  return ids;
 });
 handle('job:cancel', (jobId: string) => {
   const j = jobs.get(jobId);

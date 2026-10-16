@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
 import { app } from 'electron';
+import sharp from 'sharp';
 import workerPath from './faces/sort-worker?modulePath';
 import type {
   ApplyProgress, ApplyResult, FolderStatus, PersonSummary, PhotoRef, ReviewData, ScanProgress, SortHistory, SortPlan,
@@ -159,8 +160,35 @@ export function review(fid: number): ReviewData {
     folderId: fid, folder: root, people: summaries,
     cantRecognise: cant.map(ref), noFaces: none.map(ref),
     skipped: skipped.map(x => ({ path: x.path, reason: x.error ?? 'Skipped' })),
+    lowRes: lowResPhotos(fid).map(r => ({ ...ref(r), width: r.orig_w, height: r.orig_h })),
     scanned: (d.prepare("SELECT COUNT(*) AS n FROM images WHERE folder_id = ? AND status = 'done'").get(fid) as { n: number }).n,
   };
+}
+
+// ---------- v2.3: low-resolution photos, upscaled in place (optional) ----------
+
+/** Under 2 megapixels or 1,600 px on the long side (phone screenshots, Instagram's 1080 px…), in a format that can be
+ * written back as itself (JPG, PNG, WEBP). */
+export const LOW_RES_PX = 2_000_000, LOW_RES_SIDE = 1600;
+const REPLACEABLE = /\.(jpe?g|png|webp)$/i;
+function lowResPhotos(fid: number): { id: number; path: string; thumb: string | null; orig_w: number; orig_h: number }[] {
+  return (getDb().prepare(`SELECT id, path, thumb, orig_w, orig_h FROM images WHERE folder_id = ? AND status = 'done' AND orig_w IS NOT NULL
+    AND (orig_w * orig_h < ? OR MAX(orig_w, orig_h) < ?) ORDER BY orig_w * orig_h`).all(fid, LOW_RES_PX, LOW_RES_SIDE) as { id: number; path: string; thumb: string | null; orig_w: number; orig_h: number }[])
+    .filter(r => REPLACEABLE.test(r.path) && fs.existsSync(r.path));
+}
+
+/** After photos were upscaled in place: new size recorded, so they are not scanned again and leave the list. */
+export async function afterUpscale(paths: string[]): Promise<void> {
+  const d = getDb();
+  const set = d.prepare('UPDATE images SET size = ?, mtime = ?, orig_w = ?, orig_h = ? WHERE path = ?');
+  for (const p of paths) {
+    try {
+      const st = fs.statSync(p);
+      const m = await sharp(p).metadata();
+      const [w, h] = (m.orientation ?? 1) >= 5 ? [m.height, m.width] : [m.width, m.height];
+      set.run(st.size, Math.round(st.mtimeMs), w ?? null, h ?? null, p);
+    } catch (e) { log('warn', `Could not update ${p} after upscaling`, e); }
+  }
 }
 
 export function personPhotos(pid: number): PhotoRef[] {

@@ -49,6 +49,7 @@ const api = {
     personFiles: (pid: number) => invoke('sort:personFiles', pid),
     dataSize: () => invoke('sort:dataSize'),
     deleteData: () => invoke('sort:deleteData'),
+    upscaleLow: (files: unknown[]) => invoke('sort:upscaleLow', files),
   },
   tidy: {
     status: (root: string) => invoke('tidy:status', root),

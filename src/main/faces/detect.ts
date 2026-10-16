@@ -14,7 +14,7 @@ const DET = 640;            // YuNet input is fixed 640×640
 export const detector = { minScore: 0.85, secondChance: 0.72 };
 export const CHIP = 112;    // fingerprint model input
 /** Bump when the fingerprint changes: faces made by an older model are fingerprinted again on the next scan. */
-export const FACE_MODEL = 4;   // 3: not-a-face filter, 4: second-chance detection (0.7.2)
+export const FACE_MODEL = 5;   // 3: not-a-face filter, 4: second-chance detection, 5: cut-off faces count as weak
 export const REC_FILE = 'arcface.onnx';
 /** Raw fingerprint strength below this = not a face (tattoos, jewellery, patterns): real faces measured 9–30, most 15+;
  * the false detections found in a real folder measured 4.9 and 6.6. */
@@ -80,7 +80,7 @@ export class FaceEngine {
     for (const f of kept) {
       const chip = alignCrop(rgb, W, H, f.kps);
       f.sharpness = laplacianVariance(chip);
-      f.quality = faceQuality(f, chip);
+      f.quality = faceQuality(f, chip, W, H);
       f.usable = Math.min(f.w, f.h) >= minFace && f.sharpness >= minSharpness;
       if (f.usable) {
         const { emb, strength } = await this.fingerprint(chip);
@@ -156,7 +156,10 @@ export function yaw(kps: [number, number][]): number {
  * fingerprints that sit close to each other whoever they are — they may join a clear match, but never start or link
  * groups (that is how unrelated people ended up in one folder).
  */
-export function faceQuality(f: { w: number; h: number; kps: [number, number][] }, chip: Uint8Array): number {
+export function faceQuality(f: { x: number; y: number; w: number; h: number; kps: [number, number][] }, chip: Uint8Array, W = Infinity, H = Infinity): number {
+  // A face cut off by the photo's edge (extreme close-ups: just a chin or a mouth) is mostly guesswork.
+  const inside = (Math.max(0, Math.min(f.x + f.w, W) - Math.max(f.x, 0)) * Math.max(0, Math.min(f.y + f.h, H) - Math.max(f.y, 0))) / (f.w * f.h || 1);
+  const whole = clamp01((inside - 0.65) / 0.25);
   const size = clamp01((Math.min(f.w, f.h) - 28) / (90 - 28));
   const sharp = clamp01(Math.log(Math.max(1, laplacianVariance(chip)) / 15) / Math.log(20));
   const turn = 1 - clamp01((Math.abs(yaw(f.kps)) - 0.3) / 0.45);
@@ -164,7 +167,7 @@ export function faceQuality(f: { w: number; h: number; kps: [number, number][] }
   for (let y = 30; y < 100; y++) for (let x = 25; x < 87; x++) { const i = (y * CHIP + x) * 3; sum += 0.299 * chip[i] + 0.587 * chip[i + 1] + 0.114 * chip[i + 2]; }
   const mean = sum / (70 * 62);
   const light = clamp01((mean - 18) / 40) * clamp01((250 - mean) / 30);
-  return Math.min(size, sharp, turn, light);
+  return Math.min(size, sharp, turn, light, whole);
 }
 
 function iou(a: Face, b: Face): number {
@@ -176,7 +179,14 @@ function nms(faces: Face[]): Face[] {
   faces.sort((a, b) => b.score - a.score);
   const keep: Face[] = [];
   for (const f of faces) if (keep.every(k => iou(k, f) < 0.3)) keep.push(f);
-  return keep;
+  // A small "face" mostly inside a much bigger one is a part of it (a close-up seen through one 640-px tile finds a
+  // face at the mouth or chin): dropped.
+  return keep.filter(f => !keep.some(k => k !== f && k.w * k.h > 2.5 * f.w * f.h && inside(f, k) > 0.6));
+}
+/** Share of a's box that lies inside b's. */
+function inside(a: Face, b: Face): number {
+  const x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y), x2 = Math.min(a.x + a.w, b.x + b.w), y2 = Math.min(a.y + a.h, b.y + b.h);
+  return (Math.max(0, x2 - x1) * Math.max(0, y2 - y1)) / (a.w * a.h || 1);
 }
 
 // ArcFace 5-point template for a 112×112 chip.

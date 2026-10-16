@@ -154,6 +154,7 @@ export interface ReviewData {
   cantRecognise: PhotoRef[];   // faces found, none usable
   noFaces: PhotoRef[];
   skipped: { path: string; reason: string }[];
+  lowRes: (PhotoRef & { width: number; height: number })[];   // v2.3: worth upscaling (optional step)
   scanned: number;
 }
 

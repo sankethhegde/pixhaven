@@ -66,6 +66,9 @@ export async function scanImage(db: Db, engine: FaceEngine, imageId: number, thu
     return { faces: 0, embs: [] };
   }
   const faces = await engine.analyse(data, W, H, s.minFaceSize, MIN_SHARPNESS);
+  // The photo's own size, upright (EXIF orientations 5–8 swap width and height).
+  const meta = await openImage(row.path).metadata().catch(() => null);
+  const [ow, oh] = meta?.width ? ((meta.orientation ?? 1) >= 5 ? [meta.height!, meta.width] : [meta.width, meta.height!]) : [null, null];
 
   fs.mkdirSync(thumbsDir, { recursive: true });
   const raw = { raw: { width: W, height: H, channels: 3 as const } };
@@ -86,8 +89,8 @@ export async function scanImage(db: Db, engine: FaceEngine, imageId: number, thu
       ids.push(Number(ins.run(imageId, f.x, f.y, f.w, f.h, f.score, f.sharpness, f.usable ? 1 : 0, f.emb ? embToBlob(f.emb) : null, FACE_MODEL, f.quality,
         was && !was.removed ? was.person_id : null, was?.removed ?? 0).lastInsertRowid));
     }
-    db.prepare("UPDATE images SET status = 'done', error = NULL, faces = ?, width = ?, height = ?, thumb = ?, seen = 1 WHERE id = ?")
-      .run(faces.length, W, H, thumb, imageId);
+    db.prepare("UPDATE images SET status = 'done', error = NULL, faces = ?, width = ?, height = ?, thumb = ?, seen = 1, orig_w = ?, orig_h = ? WHERE id = ?")
+      .run(faces.length, W, H, thumb, ow, oh, imageId);
   });
   // Face thumbnails: a loose square crop around each face.
   for (let i = 0; i < faces.length; i++) {

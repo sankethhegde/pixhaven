@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { app } from 'electron';
+import { app, shell } from 'electron';
 import sharp from 'sharp';
 import type { ImageInfo, JobItem, JobUpdate, Settings, UpscaleOptions } from '@shared/types';
 import { openImage as open, isImageFile } from './image-io';
@@ -170,7 +170,7 @@ export class UpscaleJob {
     files: { path: string; width: number; height: number }[],
     private opts: UpscaleOptions,
     private settings: Settings,
-    private mode: 'single' | 'folder',
+    private mode: 'single' | 'folder' | 'replace',
     private emit: (u: JobUpdate) => void,
   ) {
     // Resume: in folder mode, images whose "_upscaled" result already exists are skipped (Settings → skip finished).
@@ -186,7 +186,9 @@ export class UpscaleJob {
   announce(): void { this.push(true); }
 
   private destFor = (file: string): string =>
-    this.mode === 'single'
+    this.mode === 'replace'
+      ? path.join(path.dirname(file), `.${path.basename(file, path.extname(file))}.pixhaven-upscale${path.extname(outputPath(file, this.opts.format, null))}`)
+      : this.mode === 'single'
       ? path.join(sessionTemp(), `${crypto.randomUUID()}-result${path.extname(outputPath(file, this.opts.format, null))}`)
       : uniquePath(outputPath(file, this.opts.format, this.settings.outputDir));
 
@@ -202,6 +204,7 @@ export class UpscaleJob {
       const t = Date.now();
       try {
         const r = await upscaleOne(item.input, this.opts, this.settings, this.destFor, this.abort.signal, f => { item.progress = f; this.push(); });
+        if (this.mode === 'replace') r.output = await replaceOriginal(item.input, r.output);
         Object.assign(item, { state: 'done', progress: 1, output: r.output, outputUrl: fileUrl(r.output), beforeUrl: r.beforeUrl, outWidth: r.width, outHeight: r.height });
       } catch (e) {
         if ((e as Error).name === 'AbortError') item.state = 'cancelled';
@@ -235,6 +238,25 @@ export class UpscaleJob {
       total: this.items.length, etaSeconds: eta,
     });
   }
+}
+
+/**
+ * v2.3 "upscale and replace": the original goes to the Recycle Bin (so it can be restored), the upscaled file takes its
+ * name and keeps its date. Metadata (EXIF, colour profile, XMP people and labels) was already carried over by writeFinal.
+ * If the Recycle Bin can't take it (some network or USB drives), the original stays and the result is kept beside it.
+ */
+async function replaceOriginal(original: string, upscaled: string): Promise<string> {
+  const st = fs.statSync(original);
+  try {
+    await shell.trashItem(original);
+  } catch (e) {
+    const kept = uniquePath(outputPath(original, path.extname(upscaled).slice(1) === 'png' ? 'png' : path.extname(upscaled).slice(1) === 'webp' ? 'webp' : 'jpg', null));
+    fs.renameSync(upscaled, kept);
+    throw new Error(`The original couldn't go to the Recycle Bin, so it was kept; the upscaled copy is ${path.basename(kept)}`);
+  }
+  fs.renameSync(upscaled, original);
+  fs.utimesSync(original, st.atime, st.mtime);
+  return original;
 }
 
 export function friendlyError(e: unknown): string {
