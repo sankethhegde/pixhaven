@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS sort_dirs (           -- folders a sort created or fi
   folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE, dir TEXT NOT NULL COLLATE NOCASE,
   PRIMARY KEY (folder_id, dir)
 );
+CREATE TABLE IF NOT EXISTS name_changes (       -- v2.4: person folders renamed outside the app; the photos follow
+  id INTEGER PRIMARY KEY, folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+  old TEXT NOT NULL, new TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS photo_info (         -- tidy tools: duplicates, blur, date, place
   id INTEGER PRIMARY KEY, folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
   path TEXT NOT NULL COLLATE NOCASE, size INTEGER, mtime INTEGER,

@@ -119,10 +119,15 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   Every action is logged in `<folder>/.clearup/sort-log.jsonl`; Undo replays it backwards and takes the people out of
   the photos again (photos without metadata of their own come back byte for byte). An interrupted Apply can be finished
   or undone next time. Folders made by a sort — on this computer or listed in `people.json` — are skipped by later scans.
-- **Upscale low-resolution photos (0.7.4, optional):** after a scan, the review lists photos under 2 megapixels or
-  1,600 px on the long side (JPG, PNG, WEBP), all ticked. "Upscale and replace" makes each 2× bigger (4× under 720 px) in
+- **Upscale low-resolution photos (0.7.4, optional; opt-in since 0.7.5):** with "Recommend low-resolution photos for
+  upscaling" ticked on the folder screen, the review lists photos under 2 megapixels and under 1,600 px on the long side (JPG, PNG, WEBP), all ticked. "Upscale and replace" makes each 2× bigger (4× under 720 px) in
   the same format, with the Photo model when downloaded (else Fast). The result keeps the name, date, EXIF and XMP
   (people, labels); the original goes to the Recycle Bin. Face data and labels are updated, so nothing is scanned again.
+- **Reopening a sorted folder (0.7.5):** choosing a folder scanned or sorted before opens straight on its people. Person
+  folders (or the sorted folder itself) renamed or moved in Explorer are recognised from the photos inside (name and
+  size): face data, the "also shown in" list and the undo log follow, so nothing is sorted twice and Undo still works.
+  A renamed person folder renames the person: the name inside their photos (group photos kept elsewhere too) changes
+  in the background, and Undo takes the new name out.
 - **Face detection details (0.7.1–0.7.4):** a photo with no face at 0.85 confidence is read again at 0.72; detections with a
   weak fingerprint (tattoos, jewellery) and small detections inside a bigger face (close-ups seen through a tile) are dropped.
 - **Tidy up:** duplicates = same SHA-1, or dHash within 6 bits ("same picture", catches resized/re-saved copies;

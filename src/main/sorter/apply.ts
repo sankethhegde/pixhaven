@@ -202,7 +202,7 @@ export async function applyPlan(db: Db, sortId: number, plan: SortPlan, onProgre
           if (!r.ok) { res.skipped.push({ path: file, reason: `People not written into the file: ${r.error ?? 'unknown error'}` }); return; }
           appendLog(root, { sort: sortId, op: 'tag', to: file, people: op.people, t: Date.now() });
           res.files!.push(file);
-          try { const st = fs.statSync(file); if (op.imageId != null) setSize.run(st.size, st.mtimeMs, op.imageId); } catch { /* gone */ }
+          try { const st = fs.statSync(file); if (op.imageId != null) setSize.run(st.size, Math.round(st.mtimeMs), op.imageId); } catch { /* gone */ }
         });
       }
     }

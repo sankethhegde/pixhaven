@@ -35,6 +35,7 @@ export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, o
   const [undone, setUndone] = useState<{ restored: number; kept: { path: string; reason: string }[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [found, setFound] = useState<FolderStatus['reconciled']>(null);
   const folderRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -52,13 +53,20 @@ export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, o
 
   useEffect(() => { if (initialFolder) { choose(initialFolder); onConsumedInitial(); } }, [initialFolder]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function refreshStatus(f: string) { setStatus(await api.sort.status(f)); }
+  async function refreshStatus(f: string): Promise<FolderStatus> {
+    const st = await api.sort.status(f);
+    setStatus(st);
+    if (st.reconciled) setFound(st.reconciled);
+    return st;
+  }
 
   async function choose(f: string) {
-    setError(null); setReview(null); setPlan(null); setResult(null); setUndone(null);
+    setError(null); setReview(null); setPlan(null); setResult(null); setUndone(null); setFound(null);
     if ((await api.pathKind(f)) !== 'folder') { setError('Please choose a folder.'); return; }
     folderRef.current = f; setFolder(f); setStep('pick');
-    await refreshStatus(f);
+    const st = await refreshStatus(f);
+    // v2.4: a folder scanned or sorted before opens straight on its people, as it was left.
+    if (st.folderId != null && st.people > 0 && !st.interrupted) await loadReview(st.folderId);
   }
 
   async function startScan() {
@@ -121,6 +129,10 @@ export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, o
           <label className="flex items-center gap-3 text-sm">
             <Toggle label="Include subfolders" checked={settings.sort.includeSubfolders} onChange={v => setSort({ includeSubfolders: v })} />
             Include subfolders <span className="text-muted">(folders made by earlier sorts are always skipped)</span>
+          </label>
+          <label className="flex items-center gap-3 text-sm">
+            <Toggle label="Recommend low-resolution photos for upscaling" checked={settings.sort.suggestUpscale} onChange={v => setSort({ suggestUpscale: v })} />
+            Recommend low-resolution photos for upscaling <span className="text-muted">(optional: listed in the review, with a button to upscale them)</span>
           </label>
           {status?.interrupted && (
             <Notice tone="warn">
@@ -195,10 +207,18 @@ export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, o
       <Page title={`People in ${base(review.folder)}`} wide
         actions={<>
           <Button variant="ghost" onClick={() => setStep('pick')}><Icon name="back" size={16} />Back</Button>
+          <Button onClick={startScan}><Icon name="sparkle" size={16} />Scan for new photos</Button>
           <Button variant="primary" disabled={busy || !review.people.length} onClick={toPlan}>Next: dry run</Button>
         </>}
         subtitle={`${review.scanned} photos · ${people} people · ${review.cantRecognise.length} couldn't recognise · ${review.noFaces.length} without faces`}>
         {error && <Notice tone="danger">{error}</Notice>}
+        {found && (
+          <Notice tone="info">
+            {found.movedFrom && <div>This folder was sorted before as “{found.movedFrom}”, so its people are shown as they were.</div>}
+            {found.folders.length > 0 && <div>Renamed person folders were recognised: {found.folders.map(f => `“${base(f.from)}” → “${base(f.to)}”`).join(', ')}.</div>}
+            {found.photos > 0 && <div>{found.photos} photo{found.photos === 1 ? ' was' : 's were'} found at a new place.</div>}
+          </Notice>
+        )}
         {!review.people.length && <Notice tone="info">No people were found in this folder. Try a lower minimum face size in Settings, or a looser face-match strictness.</Notice>}
         <Review data={review} onChanged={() => loadReview(review.folderId)} onUpscale={onUpscale} />
       </Page>

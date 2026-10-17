@@ -162,3 +162,58 @@ test('"No faces" folder option and minimum photos per person', async () => {
   assert.ok(p3.targets.some(t => t.key === 'unsorted'));
   assert.ok(p3.ops.every(o => o.kind === 'mkdir' || !o.people?.length), 'nobody with a folder: no people tags');
 });
+
+test('a sorted folder renamed in Explorer (and its person folders) is found again; Undo still works', { skip: !HAS_EXIFTOOL && 'needs ExifTool' }, async () => {
+  const { reconcileFolder, relocateFolder, renamePeople } = await load('sorter/reconcile');
+  const { root, db, fid } = await setup();
+  const before = snapshot(root);
+  const plan = buildPlan(db, fid, root, SETTINGS);
+  const sortId = Number(db.prepare("INSERT INTO sorts (folder_id, created, state, plan) VALUES (?, ?, 'applying', ?)").run(fid, Date.now(), JSON.stringify(plan)).lastInsertRowid);
+  await applyPlan(db, sortId, plan, () => {}, false, EXIFTOOL);
+  // Nothing renamed: nothing changes.
+  assert.deepEqual(reconcileFolder(db, fid, root), { folders: [], photos: 0, moved: [] });
+
+  // The user renames the person folders and the sorted folder itself.
+  fs.renameSync(path.join(root, 'Person 1'), path.join(root, 'Ravi'));
+  fs.renameSync(path.join(root, 'Person 2'), path.join(root, 'Mom'));
+  const moved = root + '-renamed';
+  fs.renameSync(root, moved);
+  assert.equal(relocateFolder(db, root), null, 'a folder that is not there is not matched');
+  assert.equal(relocateFolder(db, moved)?.from, root);
+  assert.equal(folderId(db, moved, false), fid);
+  const r = reconcileFolder(db, fid, moved);
+  assert.equal(r.photos, 3);
+  assert.deepEqual(r.folders.map(f => [path.basename(f.from), path.basename(f.to)]).sort(), [['Person 1', 'Ravi'], ['Person 2', 'Mom']]);
+  const paths = db.prepare('SELECT path FROM images WHERE folder_id = ?').all(fid).map(x => x.path);
+  assert.ok(paths.every(p => fs.existsSync(p)), paths.join(', '));
+  const dirs = db.prepare('SELECT num, dir FROM people WHERE folder_id = ? ORDER BY num').all(fid).map(x => [x.num, path.basename(x.dir)]);
+  assert.deepEqual(dirs, [[1, 'Ravi'], [2, 'Mom']]);
+  assert.deepEqual(personLabel(db.prepare('SELECT * FROM people WHERE num = 2 AND folder_id = ?').get(fid)), 'Mom');
+  // The group photo still shows in Mom's folder; later scans skip the renamed folders.
+  assert.deepEqual(shownIn(path.join(moved, 'Mom')), [path.join(moved, 'Ravi', 'beach.jpg')]);
+  assert.deepEqual(sortedFolders(moved).map(d => path.basename(d)).sort(), ['Mom', 'Ravi']);
+  assert.deepEqual(db.prepare('SELECT dir FROM sort_dirs WHERE folder_id = ?').all(fid).map(x => path.basename(x.dir)).sort(), ['Mom', 'Ravi']);
+
+  // The names inside the photos follow the folder names (the group photo kept in Ravi's folder names Mom too).
+  assert.deepEqual(db.prepare('SELECT old, new FROM name_changes WHERE folder_id = ? ORDER BY id').all(fid).map(x => [x.old, x.new]).sort(),
+    [['Person 1', 'Ravi'], ['Person 2', 'Mom']]);
+  const changed = await renamePeople(db, fid, moved, EXIFTOOL);
+  assert.equal(changed.length, 3);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM name_changes').get().n, 0);
+  const rd = new TagReader(EXIFTOOL);
+  const inFiles = await rd.read([path.join(moved, 'Ravi', 'beach.jpg'), path.join(moved, 'Ravi', 'ravi1.jpg'), path.join(moved, 'Mom', 'IMG_0042.jpg')]);
+  rd.stop();
+  assert.deepEqual([...inFiles.values()].map(t => [...t.people].sort()), [['Mom', 'Ravi'], ['Ravi'], ['Mom']]);
+  const row = db.prepare('SELECT size, mtime FROM images WHERE path = ?').get(path.join(moved, 'Ravi', 'beach.jpg'));
+  const st = fs.statSync(path.join(moved, 'Ravi', 'beach.jpg'));
+  assert.deepEqual([row.size, row.mtime], [st.size, Math.round(st.mtimeMs)], 'not scanned again');
+
+  // Undo puts everything back where it was in the (renamed) folder, and takes the new names out again.
+  await undoSort(db, sortId, moved, undefined, EXIFTOOL);
+  const after = snapshot(moved);
+  assert.deepEqual(Object.keys(after).sort(), Object.keys(before).sort());
+  const rd2 = new TagReader(EXIFTOOL);
+  const left = await rd2.read(['beach.jpg', 'ravi1.jpg', 'IMG_0042.jpg'].map(f => path.join(moved, f)));
+  rd2.stop();
+  assert.deepEqual([...left.values()].flatMap(t => t.people), []);
+});

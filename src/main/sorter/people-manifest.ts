@@ -87,6 +87,27 @@ export function movedFile(from: string, to: string): void {
   writeManifest(root, m);
 }
 
+/** Folders or photos renamed outside the app (found again by reconcile.ts): `map` takes and gives absolute paths. */
+export function remapManifest(root: string, map: (p: string) => string): void {
+  if (!fs.existsSync(manifestPath(root))) return;
+  const m = readManifest(root);
+  const folders: Record<string, ManifestEntry[]> = {};
+  let changed = false;
+  for (const [k, list] of Object.entries(m.folders)) {
+    const nk = rel(root, map(abs(root, k)));
+    if (nk !== k) changed = true;
+    const out = (folders[nk] ??= []);
+    for (const e of list) {
+      const f = rel(root, map(abs(root, e.file)));
+      if (f !== e.file) changed = true;
+      if (!out.some(x => same(x.file, f))) out.push({ ...e, file: f });
+    }
+  }
+  if (!changed) return;
+  m.folders = folders;
+  writeManifest(root, m);
+}
+
 /** Folders a scan should treat as already sorted (when the face data is not on this computer). */
 export function sortedFolders(root: string): string[] {
   const m = readManifest(root);

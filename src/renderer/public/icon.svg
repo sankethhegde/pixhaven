@@ -1,7 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
-  <!-- PixHaven (0.7.3): a "P" inside a lens ring, with an AI sparkle, on dark navy. -->
-  <circle cx="256" cy="256" r="240" fill="#141A2E"/>
-  <circle cx="256" cy="256" r="150" fill="none" stroke="#4FD1FF" stroke-width="22"/>
-  <path d="M212 340 L212 172 L276 172 Q336 172 336 226 Q336 280 276 280 L212 280" fill="none" stroke="#fff" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M372 124 L382 150 L408 160 L382 170 L372 196 L362 170 L336 160 L362 150 Z" fill="#FFD25E"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512"><!-- PixHaven (0.7.5): a P with a tilted orbit and a gold moon, on dark navy. --><defs><linearGradient id="gf" x1="168" y1="374" x2="358" y2="138" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#4FD1FF"/><stop offset="1" stop-color="#FFFFFF"/></linearGradient>
+   <clipPath id="front"><rect x="0" y="262" width="512" height="300"/></clipPath></defs><circle cx="256" cy="256" r="240" fill="#141A2E"/>
+  <g transform="rotate(-24 256 262)"><ellipse cx="256" cy="262" rx="196" ry="66" fill="none" stroke="#4FD1FF" stroke-opacity="0.55" stroke-width="12"/></g>
+  <g fill="url(#gf)">
+    <rect x="168" y="138" width="68" height="236" rx="34"/>
+    <path d="M202 138 H274 A84 84 0 0 1 274 306 H202 Z"/>
+  </g>
+  <circle cx="272" cy="222" r="32" fill="#141A2E"/>
+  <g transform="rotate(-24 256 262)">
+    <ellipse cx="256" cy="262" rx="196" ry="66" fill="none" stroke="#4FD1FF" stroke-width="12" clip-path="url(#front)"/>
+    <circle cx="406" cy="304" r="20" fill="#FFD25E"/>
+  </g></svg>

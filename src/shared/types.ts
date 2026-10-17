@@ -111,6 +111,7 @@ export interface SortSettings {
   minFaceSize: number;          // px on the ≤1280 working image (FACE-02)
   noFacesFolder: boolean;       // FACE-07 option
   minPhotos: number;            // FACE-16: smaller groups go to "Unsorted"
+  suggestUpscale: boolean;      // v2.3: list low-resolution photos for upscaling in the review (off by default)
 }
 
 export interface ScanProgress {
@@ -212,6 +213,8 @@ export interface FolderStatus {
   lastScan: number | null;
   sorts: SortHistory[];
   interrupted: SortHistory | null;   // an Apply that didn't finish
+  /** v2.4: what was found renamed or moved outside the app since last time (paths updated). */
+  reconciled?: { movedFrom: string | null; folders: { from: string; to: string }[]; photos: number } | null;
 }
 
 // ---------------- Job queue (GEN-01) ----------------

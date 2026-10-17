@@ -21,7 +21,7 @@ const DEFAULTS: Settings = {
   cpuOnly: false,
   skipExisting: true,
   firstRunDone: false,
-  sort: { includeSubfolders: false, strictness: 0.34, minFaceSize: 40, noFacesFolder: false, minPhotos: 2 },
+  sort: { includeSubfolders: false, strictness: 0.34, minFaceSize: 40, noFacesFolder: false, minPhotos: 2, suggestUpscale: false },
   tidy: { includeSubfolders: false, match: 'same', blurThreshold: 150, by: 'date', dateDepth: 'month', placeDepth: 'city', useFileDate: true, unknownFolder: false },
   library: { showSystem: false, view: 'grid', size: 'm', sortBy: 'name', sortDesc: false, type: 'all', lastDir: null, dbPath: null, watched: [], writeToFiles: true },
   version: SETTINGS_VERSION,

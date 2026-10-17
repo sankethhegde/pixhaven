@@ -74,6 +74,7 @@ export default async function run(win, app) {
     fs.mkdirSync(OUT, { recursive: true });
     const readOnly = makeFixtures();
     let before = snapshot(ROOT);
+    let upscaled = null;   // the photo upscaled in place: compared with itself after the upscale, not the original
     const total = Object.keys(before).length;
     await waitFor('What would you like to do?');
 
@@ -81,6 +82,9 @@ export default async function run(win, app) {
     await js(`window.__clearupSort(${JSON.stringify(ROOT)})`);
     await waitFor('Scan folder');
     await sleep(1500);
+    // v2.4: low-resolution recommendations are opt-in.
+    await js(`(() => { const s = document.querySelector('[aria-label="Recommend low-resolution photos for upscaling"]'); if (s.getAttribute('aria-checked') !== 'true') s.click(); })()`);
+    await sleep(500);
     let t = Date.now();
     await click('Scan folder');
     await sleep(2500);
@@ -118,6 +122,7 @@ export default async function run(win, app) {
       const after = Number((await js(`[...document.querySelectorAll('section button')].map(b => b.innerText).find(t => t.startsWith('Low resolution')) ?? '(0)'`)).match(/\((\d+)\)/)?.[1] ?? 0);
       check('it leaves the list', after === lowCount - 1, `${lowCount} → ${after}`);
       before = snapshot(ROOT);
+      upscaled = { name: path.basename(target), pixels: await sharp(target).raw().toBuffer() };
     }
 
     await click('Next: dry run');
@@ -183,6 +188,33 @@ export default async function run(win, app) {
     await waitFor('Everything is already sorted');
     check('re-run finds nothing to move', true);
     await click('Back');
+
+    // v2.4: a person folder renamed in Explorer is recognised; the folder opens straight on its people.
+    const renameFrom = dirs.find(d => /^Person \d+$/.test(d));
+    if (renameFrom) {
+      fs.renameSync(path.join(ROOT, renameFrom), path.join(ROOT, 'Renamed in Explorer'));
+      await js(`window.__clearupSort(${JSON.stringify(path.join(ROOT, '..'))})`);
+      await sleep(1500);
+      await js(`window.__clearupSort(${JSON.stringify(ROOT)})`);
+      await waitFor('Renamed person folders were recognised', 60000);
+      const labels = await js(`[...document.querySelectorAll('[data-person]')].map(c => c.dataset.person)`);
+      check('reopening shows the people as they were, renamed folder recognised', labels.includes('Renamed in Explorer') && !labels.includes(renameFrom), labels.join(', '));
+      await shot('04b-reopened');
+      await click('Next: dry run');
+      await waitFor('Everything is already sorted');
+      check('renamed folder is not sorted again', true);
+      // The name inside its photos follows the folder (in the background).
+      const inRenamed = fs.readdirSync(path.join(ROOT, 'Renamed in Explorer')).filter(f => /\.(jpe?g|png)$/i.test(f)).map(f => path.join(ROOT, 'Renamed in Explorer', f));
+      let names = [];
+      for (let i = 0; i < 60; i++) {
+        names = await Promise.all(inRenamed.map(f => js(`window.clearup.tags.peopleIn(${JSON.stringify(f)})`)));
+        if (names.every(n => n.includes('Renamed in Explorer') && !n.includes(renameFrom))) break;
+        await sleep(1000);
+      }
+      check('names inside the photos follow the renamed folder', names.length > 0 && names.every(n => n.includes('Renamed in Explorer') && !n.includes(renameFrom)),
+        `${inRenamed.length} photos: ${names.map(n => n.join('+')).join(', ')}`);
+      await click('Back');
+    }
     await click('Back');
 
     // Undo restores the folder exactly (people taken out of the photos again).
@@ -198,11 +230,11 @@ export default async function run(win, app) {
     const pixelsSame = [], peopleLeft = [];
     for (const k of changed) {
       const p = path.join(ROOT, k);
-      const a = await sharp(path.join(SRC, path.basename(k))).raw().toBuffer().catch(() => null);
+      const a = upscaled?.name === path.basename(k) ? upscaled.pixels : await sharp(path.join(SRC, path.basename(k))).raw().toBuffer().catch(() => null);
       const b = await sharp(p).raw().toBuffer().catch(() => null);
       if (a && b && a.equals(b)) pixelsSame.push(k);
       const left = await js(`window.clearup.tags.peopleIn(${JSON.stringify(p)})`);
-      if (left.some(n => /^Person \d+$/.test(n))) peopleLeft.push(k);
+      if (left.some(n => /^Person \d+$/.test(n) || n === 'Renamed in Explorer')) peopleLeft.push(k);
     }
     check('undo: pictures untouched, people taken out of the files', pixelsSame.length === changed.length && peopleLeft.length === 0,
       `${Object.keys(after).length - changed.length} identical, ${changed.length} with their own metadata rewritten${peopleLeft.length ? `; people left in ${peopleLeft.join(', ')}` : ''}`);

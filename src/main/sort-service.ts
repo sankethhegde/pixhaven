@@ -16,7 +16,8 @@ import { resourcesDir } from './engine';
 import { isImageFile } from './image-io';
 import { buildPlan, personLabel } from './sorter/plan';
 import { sortedFolders } from './sorter/people-manifest';
-import { exiftool } from './tags-service';
+import { reconcileFolder, relocateFolder, renamePeople } from './sorter/reconcile';
+import { exiftool, afterSort as tagsAfterSort } from './tags-service';
 import type { ListedFile } from './faces/pipeline';
 import type { WorkerInput } from './faces/sort-worker';
 import { fileUrl } from './upscale-job';
@@ -98,8 +99,48 @@ export function cancelScan(): void { current?.worker.postMessage('cancel'); }
 // ---------- public API ----------
 export const sortDirs = (fid: number) => (getDb().prepare('SELECT dir FROM sort_dirs WHERE folder_id = ?').all(fid) as { dir: string }[]).map(r => r.dir);
 
+/**
+ * v2.4: a folder sorted before is matched again even when it, its person folders or its photos were renamed or moved
+ * in Explorer, so it opens as it was and a scan doesn't see those photos as new. Not while a sort job is running.
+ */
+function reconcile(root: string): FolderStatus['reconciled'] {
+  if (current) return null;
+  try {
+    const d = getDb();
+    const relocated = relocateFolder(d, root);
+    const movedFrom = relocated?.from ?? null;
+    const fid = folderId(d, root, false);
+    if (fid == null) return null;
+    const { moved, ...r } = reconcileFolder(d, fid, root);
+    // Labels and stars follow the photos too.
+    const all = [...(relocated?.moved ?? []), ...moved];
+    if (all.length) tagsAfterSort(all, []).catch(e => log('warn', 'Labels did not follow moved photos', e));
+    renamePeopleLater(fid, root);
+    if (movedFrom || r.photos || r.folders.length) {
+      log('info', `Found again in ${root}: ${movedFrom ? `folder moved from ${movedFrom}, ` : ''}${r.folders.length} person folder(s) renamed, ${r.photos} photo(s) moved`);
+      return { movedFrom, ...r };
+    }
+  } catch (e) { log('warn', `Could not match ${root} with earlier sorts`, e); }
+  return null;
+}
+
+/** Renamed person folders: the names inside the photos are changed in the background (one job at a time). */
+let renaming = false;
+function renamePeopleLater(fid: number, root: string): void {
+  if (renaming || !getDb().prepare('SELECT 1 FROM name_changes WHERE folder_id = ?').get(fid)) return;
+  renaming = true;
+  let changed: string[] = [];
+  queue.add('apply', `Sort by person: new names into the photos of ${path.basename(root)}`, async () => {
+    changed = await renamePeople(getDb(), fid, root, exiftool());
+  }, () => {}).done
+    .then(() => { if (changed.length) { log('info', `Renamed people in ${changed.length} photo(s)`); return tagsAfterSort([], changed); } })
+    .catch(e => log('warn', 'Could not rename people in the photos', e))
+    .finally(() => { renaming = false; });
+}
+
 export function folderStatus(root: string): FolderStatus {
   const d = getDb();
+  const reconciled = reconcile(root);
   const fid = folderId(d, root, false);
   if (fid == null) return { folderId: null, scannedImages: 0, people: 0, lastScan: null, sorts: [], interrupted: null };
   const sorts = d.prepare("SELECT id, kind, created, state, summary FROM sorts WHERE folder_id = ? AND kind = 'people' ORDER BY id DESC LIMIT 10").all(fid) as unknown as SortHistory[];
@@ -108,17 +149,19 @@ export function folderStatus(root: string): FolderStatus {
     scannedImages: (d.prepare("SELECT COUNT(*) AS n FROM images WHERE folder_id = ? AND status = 'done'").get(fid) as { n: number }).n,
     people: (d.prepare('SELECT COUNT(*) AS n FROM people WHERE folder_id = ?').get(fid) as { n: number }).n,
     lastScan: (d.prepare('SELECT last_scan FROM folders WHERE id = ?').get(fid) as { last_scan: number | null }).last_scan,
-    sorts, interrupted: sorts.find(x => x.state === 'applying') ?? null,
+    sorts, interrupted: sorts.find(x => x.state === 'applying') ?? null, reconciled,
   };
 }
 
 /** Scan (or re-scan) a folder through the job queue. Resolves when grouping is done. */
 export function scanFolder(root: string, ev: Pick<SortEvents, 'scan'>): { queueId: string; done: Promise<{ folderId: number; cancelled?: boolean }> } {
+  reconcile(root);   // before the folder gets a new record: it may be a known one, renamed
   const fid = folderId(getDb(), root)!;
   let cancelled = false;
   const job = queue.add('scan', `Sort by person: scan ${path.basename(root)}`, async () => {
     if (cancelled) return;
     ev.scan({ folder: root, phase: 'listing', done: 0, total: 0, faces: 0, people: 0 });
+    reconcile(root);
     // Folders sorted before — on this computer, or (from the folder's own list) on another one — are left alone.
     const files = await listImages(root, getSettings().sort.includeSubfolders, [...sortDirs(fid), ...sortedFolders(root)]);
     log('info', `Scan ${root}: ${files.length} images (${files.filter(f => f.cloud).length} online-only)`);
@@ -160,20 +203,20 @@ export function review(fid: number): ReviewData {
     folderId: fid, folder: root, people: summaries,
     cantRecognise: cant.map(ref), noFaces: none.map(ref),
     skipped: skipped.map(x => ({ path: x.path, reason: x.error ?? 'Skipped' })),
-    lowRes: lowResPhotos(fid).map(r => ({ ...ref(r), width: r.orig_w, height: r.orig_h })),
+    lowRes: !s.suggestUpscale ? [] : lowResPhotos(fid).map(r => ({ ...ref(r), width: r.orig_w, height: r.orig_h })),
     scanned: (d.prepare("SELECT COUNT(*) AS n FROM images WHERE folder_id = ? AND status = 'done'").get(fid) as { n: number }).n,
   };
 }
 
 // ---------- v2.3: low-resolution photos, upscaled in place (optional) ----------
 
-/** Under 2 megapixels or 1,600 px on the long side (phone screenshots, Instagram's 1080 px…), in a format that can be
+/** Under 2 megapixels and under 1,600 px on the long side (WhatsApp, Instagram's 1080 px…), in a format that can be
  * written back as itself (JPG, PNG, WEBP). */
 export const LOW_RES_PX = 2_000_000, LOW_RES_SIDE = 1600;
 const REPLACEABLE = /\.(jpe?g|png|webp)$/i;
 function lowResPhotos(fid: number): { id: number; path: string; thumb: string | null; orig_w: number; orig_h: number }[] {
   return (getDb().prepare(`SELECT id, path, thumb, orig_w, orig_h FROM images WHERE folder_id = ? AND status = 'done' AND orig_w IS NOT NULL
-    AND (orig_w * orig_h < ? OR MAX(orig_w, orig_h) < ?) ORDER BY orig_w * orig_h`).all(fid, LOW_RES_PX, LOW_RES_SIDE) as { id: number; path: string; thumb: string | null; orig_w: number; orig_h: number }[])
+    AND orig_w * orig_h < ? AND MAX(orig_w, orig_h) < ? ORDER BY orig_w * orig_h`).all(fid, LOW_RES_PX, LOW_RES_SIDE) as { id: number; path: string; thumb: string | null; orig_w: number; orig_h: number }[])
     .filter(r => REPLACEABLE.test(r.path) && fs.existsSync(r.path));
 }
 
