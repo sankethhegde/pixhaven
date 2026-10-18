@@ -128,6 +128,16 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   size): face data, the "also shown in" list and the undo log follow, so nothing is sorted twice and Undo still works.
   A renamed person folder renames the person: the name inside their photos (group photos kept elsewhere too) changes
   in the background, and Undo takes the new name out.
+- **Group photos, both ways (0.7.6):** the folder keeping a group photo marks it "Also in · Person 4"; the other
+  people's folders mark it "Kept in · Person 2" (grid, list and viewer). On Windows each other person's folder also gets
+  a shortcut to it (`beach.jpg.lnk`, about 1 KB, description "PixHaven group photo"), so File Explorer shows it there
+  too; PixHaven keeps these in step with `people.json` (retargeted on renames, removed by Undo) and never touches other
+  shortcuts. Folders sorted on another computer get theirs when opened.
+- **Photos tab (0.7.6):** lists folders sorted before (and opens any folder). A sorted folder opens on its people — person
+  folders renamed in Explorer are recognised — and a person shows their folder, group photos included. The Folders
+  view browses it with New folder (Ctrl+Shift+N), Cut / Copy / Paste (Ctrl+X / C / V, in-app clipboard), Rename (F2,
+  files and folders), Move to… and Copy to…. Never overwrites (" (2)"), moves across drives copy-check-delete, RAW
+  sidecars travel along; labels, the people list and the shortcuts follow moves, face data on the next open.
 - **Face detection details (0.7.1–0.7.4):** a photo with no face at 0.85 confidence is read again at 0.72; detections with a
   weak fingerprint (tattoos, jewellery) and small detections inside a bigger face (close-ups seen through a tile) are dropped.
 - **Tidy up:** duplicates = same SHA-1, or dHash within 6 bits ("same picture", catches resized/re-saved copies;

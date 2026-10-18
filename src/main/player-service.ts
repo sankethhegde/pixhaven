@@ -135,6 +135,9 @@ export function recent(limit = 12): RecentVideo[] {
 }
 
 /** Is this file open in the player? (TAG-08 waits before writing into it.) */
+/** Quitting: every video is let go, so labels waiting for it can still be written into the file. */
+export function closeAll(): void { for (const id of [...sessions.keys()]) close(id); }
+
 export const isOpen = (p: string) => [...sessions.values()].some(s => (process.platform === 'win32' ? s.file.toLowerCase() === p.toLowerCase() : s.file === p));
 
 export function playing(p: boolean): void { pauseThumbs(p); }   // low-spec: no thumbnail work while a video plays

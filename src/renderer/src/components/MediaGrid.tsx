@@ -28,6 +28,11 @@ interface Props {
 }
 
 const ext = (n: string) => n.slice(n.lastIndexOf('.') + 1).toLowerCase();
+/** “Person 2”, “Person 3” and “Mom” */
+export const alsoText = (names: string[]) => {
+  const q = names.map(n => `“${n}”`);
+  return q.length < 2 ? q.join('') : `${q.slice(0, -1).join(', ')} and ${q[q.length - 1]}`;
+};
 const fmtDate = (ms: number) => ms ? new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
 
 export function MediaGrid({ items, infos, view, size, selected, showFolder, onVisible, onClick, onOpen, focused = null, onCols, resetKey }: Props) {
@@ -102,7 +107,9 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
           <div className="relative">
             <Thumb entry={e} info={info} px={tile - 12} offline={(e as { offline?: boolean }).offline} />
             {e.taggedFrom && <span className="absolute left-1 top-1 max-w-[85%] truncate rounded bg-black/65 text-white text-[10px] px-1.5 py-0.5" data-testid="tagged-badge"
-              title={`Tagged here. The photo is kept in “${e.taggedFrom}”.`}>Tagged · {e.taggedFrom}</span>}
+              title={`Group photo: kept in “${e.taggedFrom}”, shown here too.`}>Kept in · {e.taggedFrom}</span>}
+            {e.alsoIn?.length ? <span className="absolute left-1 bottom-1 max-w-[85%] truncate rounded bg-accent/85 text-accent-fg text-[10px] px-1.5 py-0.5" data-testid="alsoin-badge"
+              title={`Group photo kept here, also shown in ${alsoText(e.alsoIn)}.`}>Also in · {e.alsoIn.length === 1 ? e.alsoIn[0] : `${e.alsoIn.length} folders`}</span> : null}
           </div>
           <div className="mt-1 text-xs leading-tight line-clamp-1 break-all text-center px-0.5">{e.name}</div>
           <div className="mt-1 flex justify-center overflow-hidden">{tagRow(e, size === 's' ? 0 : size === 'm' ? 1 : 2, true)}</div>
@@ -114,7 +121,8 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
           style={{ top: i * LIST_ROW, height: LIST_ROW }}>
           <div className="w-7 h-7 shrink-0"><Thumb entry={e} info={info} px={28} small /></div>
           <div className="flex-1 min-w-0 truncate">{e.name}{showFolder && <span className="text-muted text-xs ml-2">{showFolder(e)}</span>}
-            {e.taggedFrom && <span className="text-muted text-xs ml-2">tagged, kept in “{e.taggedFrom}”</span>}</div>
+            {e.taggedFrom && <span className="text-muted text-xs ml-2">group photo, kept in “{e.taggedFrom}”</span>}
+            {e.alsoIn?.length ? <span className="text-muted text-xs ml-2">group photo, also in {alsoText(e.alsoIn)}</span> : null}</div>
           <div className="w-16 text-xs text-muted">{e.kind === 'folder' ? 'Folder' : ext(e.name).toUpperCase()}</div>
           <div className="w-20 text-xs text-muted text-right">{e.kind === 'folder' ? '' : fmtBytes(e.size)}</div>
           <div className="w-40 text-xs text-muted">{fmtDate(e.mtime)}</div>

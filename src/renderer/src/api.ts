@@ -3,6 +3,7 @@ import type {
   ApplyProgress, ApplyResult, FolderStatus, GpuStatus, ImageInfo, JobItem, JobUpdate, ModelDownload, ModelId, PhotoRef,
   PowerStatus, QueueItem, ReviewData, SaveResult, ScanProgress, Settings, SortHistory, SortPlan, TidyResults, UpdateStatus, UpscaleOptions,
   FileWriteStatus, Playlist, WatchChange, WatchedFolder, WatchQuery, WatchResult,
+  FileOpResult, KnownFolder, MediaEntry,
   DriveInfo, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
 } from '@shared/types';
 
@@ -107,7 +108,20 @@ interface WatchApi {
   query(q: WatchQuery): Promise<WatchResult>;
 }
 
+interface PhotosApi {
+  folders(): Promise<KnownFolder[]>;
+  person(pid: number): Promise<{ dir: string | null; items: MediaEntry[] }>;
+}
+interface FilesApi {
+  paste(paths: string[], dest: string, mode: 'copy' | 'move'): Promise<FileOpResult>;
+  pasteTo(paths: string[], mode: 'copy' | 'move'): Promise<FileOpResult | null>;
+  newFolder(parent: string, name: string): Promise<string>;
+  rename(p: string, name: string): Promise<string>;
+}
+
 interface Api {
+  photos: PhotosApi;
+  files: FilesApi;
   lib: LibApi;
   tags: TagsApi;
   player: PlayerApi;

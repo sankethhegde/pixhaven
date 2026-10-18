@@ -8,9 +8,10 @@ import { Sort } from './pages/Sort';
 import { SettingsPage } from './pages/SettingsPage';
 import { Tidy, type TidyTab } from './pages/Tidy';
 import { Library } from './pages/Library';
+import { Photos } from './pages/Photos';
 import { Icon, Notice } from './components/ui';
 
-type Page = 'home' | 'library' | 'upscale' | 'sort' | 'tidy' | 'settings';
+type Page = 'home' | 'library' | 'photos' | 'upscale' | 'sort' | 'tidy' | 'settings';
 
 export default function App() {
   const [page, setPage] = useState<Page>('home');
@@ -29,6 +30,7 @@ export default function App() {
   const [pendingLib, setPendingLib] = useState<string | null>(null);
   const [pendingPlay, setPendingPlay] = useState<string | null>(null);
   const [libVisited, setLibVisited] = useState(false);
+  const [photosVisited, setPhotosVisited] = useState(false);
 
   useEffect(() => {
     api.getSettings().then(setSettings).catch(e => setFatal(errorText(e)));
@@ -53,6 +55,7 @@ export default function App() {
     w.__clearupTidy = (f, t) => { setTidyTab(t); setPendingTidy(f); setPage('tidy'); };
     w.__clearupOpen = paths => { setPending(paths); setPage('upscale'); };
     w.__clearupSort = f => { setPendingSort(f); setPage('sort'); };
+    (w as { __clearupPage?: (p: Page) => void }).__clearupPage = p => setPage(p);
   }, []);
 
   if (fatal) return <div className="p-8"><Notice tone="danger">PixHaven could not start: {fatal}</Notice></div>;
@@ -63,6 +66,7 @@ export default function App() {
   const nav: { id: Page; label: string; icon: string }[] = [
     { id: 'home', label: 'Home', icon: 'home' },
     { id: 'library', label: 'Library', icon: 'library' },
+    { id: 'photos', label: 'Photos', icon: 'image' },
     { id: 'upscale', label: 'Upscale', icon: 'sparkle' },
     { id: 'sort', label: 'Sort by person', icon: 'people' },
     { id: 'tidy', label: 'Tidy up', icon: 'broom' },
@@ -70,6 +74,7 @@ export default function App() {
   ];
   const running = queue.find(q => q.state === 'running');
   if (page === 'library' && !libVisited) setLibVisited(true);
+  if (page === 'photos' && !photosVisited) setPhotosVisited(true);
   const sortFolder = (f: string) => { setPendingSort(f); setPage('sort'); };
   const cpuMode = settings.cpuOnly || (gpu !== null && !gpu.ok);
 
@@ -130,6 +135,11 @@ export default function App() {
               <Library settings={settings} onSettings={setSettings} active={page === 'library'} initialDir={pendingLib} onConsumedInitial={() => setPendingLib(null)}
                 initialPlay={pendingPlay} onPlayed={() => setPendingPlay(null)}
                 onUpscale={upscaleFiles} onSort={sortFolder} />
+            </div>
+          )}
+          {photosVisited && (
+            <div className={page === 'photos' ? 'h-full' : 'hidden'}>
+              <Photos active={page === 'photos'} onUpscale={upscaleFiles} onSort={sortFolder} />
             </div>
           )}
           {/* Kept mounted so running jobs and results survive visiting other pages. */}

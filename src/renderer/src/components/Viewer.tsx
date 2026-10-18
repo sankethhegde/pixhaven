@@ -7,6 +7,7 @@ import { IMAGE_EXTENSIONS, RAW_EXTENSIONS } from '@shared/types';
 import { api, errorText, fmtBytes, fmtClock } from '../api';
 import { Button, Icon } from './ui';
 import { Stars, TagEditor } from './Tags';
+import { alsoText } from './MediaGrid';
 import * as T from '../tags';
 
 const store = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
@@ -126,7 +127,7 @@ export function Viewer({ items, index, infos, onIndex, onClose, onUpscale, onSor
             {names.length > 0 && <span className="flex items-center gap-1 text-xs text-white/75 truncate" data-testid="viewer-people" title="People in this photo">
               <Icon name="people" size={13} />{names.join(', ')}</span>}</div>
           <div className="text-xs text-white/60 truncate">
-            {[dims, fmtBytes(item.size), new Date(item.mtime).toLocaleString(), info?.duration ? fmtClock(info.duration) : '', item.taggedFrom ? `kept in “${item.taggedFrom}”` : '', `${index + 1} of ${items.length}`].filter(Boolean).join(' · ')}
+            {[dims, fmtBytes(item.size), new Date(item.mtime).toLocaleString(), info?.duration ? fmtClock(info.duration) : '', item.taggedFrom ? `group photo, kept in “${item.taggedFrom}”` : '', item.alsoIn?.length ? `group photo, also in ${alsoText(item.alsoIn)}` : '', `${index + 1} of ${items.length}`].filter(Boolean).join(' · ')}
             {ready && pic.converted && <span className="ml-2 text-white/40">{raw ? 'Showing the camera\'s built-in preview' : 'Converted preview'}</span>}
           </div>
         </div>

@@ -257,6 +257,7 @@ app.on('before-quit', e => {
   if (flushedOnQuit || !tags.hasPendingWrites()) return;
   e.preventDefault();
   flushedOnQuit = true;
+  player.closeAll();     // a video still open in the player would otherwise keep its labels waiting until next time
   void tags.flushNow().catch(() => {}).finally(() => app.quit());
 });
 app.on('quit', () => { cleanTemp(true); watch.close(); tags.close(); });
@@ -514,6 +515,17 @@ handle('tags:setColor', (id: number, color: string | null) => tags.setColor(id, 
 handle('tags:deleteLabel', (id: number) => tags.deleteLabel(id));
 handle('tags:query', (filter: TagFilter, text: string) => tags.query(filter, text));
 handle('tags:renameFile', (p: string, name: string) => tags.renameFile(p, name));
+// v2.5 Photos tab
+handle('photos:folders', () => sort.knownFolders());
+handle('photos:person', (pid: number) => sort.personItems(pid));
+handle('files:paste', (paths: string[], dest: string, mode: 'copy' | 'move') => tags.pasteItems(paths, dest, mode));
+handle('files:pasteTo', async (paths: string[], mode: 'copy' | 'move') => {
+  const what = `${paths.length} item${paths.length > 1 ? 's' : ''}`;
+  const r = await dialog.showOpenDialog(win!, { title: `${mode === 'copy' ? 'Copy' : 'Move'} ${what} to…`, properties: ['openDirectory', 'createDirectory'] });
+  return r.canceled ? null : tags.pasteItems(paths, r.filePaths[0], mode);
+});
+handle('files:newFolder', (parent: string, name: string) => tags.newFolder(parent, name));
+handle('files:rename', (p: string, name: string) => tags.renameItem(p, name));
 handle('tags:moveFiles', async (paths: string[]) => {
   const r = await dialog.showOpenDialog(win!, { title: `Move ${paths.length} file${paths.length > 1 ? 's' : ''} to…`, properties: ['openDirectory', 'createDirectory'] });
   return r.canceled ? null : tags.moveFiles(paths, r.filePaths[0]);

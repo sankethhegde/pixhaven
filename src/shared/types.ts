@@ -297,7 +297,12 @@ export interface DriveInfo { path: string; name: string; kind: DriveKind; total?
 export interface MediaEntry {
   name: string; path: string; kind: 'folder' | MediaKind; size: number; mtime: number;
   taggedFrom?: string;        // v2.2: a group photo shown in this person's folder, kept in the folder of this name
+  alsoIn?: string[];          // v2.5: a group photo kept here that these other people's folders show too
 }
+/** v2.5 Photos tab: a folder scanned or sorted before. */
+export interface KnownFolder { path: string; people: number; photos: number; lastScan: number | null; sorted: number | null }
+export interface FileOpResult { done: { from: string; to: string }[]; failed: { path: string; reason: string }[] }
+
 export interface FolderListing {
   dir: string;
   parent: string | null;

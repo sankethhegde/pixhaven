@@ -23,10 +23,21 @@ export function whoIs(file) {
   return hits[0];
 }
 
-function makeFixtures() {
+async function makeFixtures() {
   fs.rmSync(ROOT, { recursive: true, force: true });
   fs.mkdirSync(ROOT, { recursive: true });
   for (const f of fs.readdirSync(SRC)) if (/\.(jpe?g|png)$/i.test(f)) fs.copyFileSync(path.join(SRC, f), path.join(ROOT, f));
+  // v2.5: a group photo of two people who each get a folder (two portraits side by side).
+  const pick = async who => {
+    for (const f of fs.readdirSync(SRC).filter(x => whoIs(x) === who).sort()) {
+      const b = await sharp(path.join(SRC, f)).rotate().resize(700, 800, { fit: 'cover', position: 'attention' }).toBuffer().catch(() => null);
+      if (b) return b;
+    }
+    throw new Error(`No readable photo of ${who}`);
+  };
+  const halves = [await pick('Barack Obama'), await pick('Emmanuel Macron')];
+  await sharp({ create: { width: 1400, height: 800, channels: 3, background: '#888' } })
+    .composite([{ input: halves[0], left: 0, top: 0 }, { input: halves[1], left: 700, top: 0 }]).jpeg({ quality: 90 }).toFile(path.join(ROOT, 'Two leaders side by side.jpg'));
   // A read-only photo must stay put.
   const ro = fs.readdirSync(ROOT).find(f => whoIs(f) === 'Angela Merkel');
   fs.chmodSync(path.join(ROOT, ro), 0o444);
@@ -72,7 +83,7 @@ export default async function run(win, app) {
     win.setAlwaysOnTop(true);
     win.webContents.setBackgroundThrottling(false);
     fs.mkdirSync(OUT, { recursive: true });
-    const readOnly = makeFixtures();
+    const readOnly = await makeFixtures();
     let before = snapshot(ROOT);
     let upscaled = null;   // the photo upscaled in place: compared with itself after the upscale, not the original
     const total = Object.keys(before).length;
@@ -139,7 +150,7 @@ export default async function run(win, app) {
     await shot('04-done');
     const dirs = fs.readdirSync(ROOT, { withFileTypes: true }).filter(d => d.isDirectory() && d.name !== '.clearup').map(d => d.name);
     check('folders are "Person N" (no "Group photos")', dirs.length > 0 && dirs.every(d => /^Person \d+$/.test(d) || d === 'Unsorted'), dirs.join(', '));
-    const files = Object.keys(snapshot(ROOT)).filter(k => !k.endsWith('/'));
+    const files = Object.keys(snapshot(ROOT)).filter(k => !k.endsWith('/') && !k.endsWith('.lnk'));
     check('no copies: same number of files as before', files.length === total, `${files.length} vs ${total}`);
     check('read-only photo stayed in place', fs.existsSync(path.join(ROOT, readOnly)));
 
@@ -166,14 +177,69 @@ export default async function run(win, app) {
     const mf = path.join(ROOT, '.clearup', 'people.json');
     const manifest = fs.existsSync(mf) ? JSON.parse(fs.readFileSync(mf, 'utf8')) : { folders: {} };
     const [shownDir, shownList] = Object.entries(manifest.folders)[0] ?? [];
-    check('group photos listed for the other people', !!shownList?.length || !fs.existsSync(mf), fs.existsSync(mf) ? `${Object.keys(manifest.folders).length} folders` : 'this photo set has no group photo of two sorted people');
+    check('group photos listed for the other people', !!shownList?.length, `${Object.keys(manifest.folders).length} folders`);
     if (shownList?.length) {
       const listing = await js(`window.clearup.lib.list(${JSON.stringify(path.join(ROOT, shownDir))})`);
       const tagged = listing.entries.filter(e => e.taggedFrom);
       check('Library shows them in the other person\'s folder', tagged.length === shownList.length, tagged.map(e => `${e.name} (kept in ${e.taggedFrom})`).join(', '));
       const file = path.join(ROOT, ...shownList[0].file.split('/'));
+      const keptIn = path.basename(path.dirname(file));
       const names = await js(`window.clearup.tags.peopleIn(${JSON.stringify(file)})`);
       check('people are written into the photo', names.length >= 2 && names.includes(shownDir), names.join(', '));
+      // v2.5: the folder keeping it says which other folders show it.
+      const own = await js(`window.clearup.lib.list(${JSON.stringify(path.dirname(file))})`);
+      const also = own.entries.find(e => e.path.toLowerCase() === file.toLowerCase())?.alsoIn ?? [];
+      check('the folder keeping a group photo lists where else it is shown', also.includes(shownDir), `${path.basename(file)} in ${keptIn}: also in ${also.join(', ')}`);
+      // v2.5: File Explorer shows it too, through a shortcut.
+      const { shell } = await import('electron');
+      const lnks = fs.readdirSync(path.join(ROOT, shownDir)).filter(f => f.endsWith('.lnk')).map(f => path.join(ROOT, shownDir, f));
+      const targets = lnks.map(l => { try { return shell.readShortcutLink(l); } catch { return null; } }).filter(Boolean);
+      check('Explorer: a shortcut to the group photo in the other person\'s folder', targets.some(t => t.target.toLowerCase() === file.toLowerCase() && t.description === 'PixHaven group photo'),
+        lnks.map(l => `${path.basename(l)} (${fs.statSync(l).size} bytes)`).join(', '));
+
+      // v2.5: the Photos tab opens this folder on its people; group photos say where they are kept / also shown.
+      await js(`window.__clearupPage('photos')`);
+      for (let i = 0; i < 50 && !(await js('!!document.querySelector("[data-known]")')); i++) await sleep(200);
+      await js(`[...document.querySelectorAll('[data-known]')].find(b => b.dataset.known === ${JSON.stringify(ROOT)}).click()`);
+      await waitFor('People (', 30000);
+      await sleep(800);
+      const cards = await js(`[...document.querySelectorAll('[data-photos-person]')].map(c => c.dataset.photosPerson)`);
+      check('Photos tab: sorted folder opens on its people', cards.includes(keptIn) && cards.includes(shownDir), cards.join(', '));
+      await js(`document.querySelector('[data-photos-person="${keptIn}"]').click()`);
+      await waitFor(`Also in · ${shownDir}`, 15000).then(() => check('Photos tab: kept group photo says "Also in"', true), e => check('Photos tab: kept group photo says "Also in"', false, String(e)));
+      await shot('04a-photos-also-in');
+      await click('People');
+      await js(`document.querySelector('[data-photos-person="${shownDir}"]').click()`);
+      await waitFor(`Kept in · ${keptIn}`, 15000).then(() => check('Photos tab: shown group photo says "Kept in"', true), e => check('Photos tab: shown group photo says "Kept in"', false, String(e)));
+      await shot('04b-photos-kept-in');
+      await click('People');
+
+      // Folders view: new folder, copy a photo, paste it there; then cut it back out.
+      await js(`[...document.querySelectorAll('[role=radio]')].find(b => b.innerText.trim() === 'Folders').click()`);
+      await sleep(600);
+      await click('New folder');
+      await sleep(300);
+      await click('Create');
+      await sleep(800);
+      const made = path.join(ROOT, 'New folder');
+      check('Photos tab: New folder', fs.existsSync(made) && fs.statSync(made).isDirectory());
+      const loose = fs.readdirSync(ROOT).find(f => /\.(jpe?g|png)$/i.test(f) && fs.statSync(path.join(ROOT, f)).isFile());
+      if (loose) {
+        await js(`[...document.querySelectorAll('[data-path]')].find(b => b.dataset.path === ${JSON.stringify(path.join(ROOT, loose))}).click()`);
+        await sleep(200);
+        await click('Copy');
+        await js(`[...document.querySelectorAll('[data-path]')].find(b => b.dataset.path === ${JSON.stringify(made)}).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+        await sleep(800);
+        await click('Paste (1)');
+        await sleep(1200);
+        const copied = path.join(made, loose);
+        check('Photos tab: copy and paste', fs.existsSync(copied) && fs.existsSync(path.join(ROOT, loose))
+          && fs.readFileSync(copied).equals(fs.readFileSync(path.join(ROOT, loose))), copied);
+        await shot('04c-photos-pasted');
+      }
+      fs.rmSync(made, { recursive: true, force: true });   // so Undo can be compared with the start
+      await js(`window.__clearupPage('sort')`);
+      await sleep(500);
     }
     check('undo log written', fs.existsSync(path.join(ROOT, '.clearup', 'sort-log.jsonl')));
 

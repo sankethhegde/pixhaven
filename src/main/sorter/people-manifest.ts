@@ -51,6 +51,27 @@ export function removeSort(root: string, sort: number): void {
   writeManifest(root, m);
 }
 
+/**
+ * v2.5: the other side of shownIn — photos kept in `dir` that other folders show too: file path → those folders' names.
+ */
+export function alsoShownFrom(dir: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const root = fs.existsSync(manifestPath(path.dirname(dir))) ? path.dirname(dir) : rootOf(dir);
+  if (!root) return out;
+  for (const [k, list] of Object.entries(readManifest(root).folders)) {
+    for (const e of list) {
+      const f = abs(root, e.file);
+      if (!same(path.dirname(f), dir)) continue;
+      const key = process.platform === 'win32' ? f.toLowerCase() : f;
+      out.set(key, [...(out.get(key) ?? []), path.basename(abs(root, k))]);
+    }
+  }
+  return out;
+}
+
+/** The sorted folder (with its manifest) that a path inside it belongs to, or null. */
+export const manifestRootOf = (p: string): string | null => rootOf(p);
+
 /** The sorted folder (with its manifest) that `dir` belongs to, looking a couple of levels up. */
 function rootOf(p: string): string | null {
   let d = path.dirname(p);

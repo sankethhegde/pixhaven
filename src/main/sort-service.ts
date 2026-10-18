@@ -8,7 +8,7 @@ import { app } from 'electron';
 import sharp from 'sharp';
 import workerPath from './faces/sort-worker?modulePath';
 import type {
-  ApplyProgress, ApplyResult, FolderStatus, PersonSummary, PhotoRef, ReviewData, ScanProgress, SortHistory, SortPlan,
+  ApplyProgress, ApplyResult, FolderStatus, KnownFolder, MediaEntry, PersonSummary, PhotoRef, ReviewData, ScanProgress, SortHistory, SortPlan,
 } from '@shared/types';
 import { openDb, folderId, nextPersonNum, tx, type Db } from './db';
 import { getSettings } from './settings';
@@ -17,6 +17,7 @@ import { isImageFile } from './image-io';
 import { buildPlan, personLabel } from './sorter/plan';
 import { sortedFolders } from './sorter/people-manifest';
 import { reconcileFolder, relocateFolder, renamePeople } from './sorter/reconcile';
+import { syncGroupLinks } from './group-links';
 import { exiftool, afterSort as tagsAfterSort } from './tags-service';
 import type { ListedFile } from './faces/pipeline';
 import type { WorkerInput } from './faces/sort-worker';
@@ -110,12 +111,14 @@ function reconcile(root: string): FolderStatus['reconciled'] {
     const relocated = relocateFolder(d, root);
     const movedFrom = relocated?.from ?? null;
     const fid = folderId(d, root, false);
-    if (fid == null) return null;
+    // Sorted on another computer (no face data here): its group photos still get their Explorer shortcuts.
+    if (fid == null) { syncGroupLinks(root); return null; }
     const { moved, ...r } = reconcileFolder(d, fid, root);
     // Labels and stars follow the photos too.
     const all = [...(relocated?.moved ?? []), ...moved];
     if (all.length) tagsAfterSort(all, []).catch(e => log('warn', 'Labels did not follow moved photos', e));
     renamePeopleLater(fid, root);
+    syncGroupLinks(root);
     if (movedFrom || r.photos || r.folders.length) {
       log('info', `Found again in ${root}: ${movedFrom ? `folder moved from ${movedFrom}, ` : ''}${r.folders.length} person folder(s) renamed, ${r.photos} photo(s) moved`);
       return { movedFrom, ...r };
@@ -298,6 +301,7 @@ export function applySort(fid: number, ev: Pick<SortEvents, 'apply'>): Promise<A
   let result: ApplyResult | null = null;
   return queue.add('apply', `Sort by person: apply ${path.basename(plan.root)}`, async () => {
     result = await runWorker({ task: 'apply', folderId: fid, root: plan.root, files: [], keepDirs: [], sortId, plan }, ev);
+    syncGroupLinks(plan.root);
   }, () => { /* apply can't be cancelled halfway: Undo afterwards instead */ }).done.then(() => result!);
 }
 
@@ -308,6 +312,7 @@ export function finishSort(sortId: number, ev: Pick<SortEvents, 'apply'>): Promi
   let result: ApplyResult | null = null;
   return queue.add('apply', `Sort by person: finish ${path.basename(plan.root)}`, async () => {
     result = await runWorker({ task: 'finish', folderId: row.folder_id, root: plan.root, files: [], keepDirs: [], sortId, plan }, ev);
+    syncGroupLinks(plan.root);
   }, () => {}).done.then(() => result!);
 }
 
@@ -315,8 +320,35 @@ export function undoSortJob(sortId: number, ev: Pick<SortEvents, 'apply'>): Prom
   const row = getDb().prepare('SELECT s.folder_id, f.path FROM sorts s JOIN folders f ON f.id = s.folder_id WHERE s.id = ?').get(sortId) as { folder_id: number; path: string };
   let result: any = null;
   return queue.add('undo', `Sort by person: undo ${path.basename(row.path)}`, async () => {
+    syncGroupLinks(row.path, true);    // shortcuts out first, so the folders a sort made can be removed
     result = await runWorker({ task: 'undo', folderId: row.folder_id, root: row.path, files: [], keepDirs: [], sortId }, ev);
+    syncGroupLinks(row.path);          // back for any other sort still in place
   }, () => {}).done.then(() => result);
+}
+
+// ---------- v2.5 Photos tab ----------
+
+/** Folders scanned or sorted before that are still there (the Photos tab's list), most recent first. */
+export function knownFolders(): KnownFolder[] {
+  const rows = getDb().prepare(`SELECT f.id, f.path, f.last_scan,
+      (SELECT COUNT(*) FROM people p WHERE p.folder_id = f.id AND (p.dir IS NOT NULL OR (SELECT COUNT(DISTINCT x.image_id) FROM faces x
+        WHERE x.person_id = p.id AND x.removed = 0) >= ?)) AS people,
+      (SELECT COUNT(*) FROM images i WHERE i.folder_id = f.id AND i.status = 'done') AS photos,
+      (SELECT MAX(created) FROM sorts s WHERE s.folder_id = f.id AND s.state = 'done') AS sorted
+    FROM folders f ORDER BY COALESCE(sorted, f.last_scan, 0) DESC`).all(getSettings().sort.minPhotos) as { id: number; path: string; last_scan: number | null; people: number; photos: number; sorted: number | null }[];
+  return rows.filter(r => r.people > 0 && fs.existsSync(r.path))
+    .map(r => ({ path: r.path, people: r.people, photos: r.photos, lastScan: r.last_scan, sorted: r.sorted }));
+}
+
+/** One person's photos: their folder when it exists (the renderer lists it), else the photos where they are now. */
+export function personItems(pid: number): { dir: string | null; items: MediaEntry[] } {
+  const p = getDb().prepare('SELECT dir FROM people WHERE id = ?').get(pid) as { dir: string | null } | undefined;
+  if (p?.dir && fs.existsSync(p.dir)) return { dir: p.dir, items: [] };
+  const items: MediaEntry[] = [];
+  for (const r of personPhotos(pid)) {
+    try { const st = fs.statSync(r.path); items.push({ name: r.name, path: r.path, kind: 'image', size: st.size, mtime: st.mtimeMs }); } catch { /* gone */ }
+  }
+  return { dir: null, items: [...new Map(items.map(i => [i.path, i])).values()] };
 }
 
 /** FACE-17: image paths of one person, for "Upscale all photos of this person". */

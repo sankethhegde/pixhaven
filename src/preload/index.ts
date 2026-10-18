@@ -61,6 +61,16 @@ const api = {
     undo: (sortId: number) => invoke('tidy:undo', sortId),
     trash: (fid: number, ids: number[]) => invoke('tidy:trash', fid, ids),
   },
+  photos: {
+    folders: () => invoke('photos:folders'),
+    person: (pid: number) => invoke('photos:person', pid),
+  },
+  files: {
+    paste: (paths: string[], dest: string, mode: string) => invoke('files:paste', paths, dest, mode),
+    pasteTo: (paths: string[], mode: string) => invoke('files:pasteTo', paths, mode),
+    newFolder: (parent: string, name: string) => invoke('files:newFolder', parent, name),
+    rename: (p: string, name: string) => invoke('files:rename', p, name),
+  },
   lib: {
     drives: () => invoke('lib:drives'),
     list: (dir: string) => invoke('lib:list', dir),

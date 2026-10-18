@@ -14,7 +14,9 @@ import { resourcesDir } from './engine';
 import { TagStore, fromCsv, quickFingerprint, toCsv, type ExportData, type FileRef } from './library/tags';
 import { writeTags, writeTarget } from './library/xmp';
 import { TagReader } from './library/file-tags';
-import { movedFile as manifestMoved } from './sorter/people-manifest';
+import { manifestRootOf, movedFile as manifestMoved, remapManifest } from './sorter/people-manifest';
+import { syncGroupLinksFor } from './group-links';
+import * as fileOps from './library/file-ops';
 
 const KEEP_BACKUPS = 7;
 let store: TagStore | null = null;
@@ -193,6 +195,7 @@ export async function renameFile(from: string, newName: string): Promise<string>
   await moveSidecar(from, to);
   onMoved(from, to);
   try { manifestMoved(from, to); } catch (e) { log('warn', 'Could not update the people list', e); }
+  syncGroupLinksFor([from, to]);
   log('info', `Renamed ${from} → ${name}`);
   return to;
 }
@@ -222,7 +225,45 @@ export async function moveFiles(paths: string[], dest: string): Promise<{ moved:
     } catch (e) { failed.push({ path: from, reason: (e as Error).message }); }
   }
   log('info', `Moved ${moved.length} file(s) to ${dest}, ${failed.length} failed`);
+  syncGroupLinksFor([...moved.map(m => m.from), ...moved.map(m => m.to)]);
   return { moved, failed };
+}
+
+// ---------- v2.5 Photos tab: copy / cut / paste, new folder, rename folders ----------
+
+const lower = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
+
+/** Files (and maybe a whole folder) moved by the app: labels, the watched-folder index, the people list and the
+ * Explorer shortcuts of group photos follow. Face data follows the next time the sorted folder is opened. */
+async function followMoves(pairs: { from: string; to: string }[], dir?: { from: string; to: string }): Promise<void> {
+  const s = tagStore();
+  for (const m of pairs) { try { s.moved(m.from, m.to); } catch { /* not labelled */ } onMoved(m.from, m.to); }
+  const files = new Map(pairs.map(m => [lower(m.from), m.to]));
+  const map = (p: string) => {
+    const f = files.get(lower(p));
+    if (f) return f;
+    if (dir && (lower(p) === lower(dir.from) || lower(p).startsWith(lower(dir.from) + path.sep))) return dir.to + p.slice(dir.from.length);
+    return p;
+  };
+  const ends = [...pairs.flatMap(m => [m.from, m.to]), ...(dir ? [path.join(dir.from, 'x'), path.join(dir.to, 'x')] : [])];
+  const roots = new Map<string, string>();
+  for (const p of ends) { const r = manifestRootOf(p); if (r) roots.set(lower(r), r); }
+  for (const r of roots.values()) { try { remapManifest(r, map); } catch (e) { log('warn', 'Could not update the people list', e); } }
+  syncGroupLinksFor(ends);
+}
+
+export async function pasteItems(paths: string[], dest: string, mode: 'copy' | 'move'): Promise<fileOps.OpResult> {
+  const r = await fileOps.pasteItems(paths, dest, mode, followMoves);
+  log('info', `${mode === 'copy' ? 'Copied' : 'Moved'} ${r.done.length} item(s) to ${dest}, ${r.failed.length} failed`);
+  return r;
+}
+
+export function newFolder(parent: string, name: string): string { return fileOps.newFolder(parent, name); }
+
+/** Rename a file (keeps its type) or a folder. */
+export async function renameItem(from: string, name: string): Promise<string> {
+  if (fs.statSync(from).isDirectory()) return fileOps.renameFolder(from, name, followMoves);
+  return renameFile(from, name);
 }
 
 /** After Sort by person: labels follow the moved photos, and photos the people were written into stay recognised. */
@@ -322,7 +363,9 @@ let writeStats: FileWriteStatus = { pending: 0, written: 0, failed: [] };
 let isBusy: (p: string) => boolean = () => false;
 let onWriteStatus: (s: FileWriteStatus) => void = () => {};
 export function setWriteHooks(busy: (p: string) => boolean, status: (s: FileWriteStatus) => void): void { isBusy = busy; onWriteStatus = status; }
-export const writeStatus = (): FileWriteStatus => ({ ...writeStats, pending: toWrite.size });
+/** Waiting files, and the ones being written right now (they have left the queue but are not in the files yet). */
+let inFlight = 0;
+export const writeStatus = (): FileWriteStatus => ({ ...writeStats, pending: toWrite.size + inFlight });
 
 /** Changes are collected for a moment (stars clicked a few times in a row become one write). */
 export function queueWrite(paths: string[], force = false): void {
@@ -340,6 +383,7 @@ async function flushWrites(): Promise<void> {
   writeTimer = null;
   try {
     const now = [...toWrite].filter(p => !isBusy(p)).slice(0, 200);    // a file open in the player waits until it closes
+    inFlight = now.length;
     for (const p of now) toWrite.delete(p);
     const s = tagStore();
     // Anything another app put into these files since they were last read is merged first, so nothing is lost.
@@ -364,6 +408,7 @@ async function flushWrites(): Promise<void> {
   } catch (e) { log('error', 'Writing labels into files failed', e); }
   finally {
     writing = false;
+    inFlight = 0;
     if (toWrite.size && !writeTimer) writeTimer = setTimeout(() => void flushWrites(), [...toWrite].every(p => isBusy(p)) ? 10_000 : 500);
     onWriteStatus(writeStatus());
   }
