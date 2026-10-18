@@ -8,6 +8,10 @@ import { CompareSlider } from '../components/CompareSlider';
 import { OptionsPanel, outputSize } from '../components/OptionsPanel';
 import { Button, Icon, Notice, ProgressBar } from '../components/ui';
 
+/** v2.5: already HD — 720p or more (the shorter side at least 720 px). Recommended to leave out of a batch; the user decides. */
+export const HD_SHORT_SIDE = 720;
+const isHd = (f: { width: number; height: number }) => Math.min(f.width, f.height) >= HD_SHORT_SIDE;
+
 type Source =
   | { kind: 'single'; info: ImageInfo }
   | { kind: 'batch'; label: string; scan: FolderScan };
@@ -38,6 +42,8 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
   const [installed, setInstalled] = useState<Record<ModelId, boolean> | null>(null);
   const [dl, setDl] = useState<ModelDownload>({ state: 'idle', progress: 0 });
   const [dlSize, setDlSize] = useState(45);
+  // Batch: the images ticked for upscaling (already-HD ones start unticked, as recommended).
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
 
   // Updates can arrive before startJob() returns the id (a job may even finish first): keep the latest per job.
   const latest = useRef(new Map<string, JobUpdate>());
@@ -68,6 +74,7 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
           const scan = await api.scanFolder(paths[0]);
           if (!scan.files.length) throw new Error(scan.skipped ? 'This folder only has images that were already upscaled.' : 'No supported images (JPG, PNG, WEBP, BMP, TIFF) in this folder.');
           setSource({ kind: 'batch', label: paths[0], scan });
+          setChosen(new Set(scan.files.filter(f => !isHd(f)).map(f => f.path)));
           if (settings.lowSpec) setOpts(o => ({ ...o, model: 'fast' })); // IMG-03: Fast pre-selected for batches
         } else if (kind === 'image') {
           setLoading('Opening image…');
@@ -87,6 +94,7 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
         }
         if (!files.length) throw new Error('None of the dropped items are supported images.');
         setSource({ kind: 'batch', label: `${files.length} images`, scan: { files, skipped: other, unreadable } });
+        setChosen(new Set(files.filter(f => !isHd(f)).map(f => f.path)));
         if (settings.lowSpec) setOpts(o => ({ ...o, model: 'fast' }));
       }
     } catch (e) {
@@ -120,7 +128,8 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
         });
       } else go();
     } else {
-      const all = source.scan.files;
+      const all = source.scan.files.filter(f => chosen.has(f.path));
+      if (!all.length) return;
       const small = all.filter(f => Math.max(f.width, f.height) <= LARGE_IMAGE_PX);
       if (small.length < all.length) {
         setConfirm({
@@ -185,8 +194,8 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
           <Button variant="danger" className="w-full" onClick={() => jobId && api.cancelJob(jobId)}><Icon name="x" size={16} />Cancel</Button>
         ) : (
           <Button variant="primary" className="w-full h-10" onClick={requestStart}
-            disabled={needsModel || (source.kind === 'single' && outputSize(source.info.width, source.info.height, opts.size).factor <= 1)}>
-            <Icon name="sparkle" size={16} />{update?.finished && !optsChanged ? 'Upscale again' : source.kind === 'single' ? 'Upscale' : `Upscale ${source.scan.files.length} images`}
+            disabled={needsModel || (source.kind === 'single' ? outputSize(source.info.width, source.info.height, opts.size).factor <= 1 : !chosen.size)}>
+            <Icon name="sparkle" size={16} />{update?.finished && !optsChanged ? 'Upscale again' : source.kind === 'single' ? 'Upscale' : `Upscale ${chosen.size} image${chosen.size === 1 ? '' : 's'}`}
           </Button>
         )}
       </div>
@@ -252,6 +261,8 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
   const failCount = items?.filter(i => i.state === 'failed').length ?? 0;
   const skipCount = items?.filter(i => i.state === 'skipped').length ?? 0;
   const firstOut = items?.find(i => i.output)?.output;
+  const hd = scan.files.filter(isHd);
+  const hdLeftOut = hd.every(f => !chosen.has(f.path));
 
   return (
     <div className="h-full flex min-h-0">
@@ -286,12 +297,45 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
             )}
           </div>
         )}
+        {!update && hd.length > 0 && (
+          <Notice tone="info">
+            <div className="flex items-start gap-3 flex-wrap" data-testid="hd-recommendation">
+              <div className="flex-1 min-w-60">
+                <span className="font-medium">{hd.length} of {scan.files.length} image{scan.files.length === 1 ? '' : 's'} {hd.length === 1 ? 'is' : 'are'} already HD</span> (720p or more).
+                {' '}We recommend leaving {hd.length === 1 ? 'it' : 'them'} out: upscaling adds little, takes longer and makes very large files.
+                {' '}{hdLeftOut ? (hd.length === 1 ? 'It is unticked below.' : 'They are unticked below.') : 'Ticked below for now.'} The choice is yours.
+              </div>
+              {hdLeftOut
+                ? <Button className="h-8" onClick={() => setChosen(c => new Set([...c, ...hd.map(f => f.path)]))}>{hd.length === 1 ? 'Include it anyway' : 'Include them anyway'}</Button>
+                : <Button className="h-8" onClick={() => setChosen(c => new Set([...c].filter(p => !hd.some(f => f.path === p))))}>{hd.length === 1 ? 'Leave it out' : 'Leave them out'}</Button>}
+            </div>
+          </Notice>
+        )}
+        {!update && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="mr-auto text-muted">{chosen.size} of {scan.files.length} ticked</span>
+            <Button className="h-8" variant="ghost" onClick={() => setChosen(new Set(scan.files.map(f => f.path)))}>Select all</Button>
+            <Button className="h-8" variant="ghost" onClick={() => setChosen(new Set())}>Select none</Button>
+          </div>
+        )}
         {scan.unreadable.length > 0 && !update && (
           <Notice tone="warn">Can’t read: {scan.unreadable.slice(0, 5).join(', ')}{scan.unreadable.length > 5 ? ` and ${scan.unreadable.length - 5} more` : ''}. They will be skipped.</Notice>
         )}
 
         <div className="flex-1 min-h-0 overflow-auto rounded-xl border border-line bg-panel divide-y divide-[var(--border)]">
-          {(items ?? scan.files.map(f => ({ id: f.path, input: f.path, name: fileName(f.path), state: 'queued' as const, progress: 0 }))).map((it, idx) => {
+          {!items && scan.files.map(f => {
+            const on = chosen.has(f.path), big = isHd(f);
+            return (
+              <label key={f.path} className={`w-full flex items-center gap-3 px-4 h-12 cursor-pointer hover:bg-panel-2 ${on ? '' : 'text-muted'}`} data-file={fileName(f.path)}>
+                <input type="checkbox" checked={on} className="h-4 w-4 accent-[var(--accent)]" aria-label={`Upscale ${fileName(f.path)}`}
+                  onChange={() => setChosen(c => { const n = new Set(c); if (n.has(f.path)) n.delete(f.path); else n.add(f.path); return n; })} />
+                <span className="truncate flex-1 min-w-0">{fileName(f.path)}</span>
+                {big && <span className="text-xs rounded bg-accent-soft text-accent px-1.5 py-0.5" title="The shorter side is 720 px or more. Upscaling is not needed, but you can still tick it.">Already HD · skip recommended</span>}
+                <span className="text-xs text-muted tabular-nums">{f.width}×{f.height}{Math.max(f.width, f.height) > LARGE_IMAGE_PX ? ' · large' : ''}</span>
+              </label>
+            );
+          })}
+          {items && items.map((it, idx) => {
             const f = scan.files.find(x => x.path === it.input);
             return (
               <button key={it.id} disabled={it.state !== 'done'} onClick={() => setViewing(it as JobItem)}

@@ -25,7 +25,14 @@ function bmp24(w, h, color) {
 async function makeFixtures() {
   fs.rmSync(FIX, { recursive: true, force: true });
   fs.mkdirSync(BATCH, { recursive: true });
-  const photo = path.resolve('phase0/out/lowq.jpg'); // 480×720 low-quality JPEG from Phase 0
+  let photo = path.resolve('phase0/out/lowq.jpg'); // 480×720 low-quality JPEG from Phase 0
+  if (!fs.existsSync(photo)) {
+    // Not there (Phase 0 output removed): a stand-in of the same size with some detail to upscale.
+    photo = path.join(FIX, 'lowq-standin.jpg');
+    const noise = Buffer.alloc(480 * 720 * 3);
+    for (let i = 0; i < noise.length; i++) noise[i] = (i * 7919 + ((i / 1440) | 0) * 31) % 256;
+    await sharp(noise, { raw: { width: 480, height: 720, channels: 3 } }).blur(1.5).jpeg({ quality: 40 }).toFile(photo);
+  }
   // Single: stored sideways with EXIF orientation 6 + camera tags → must come out upright with EXIF kept.
   await sharp(photo).rotate(-90).withMetadata({ orientation: 6 }).withExif({ IFD0: { Make: 'E2ECam', Model: 'T1' } }).jpeg({ quality: 60 }).toFile(path.join(FIX, 'rotated.jpg'));
   await sharp(photo).resize(240).jpeg({ quality: 50 }).toFile(path.join(BATCH, 'a-photo.jpg'));
@@ -37,6 +44,7 @@ async function makeFixtures() {
   await sharp({ create: { width: 4200, height: 200, channels: 3, background: '#4a7' } }).png().toFile(path.join(BATCH, 'f-wide.png'));
   fs.writeFileSync(path.join(BATCH, 'g-broken.jpg'), Buffer.from('this is not really a jpeg'));
   await sharp(photo).resize(100).png().toFile(path.join(BATCH, 'h_upscaled.png')); // must be skipped
+  await sharp(photo).resize(1280, 1920).jpeg({ quality: 80 }).toFile(path.join(BATCH, 'i-already-hd.jpg')); // HD: leaving it out is recommended
 }
 
 export default async function run(win, app) {
@@ -117,6 +125,16 @@ export default async function run(win, app) {
     // ---- batch ----
     await js(`window.__clearupOpen(${JSON.stringify([BATCH])})`);
     await waitFor('Upscale 6 images');
+    // v2.5: the HD image (720p or more) is recommended to leave out: unticked, with a note; the user can tick it.
+    const rec = await js(`document.querySelector('[data-testid=hd-recommendation]')?.innerText ?? ''`);
+    const hdBox = await js(`document.querySelector('[data-file="i-already-hd.jpg"] input').checked`);
+    check('HD image recommended to leave out (unticked, user can include it)', rec.includes('1 of 7 images is already HD') && hdBox === false, rec.slice(0, 80));
+    await shot('05a-hd-recommended');
+    await click('Include it anyway');
+    await waitFor('Upscale 7 images');
+    await click('Leave it out');
+    await waitFor('Upscale 6 images');
+    check('include / leave out follows the user', true);
     const tb = await text();
     check('batch scan: 6 images, 1 skipped, 1 unreadable', tb.includes('1 skipped') && tb.includes('1 unreadable'));
     check('Fast pre-selected for batches (low-spec)', await js(`document.querySelector('input[name=model]:checked')?.parentElement.innerText.includes('Fast')`));

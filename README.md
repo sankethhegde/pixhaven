@@ -138,6 +138,9 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   view browses it with New folder (Ctrl+Shift+N), Cut / Copy / Paste (Ctrl+X / C / V, in-app clipboard), Rename (F2,
   files and folders), Move to… and Copy to…. Never overwrites (" (2)"), moves across drives copy-check-delete, RAW
   sidecars travel along; labels, the people list and the shortcuts follow moves, face data on the next open.
+- **Batch upscale recommendation (0.7.6):** the batch list has a checkbox per image. Images already HD (shorter side
+  720 px or more, i.e. 720p) start unticked with "Already HD · skip recommended" and a note saying why; "Include them
+  anyway" / "Leave them out", Select all / none — the user decides.
 - **Face detection details (0.7.1–0.7.4):** a photo with no face at 0.85 confidence is read again at 0.72; detections with a
   weak fingerprint (tattoos, jewellery) and small detections inside a bigger face (close-ups seen through a tile) are dropped.
 - **Tidy up:** duplicates = same SHA-1, or dHash within 6 bits ("same picture", catches resized/re-saved copies;
