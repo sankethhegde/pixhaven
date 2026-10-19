@@ -340,13 +340,21 @@ function startUpscale(files: { path: string; width: number; height: number }[], 
   jobs.set(job.id, { job, queueId: q.id });
   return job.id;
 }
-handle('job:start', async (req: { files: { path: string; width: number; height: number }[]; opts: UpscaleOptions; mode: 'single' | 'folder' }) => {
+handle('job:start', async (req: { files: { path: string; width: number; height: number }[]; opts: UpscaleOptions; mode: 'single' | 'folder' | 'replace' }) => {
   updateSettings({ last: req.opts });
-  const label = req.mode === 'single' ? `Upscale ${path.basename(req.files[0].path)}` : `Upscale ${req.files.length} images`;
-  return startUpscale(req.files, req.opts, req.mode, label, u => {
-    if (req.mode === 'folder') notifyDone('PixHaven: folder finished', `${u.items.filter(i => i.state === 'done').length} of ${u.total} images upscaled.`);
+  const label = req.mode === 'single' ? `Upscale ${path.basename(req.files[0].path)}` : `Upscale ${req.mode === 'replace' ? 'and replace ' : ''}${req.files.length} images`;
+  return startUpscale(req.files, req.opts, req.mode, label, async u => {
+    if (req.mode === 'replace') await afterReplace(u);
+    if (req.mode !== 'single') notifyDone('PixHaven: folder finished', `${u.items.filter(i => i.state === 'done').length} of ${u.total} images upscaled${req.mode === 'replace' ? ' and replaced' : ''}.`);
   });
 });
+/** Photos upscaled in place: face data and labels follow (BMP / TIFF ones have a new .png name). */
+async function afterReplace(u: JobUpdate): Promise<void> {
+  const done = u.items.filter(i => i.state === 'done' && i.output);
+  await sort.afterUpscale(done.map(i => i.output!)).catch(() => {});
+  const renamed = done.filter(i => i.output !== i.input).map(i => ({ from: i.input, to: i.output! }));
+  await tags.afterSort(renamed, done.map(i => i.output!)).catch(() => {});
+}
 // v2.3 (Sort by person, optional): low-resolution photos upscaled in place — same format, originals to the Recycle Bin.
 // Under 720 px on the long side 4×, otherwise 2×; the Photo model when it is downloaded, else Fast.
 handle('sort:upscaleLow', (files: { path: string; width: number; height: number }[]) => {
@@ -364,9 +372,8 @@ handle('sort:upscaleLow', (files: { path: string; width: number; height: number 
     const [format, factor] = k.split('|');
     const opts: UpscaleOptions = { size: { kind: 'scale', factor: Number(factor) as 2 | 4 }, model, format: format as UpscaleOptions['format'], jpgQuality: 95 };
     ids.push(startUpscale(list, opts, 'replace', `Upscale and replace ${list.length} photo(s)`, async u => {
-      const done = u.items.filter(i => i.state === 'done').map(i => i.input);
-      await sort.afterUpscale(done);
-      await tags.afterSort([], done).catch(() => {});
+      await afterReplace(u);
+      const done = u.items.filter(i => i.state === 'done');
       notifyDone('PixHaven: photos upscaled', `${done.length} of ${u.total} photos upscaled and replaced.`);
     }));
   }

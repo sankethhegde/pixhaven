@@ -164,7 +164,7 @@ interface Api {
   inspectImage(p: string): Promise<ImageInfo>;
   imageSize(p: string): Promise<{ width: number; height: number } | null>;
   scanFolder(p: string): Promise<FolderScan>;
-  startJob(req: { files: { path: string; width: number; height: number }[]; opts: UpscaleOptions; mode: 'single' | 'folder' }): Promise<string>;
+  startJob(req: { files: { path: string; width: number; height: number }[]; opts: UpscaleOptions; mode: 'single' | 'folder' | 'replace' }): Promise<string>;
   cancelJob(id: string): Promise<void>;
   saveResult(req: { jobId: string; itemId: string; item: JobItem; saveAs: boolean }): Promise<SaveResult>;
   showItem(p: string): Promise<void>;

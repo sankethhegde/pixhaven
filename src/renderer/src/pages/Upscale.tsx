@@ -6,17 +6,19 @@ import { api, errorText, fmtBytes, fmtDuration, type FolderScan } from '../api';
 import { DropZone } from '../components/DropZone';
 import { CompareSlider } from '../components/CompareSlider';
 import { OptionsPanel, outputSize } from '../components/OptionsPanel';
-import { Button, Icon, Notice, ProgressBar } from '../components/ui';
+import { Button, Icon, Notice, ProgressBar, Toggle } from '../components/ui';
 
 /** v2.5: already HD — 720p or more (the shorter side at least 720 px). Recommended to leave out of a batch; the user decides. */
 export const HD_SHORT_SIDE = 720;
 const isHd = (f: { width: number; height: number }) => Math.min(f.width, f.height) >= HD_SHORT_SIDE;
+let confirmedReplace = false;
 
 type Source =
   | { kind: 'single'; info: ImageInfo }
   | { kind: 'batch'; label: string; scan: FolderScan };
 
 interface Props {
+  onSettings: (s: Settings) => void;
   settings: Settings;
   allow4k: boolean;
   cpuMode: boolean;
@@ -27,7 +29,7 @@ interface Props {
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p;
 const dirName = (p: string) => p.replace(/[\\/][^\\/]*$/, '');
 
-export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedInitial }: Props) {
+export function Upscale({ settings, onSettings, allow4k, cpuMode, initialPaths, onConsumedInitial }: Props) {
   const [source, setSource] = useState<Source | null>(null);
   const [opts, setOpts] = useState<UpscaleOptions>(settings.last);
   const [loading, setLoading] = useState<string | null>(null);
@@ -36,7 +38,7 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
   const [update, setUpdate] = useState<JobUpdate | null>(null);
   const [resultOpts, setResultOpts] = useState<UpscaleOptions | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<{ text: string; actions: { label: string; run: () => void; primary?: boolean }[] } | null>(null);
+  const [confirm, setConfirm] = useState<{ title?: string; text: string; actions: { label: string; run: () => void; primary?: boolean }[] } | null>(null);
   const [viewing, setViewing] = useState<JobItem | null>(null);
   const jobRef = useRef<string | null>(null);
   const [installed, setInstalled] = useState<Record<ModelId, boolean> | null>(null);
@@ -108,7 +110,7 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
     if (!source) return;
     setConfirm(null); setSaved(null); setError(null); setUpdate(null);
     try {
-      const id = await api.startJob({ files, opts, mode: source.kind === 'single' ? 'single' : 'folder' });
+      const id = await api.startJob({ files, opts, mode: source.kind === 'single' ? 'single' : replace ? 'replace' : 'folder' });
       jobRef.current = id; setJobId(id); setResultOpts(opts);
       const early = latest.current.get(id);
       if (early) setUpdate(early);
@@ -128,8 +130,22 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
         });
       } else go();
     } else {
-      const all = source.scan.files.filter(f => chosen.has(f.path));
-      if (!all.length) return;
+      const ticked = source.scan.files.filter(f => chosen.has(f.path));
+      if (!ticked.length) return;
+      // v2.5: replacing the originals is confirmed first (they go to the Recycle Bin).
+      if (replace && !confirmedReplace) {
+        const n = ticked.length;
+        setConfirm({
+          title: 'Replace the originals?',
+          text: `Upscale ${n} image${n === 1 ? '' : 's'} and replace the original${n === 1 ? '' : 's'}? Each keeps its name, format, date, people and labels (BMP and TIFF become PNG). The originals go to the Recycle Bin, so you can restore them from there.`,
+          actions: [
+            { label: 'Keep originals, save copies', run: () => { void setReplace(false); setConfirm(null); } },
+            { label: 'Upscale and replace', run: () => { setConfirm(null); confirmedReplace = true; requestStart(); confirmedReplace = false; }, primary: true },
+          ],
+        });
+        return;
+      }
+      const all = ticked;
       const small = all.filter(f => Math.max(f.width, f.height) <= LARGE_IMAGE_PX);
       if (small.length < all.length) {
         setConfirm({
@@ -151,6 +167,8 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
     } catch (e) { setError(errorText(e)); }
   }
 
+  const replace = settings.replaceInBatch;
+  const setReplace = async (v: boolean) => onSettings(await api.setSettings({ replaceInBatch: v }));
   const optsChanged = useMemo(() => !!resultOpts && JSON.stringify(resultOpts) !== JSON.stringify(opts), [resultOpts, opts]);
   const savedTo = settings.outputDir ?? 'the same folder as the original';
 
@@ -170,8 +188,15 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
   const side = (
     <aside className="w-[320px] shrink-0 border-l border-line bg-panel flex flex-col min-h-0">
       <div className="flex-1 overflow-auto p-5 space-y-6">
+        {source.kind === 'batch' && (
+          <label className="flex items-start gap-3 text-sm">
+            <span className="shrink-0 mt-0.5"><Toggle label="Replace the originals" checked={replace} onChange={v => void setReplace(v)} /></span>
+            <span><span className="font-medium">Replace the originals</span><br />
+              <span className="text-xs text-muted">{replace ? 'No duplicates: each image is updated in place; originals go to the Recycle Bin.' : 'Keeps the originals and saves upscaled copies (“_upscaled”).'}</span></span>
+          </label>
+        )}
         <OptionsPanel opts={opts} onChange={setOpts} allow4k={allow4k} disabled={running}
-          inputSize={source.kind === 'single' ? source.info : undefined} />
+          inputSize={source.kind === 'single' ? source.info : undefined} keepFormat={source.kind === 'batch' && replace} />
         {needsModel && (
           <Notice tone="info">
             <div className="space-y-2">
@@ -184,9 +209,9 @@ export function Upscale({ settings, allow4k, cpuMode, initialPaths, onConsumedIn
           </Notice>
         )}
         {cpuMode && <Notice tone="warn">No usable graphics card: upscaling runs on the processor, about 20× slower. Fast model recommended.</Notice>}
-        <div className="text-xs text-muted leading-relaxed">
+        {!(source.kind === 'batch' && replace) && <div className="text-xs text-muted leading-relaxed">
           Saved to {settings.outputDir ? <span className="text-fg break-all">{settings.outputDir}</span> : 'the same folder as the original'}, with “_upscaled” added to the name. Change this in Settings.
-        </div>
+        </div>}
       </div>
       <div className="border-t border-line p-4 space-y-3">
         {error && <Notice tone="danger">{error}</Notice>}
@@ -381,14 +406,14 @@ function StateDot({ state }: { state: JobItem['state'] }) {
   return <span className="h-2 w-2 mx-1 rounded-full bg-line" />;
 }
 
-function ConfirmDialog({ text, actions, onCancel }: { text: string; actions: { label: string; run: () => void; primary?: boolean }[]; onCancel: () => void }) {
+function ConfirmDialog({ title = 'Large image', text, actions, onCancel }: { title?: string; text: string; actions: { label: string; run: () => void; primary?: boolean }[]; onCancel: () => void }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6" role="dialog" aria-modal="true">
       <div className="bg-panel rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
         <div className="flex gap-3">
           <Icon name="alert" size={22} className="text-warn mt-0.5" />
           <div>
-            <div className="font-semibold mb-1">Large image</div>
+            <div className="font-semibold mb-1">{title}</div>
             <div className="text-sm text-muted leading-relaxed">{text}</div>
           </div>
         </div>

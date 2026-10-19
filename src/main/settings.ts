@@ -20,6 +20,7 @@ const DEFAULTS: Settings = {
   last: { size: { kind: 'scale', factor: 4 }, model: 'fast', format: 'png', jpgQuality: 92 },
   cpuOnly: false,
   skipExisting: true,
+  replaceInBatch: true,
   firstRunDone: false,
   sort: { includeSubfolders: false, strictness: 0.34, minFaceSize: 40, noFacesFolder: false, minPhotos: 2, suggestUpscale: false },
   tidy: { includeSubfolders: false, match: 'same', blurThreshold: 150, by: 'date', dateDepth: 'month', placeDepth: 'city', useFileDate: true, unknownFolder: false },

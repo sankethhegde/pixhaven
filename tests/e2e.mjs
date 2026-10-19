@@ -7,6 +7,7 @@ import sharp from 'sharp';
 const OUT = process.env.CLEARUP_E2E_DIR;
 const FIX = path.join(OUT, 'fixtures');
 const BATCH = path.join(FIX, 'batch');
+const INPLACE = path.join(FIX, 'in place');
 const results = [];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -45,6 +46,13 @@ async function makeFixtures() {
   fs.writeFileSync(path.join(BATCH, 'g-broken.jpg'), Buffer.from('this is not really a jpeg'));
   await sharp(photo).resize(100).png().toFile(path.join(BATCH, 'h_upscaled.png')); // must be skipped
   await sharp(photo).resize(1280, 1920).jpeg({ quality: 80 }).toFile(path.join(BATCH, 'i-already-hd.jpg')); // HD: leaving it out is recommended
+  // v2.5 "replace the originals": a JPG, a PNG and a BMP (which becomes PNG), with an old date to keep.
+  fs.mkdirSync(INPLACE, { recursive: true });
+  await sharp(photo).resize(200).jpeg({ quality: 60 }).toFile(path.join(INPLACE, 'beach.jpg'));
+  await sharp(photo).resize(180).png().toFile(path.join(INPLACE, 'logo.png'));
+  fs.writeFileSync(path.join(INPLACE, 'scan.bmp'), bmp24(120, 90, [200, 120, 40]));
+  const old = new Date('2019-05-04T10:00:00Z');
+  for (const f of fs.readdirSync(INPLACE)) fs.utimesSync(path.join(INPLACE, f), old, old);
 }
 
 export default async function run(win, app) {
@@ -125,6 +133,9 @@ export default async function run(win, app) {
     // ---- batch ----
     await js(`window.__clearupOpen(${JSON.stringify([BATCH])})`);
     await waitFor('Upscale 6 images');
+    // These checks are about "_upscaled" copies: "Replace the originals" off for now.
+    await js(`(() => { const s = document.querySelector('[aria-label="Replace the originals"]'); if (s.getAttribute('aria-checked') === 'true') s.click(); })()`);
+    await sleep(400);
     // v2.5: the HD image (720p or more) is recommended to leave out: unticked, with a note; the user can tick it.
     const rec = await js(`document.querySelector('[data-testid=hd-recommendation]')?.innerText ?? ''`);
     const hdBox = await js(`document.querySelector('[data-file="i-already-hd.jpg"] input').checked`);
@@ -185,6 +196,29 @@ export default async function run(win, app) {
     let left = -1;
     for (let i = 0; i < 30 && left !== 0; i++) { left = (await js('window.clearup.queueList()')).length; if (left) await sleep(500); }
     check('cancelling queued and running jobs empties the queue', left === 0);
+
+    // ---- v2.5: batch "replace the originals": updated in place, no duplicates ----
+    await js(`window.__clearupOpen(${JSON.stringify([INPLACE])})`);
+    await waitFor('Upscale 3 images');
+    await js(`(() => { const s = document.querySelector('[aria-label="Replace the originals"]'); if (s.getAttribute('aria-checked') !== 'true') s.click(); })()`);
+    await sleep(400);
+    check('replace: each image keeps its own format', !!(await js(`document.querySelector('[data-testid=keep-format]')?.innerText`)));
+    await click('Fast', false); await click('2×');
+    const before = Object.fromEntries(await Promise.all(['beach.jpg', 'logo.png'].map(async f => [f, await sharp(fs.readFileSync(path.join(INPLACE, f))).metadata()])));
+    await click('Upscale 3 images');
+    await waitFor('Replace the originals?');
+    await shot('12-replace-confirm');
+    await click('Upscale and replace');
+    await waitFor('Finished:', 120000);
+    await sleep(1000);
+    const names = fs.readdirSync(INPLACE).sort();
+    check('replace: no copies, no leftovers; BMP became PNG', JSON.stringify(names) === JSON.stringify(['beach.jpg', 'logo.png', 'scan.png']), names.join(', '));
+    const after = Object.fromEntries(await Promise.all(names.map(async f => [f, await sharp(path.join(INPLACE, f)).metadata()])));
+    check('replace: same name and format, 2× bigger', after['beach.jpg'].format === 'jpeg' && after['beach.jpg'].width === before['beach.jpg'].width * 2
+      && after['logo.png'].format === 'png' && after['logo.png'].width === before['logo.png'].width * 2 && after['scan.png'].width === 240,
+      names.map(f => `${f} ${after[f].format} ${after[f].width}×${after[f].height}`).join(', '));
+    check('replace: dates kept', names.every(f => Math.abs(fs.statSync(path.join(INPLACE, f)).mtimeMs - Date.parse('2019-05-04T10:00:00Z')) < 2000));
+    await shot('13-replaced');
 
     // ---- settings + dark mode ----
     await click('Settings', true, 'nav');

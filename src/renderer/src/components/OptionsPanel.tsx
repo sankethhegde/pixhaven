@@ -9,6 +9,7 @@ interface Props {
   allow4k: boolean;
   disabled?: boolean;
   inputSize?: { width: number; height: number };
+  keepFormat?: boolean;      // v2.5 batch "replace the originals": every image keeps its own format
 }
 
 type SizeKey = '2' | '4' | TargetId;
@@ -27,7 +28,7 @@ export function outputSize(w: number, h: number, s: SizeChoice) {
   return { width: Math.round(w * f), height: Math.round(h * f), factor: f };
 }
 
-export function OptionsPanel({ opts, onChange, allow4k, disabled, inputSize }: Props) {
+export function OptionsPanel({ opts, onChange, allow4k, disabled, inputSize, keepFormat }: Props) {
   const set = (patch: Partial<UpscaleOptions>) => onChange({ ...opts, ...patch });
   const key = sizeKey(opts.size);
   const out = inputSize ? outputSize(inputSize.width, inputSize.height, opts.size) : null;
@@ -70,6 +71,14 @@ export function OptionsPanel({ opts, onChange, allow4k, disabled, inputSize }: P
       </Field>
 
       <Field label="Output format">
+        {keepFormat ? (<>
+          <div className="text-sm text-muted" data-testid="keep-format">Each image keeps its own format (JPG, PNG, WEBP). BMP and TIFF become PNG with the same name.</div>
+          <label className="flex items-center gap-3 text-sm">
+            <span className="text-muted w-14">Quality</span>
+            <input type="range" min={50} max={100} value={opts.jpgQuality} onChange={e => set({ jpgQuality: Number(e.target.value) })} className="flex-1" aria-label="JPG and WEBP quality" />
+            <span className="w-8 text-right tabular-nums">{opts.jpgQuality}</span>
+          </label>
+        </>) : (<>
         <Segmented<OutputFormat> label="Output format" value={opts.format} onChange={format => set({ format })}
           options={[{ value: 'png', label: 'PNG' }, { value: 'jpg', label: 'JPG' }, { value: 'webp', label: 'WEBP' }]} />
         {opts.format !== 'png' && (
@@ -80,6 +89,7 @@ export function OptionsPanel({ opts, onChange, allow4k, disabled, inputSize }: P
           </label>
         )}
         {opts.format === 'jpg' && <div className="text-xs text-muted">JPG has no transparency: transparent areas become white.</div>}
+        </>)}
       </Field>
     </fieldset>
   );

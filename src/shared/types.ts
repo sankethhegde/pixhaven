@@ -41,6 +41,7 @@ export interface Settings {
   last: UpscaleOptions;      // remembered upscale choices
   cpuOnly: boolean;          // GEN-03 manual override: run the engine on the CPU (SwiftShader)
   skipExisting: boolean;     // folder jobs skip images whose _upscaled file already exists (resume)
+  replaceInBatch: boolean;   // v2.5: batch upscales replace the originals (to the Recycle Bin) instead of adding _upscaled copies
   firstRunDone: boolean;     // first-run test upscale has run
   sort: SortSettings;
   tidy: TidySettings;

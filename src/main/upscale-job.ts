@@ -4,8 +4,16 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { app, shell } from 'electron';
 import sharp from 'sharp';
-import type { ImageInfo, JobItem, JobUpdate, Settings, UpscaleOptions } from '@shared/types';
-import { openImage as open, isImageFile } from './image-io';
+import type { ImageInfo, JobItem, JobUpdate, OutputFormat, Settings, UpscaleOptions } from '@shared/types';
+import { openImage, isImageFile } from './image-io';
+
+/**
+ * The original read into memory, never opened by path: libvips keeps a JPEG it decoded from a path open until garbage
+ * collection, and Windows won't move a file that is open to the Recycle Bin ("replace the originals" would fail).
+ */
+async function open(file: string): Promise<ReturnType<typeof sharp>> {
+  return /\.bmp$/i.test(file) ? openImage(file) : sharp(await fs.promises.readFile(file), { limitInputPixels: false, failOn: 'error' });
+}
 import { runEngine, EngineError } from './engine';
 import { modelDir } from './models';
 import { planScale, outputPath, uniquePath, isUpscaledName, type ScalePlan } from './plan';
@@ -48,7 +56,7 @@ async function prepare(file: string): Promise<Prepared> {
   const hit = prepared.get(key);
   if (hit && fs.existsSync(hit.png)) return hit;
   const png = path.join(sessionTemp(), `${crypto.randomUUID()}-in.png`);
-  const info = await open(file).rotate().png({ compressionLevel: 1 }).toFile(png);
+  const info = await (await open(file)).rotate().png({ compressionLevel: 1 }).toFile(png);
   const result = { png, width: info.width, height: info.height, hasAlpha: info.channels === 4 };
   prepared.set(key, result);
   return result;
@@ -71,7 +79,13 @@ export async function quickSize(file: string): Promise<{ width: number; height: 
       fs.readSync(fd, head, 0, 26, 0); fs.closeSync(fd);
       return { width: head.readInt32LE(18), height: Math.abs(head.readInt32LE(22)) };
     }
-    const m = await sharp(file).metadata();
+    // From a buffer, not the path: libvips can keep a file it read open until garbage collection, and a file held open
+    // can't go to the Recycle Bin ("replace the originals"). The header is in the first MB nearly always.
+    const fd = await fs.promises.open(file, 'r');
+    let head: Buffer;
+    try { const b = Buffer.alloc(1 << 20); const { bytesRead } = await fd.read(b, 0, b.length, 0); head = b.subarray(0, bytesRead); } finally { await fd.close(); }
+    let m = await sharp(head).metadata().catch(() => null);
+    if (!m?.width) m = await sharp(await fs.promises.readFile(file)).metadata();
     const swap = (m.orientation ?? 1) >= 5;
     return m.width && m.height ? { width: swap ? m.height : m.width, height: swap ? m.width : m.height } : null;
   } catch { return null; }
@@ -102,7 +116,7 @@ async function writeFinal(file: string, aiPng: string, plan: ScalePlan, opts: Up
 
   // Draw the AI pixels over the (rotated) original so its EXIF/ICC metadata carries over; the
   // Orientation tag is reset because the pixels are already upright.
-  let out = open(file).rotate().resize(plan.width, plan.height, { fit: 'fill', kernel: 'nearest' });
+  let out = (await open(file)).rotate().resize(plan.width, plan.height, { fit: 'fill', kernel: 'nearest' });
   if (opts.format === 'jpg' || info.channels === 3) out = out.removeAlpha();
   out = out.composite([{ input: data, raw: { width: info.width, height: info.height, channels: info.channels }, blend: 'source' }]).keepMetadata();
   if (opts.format === 'jpg') out = out.jpeg({ quality: opts.jpgQuality, chromaSubsampling: opts.jpgQuality >= 90 ? '4:4:4' : '4:2:0' });
@@ -185,9 +199,12 @@ export class UpscaleJob {
   /** Tell the UI the job exists (it may wait in the queue before running). */
   announce(): void { this.push(true); }
 
+  /** Replace mode: each photo keeps its own format (JPG, PNG, WEBP); BMP and TIFF can't be written back, so they become PNG. */
+  private optsFor = (file: string): UpscaleOptions => this.mode === 'replace' ? { ...this.opts, format: ownFormat(file) } : this.opts;
+
   private destFor = (file: string): string =>
     this.mode === 'replace'
-      ? path.join(path.dirname(file), `.${path.basename(file, path.extname(file))}.pixhaven-upscale${path.extname(outputPath(file, this.opts.format, null))}`)
+      ? path.join(path.dirname(file), `.${path.basename(file, path.extname(file))}.pixhaven-upscale${path.extname(outputPath(file, ownFormat(file), null))}`)
       : this.mode === 'single'
       ? path.join(sessionTemp(), `${crypto.randomUUID()}-result${path.extname(outputPath(file, this.opts.format, null))}`)
       : uniquePath(outputPath(file, this.opts.format, this.settings.outputDir));
@@ -203,7 +220,7 @@ export class UpscaleJob {
       this.push(true);
       const t = Date.now();
       try {
-        const r = await upscaleOne(item.input, this.opts, this.settings, this.destFor, this.abort.signal, f => { item.progress = f; this.push(); });
+        const r = await upscaleOne(item.input, this.optsFor(item.input), this.settings, this.destFor, this.abort.signal, f => { item.progress = f; this.push(); });
         if (this.mode === 'replace') r.output = await replaceOriginal(item.input, r.output);
         Object.assign(item, { state: 'done', progress: 1, output: r.output, outputUrl: fileUrl(r.output), beforeUrl: r.beforeUrl, outWidth: r.width, outHeight: r.height });
       } catch (e) {
@@ -247,16 +264,31 @@ export class UpscaleJob {
  */
 async function replaceOriginal(original: string, upscaled: string): Promise<string> {
   const st = fs.statSync(original);
+  // Same format: same name. BMP / TIFF → PNG: the same name with .png (a free one if that is taken).
+  const sameExt = path.extname(upscaled).toLowerCase() === path.extname(original).toLowerCase()
+    || (/\.jpe?g$/i.test(upscaled) && /\.jpe?g$/i.test(original));
+  const final = sameExt ? original : uniquePath(path.join(path.dirname(original), path.basename(original, path.extname(original)) + path.extname(upscaled)));
   try {
-    await shell.trashItem(original);
+    // A file read a moment ago can be briefly locked (antivirus, thumbnails): a couple of tries.
+    for (let i = 0; ; i++) {
+      try { await shell.trashItem(original); break; }
+      catch (e) { if (i >= 3) throw e; await new Promise(r => setTimeout(r, 400 * (i + 1))); }
+    }
   } catch (e) {
+    log('warn', `Recycle Bin refused ${original}`, e);
     const kept = uniquePath(outputPath(original, path.extname(upscaled).slice(1) === 'png' ? 'png' : path.extname(upscaled).slice(1) === 'webp' ? 'webp' : 'jpg', null));
     fs.renameSync(upscaled, kept);
     throw new Error(`The original couldn't go to the Recycle Bin, so it was kept; the upscaled copy is ${path.basename(kept)}`);
   }
-  fs.renameSync(upscaled, original);
-  fs.utimesSync(original, st.atime, st.mtime);
-  return original;
+  fs.renameSync(upscaled, final);
+  fs.utimesSync(final, st.atime, st.mtime);
+  return final;
+}
+
+/** The format a photo can be written back as: its own, or PNG for BMP / TIFF. */
+export function ownFormat(file: string): OutputFormat {
+  const e = path.extname(file).toLowerCase();
+  return e === '.jpg' || e === '.jpeg' ? 'jpg' : e === '.webp' ? 'webp' : 'png';
 }
 
 export function friendlyError(e: unknown): string {

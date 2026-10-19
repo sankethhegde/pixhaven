@@ -141,6 +141,11 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Batch upscale recommendation (0.7.6):** the batch list has a checkbox per image. Images already HD (shorter side
   720 px or more, i.e. 720p) start unticked with "Already HD · skip recommended" and a note saying why; "Include them
   anyway" / "Leave them out", Select all / none — the user decides.
+- **Batch upscale replaces the originals (0.7.7):** on by default ("Replace the originals" in the batch options, saved in
+  settings as `replaceInBatch`). Each image is upscaled to a hidden temp file beside it, the original goes to the Recycle
+  Bin, and the result takes its name and date (EXIF, colour profile, people and labels kept). Each keeps its own format;
+  BMP and TIFF become PNG with the same name. Confirmed before starting. Off: "_upscaled" copies as before. Originals are
+  read into memory, never opened by path (libvips keeps a JPEG open until GC, and Windows won't recycle an open file).
 - **Face detection details (0.7.1–0.7.4):** a photo with no face at 0.85 confidence is read again at 0.72; detections with a
   weak fingerprint (tattoos, jewellery) and small detections inside a bigger face (close-ups seen through a tile) are dropped.
 - **Tidy up:** duplicates = same SHA-1, or dHash within 6 bits ("same picture", catches resized/re-saved copies;

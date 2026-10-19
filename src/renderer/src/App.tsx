@@ -144,7 +144,7 @@ export default function App() {
           )}
           {/* Kept mounted so running jobs and results survive visiting other pages. */}
           <div className={page === 'upscale' ? 'h-full' : 'hidden'}>
-            <Upscale settings={settings} allow4k={allow4k} cpuMode={cpuMode} initialPaths={pending} onConsumedInitial={() => setPending(null)} />
+            <Upscale settings={settings} onSettings={setSettings} allow4k={allow4k} cpuMode={cpuMode} initialPaths={pending} onConsumedInitial={() => setPending(null)} />
           </div>
           <div className={page === 'sort' ? 'h-full' : 'hidden'}>
             <Sort settings={settings} onSettings={setSettings} initialFolder={pendingSort} onConsumedInitial={() => setPendingSort(null)} onUpscale={upscaleFiles} />
