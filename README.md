@@ -163,7 +163,7 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   `generator-history.json`. Node 24 note: onnxruntime-node wraps fp16 data in a Float16Array its native side can't read,
   so the Uint16Array view is put back (`cpuData`). `PIXHAVEN_GEN_MODEL` points tests at a model folder;
   `PIXHAVEN_GEN_DL_TEST` downloads only the small files (resume/checksum test).
-- **Make similar / image to image (next release):** "Make similar to a picture…" in the Image Generator, or "Make
+- **Make similar / image to image (0.9.1):** "Make similar to a picture…" in the Image Generator, or "Make
   similar" in the Library / Photos viewer. The picture is described (prompt + style, editable) and used as the start:
   encoded by the VAE encoder (an extra 68 MB file from the same pinned revision, downloaded when first needed), noised
   to a point of a longer LCM schedule and only the last part runs. "How different": Close 0.35, Similar 0.55, Loose
