@@ -21,12 +21,13 @@ interface Props {
   onUpscale: (paths: string[]) => void;
   onSort: (folder: string) => void;
   onDescribe?: (path: string) => void;   // v2.7: the picture's description → Image Generator
+  onSimilar?: (path: string) => void;    // v2.8: make similar pictures from it in the Image Generator
 }
 
 const ext = (n: string) => n.slice(n.lastIndexOf('.') + 1).toLowerCase();
 const dirOf = (p: string) => p.slice(0, Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'))) || p;
 
-export function Viewer({ items, index, infos, onIndex, onClose, onUpscale, onSort, onDescribe }: Props) {
+export function Viewer({ items, index, infos, onIndex, onClose, onUpscale, onSort, onDescribe, onSimilar }: Props) {
   const item = items[index];
   const info = infos.get(item.path);
   const [pic, setPic] = useState<{ path: string; url: string; width: number; height: number; converted: boolean } | null>(null);
@@ -149,6 +150,11 @@ export function Viewer({ items, index, infos, onIndex, onClose, onUpscale, onSor
           {item.kind === 'image' && onDescribe && (
             <Button onClick={() => onDescribe(item.path)} className="!bg-white/10 !border-white/10 !text-white hover:!bg-white/20" title="Describe this picture and use it as a prompt in the Image Generator">
               <Icon name="wand" size={16} />Get prompt
+            </Button>
+          )}
+          {item.kind === 'image' && onSimilar && (
+            <Button onClick={() => onSimilar(item.path)} className="!bg-white/10 !border-white/10 !text-white hover:!bg-white/20" title="Make new pictures like this one in the Image Generator">
+              <Icon name="copy" size={16} />Make similar
             </Button>
           )}
           <Button onClick={() => onSort(dirOf(item.path))} className="!bg-white/10 !border-white/10 !text-white hover:!bg-white/20" title="Sort the photos in this folder by person">

@@ -10,6 +10,8 @@ import sharp from 'sharp';
 import workerPath from './generator/worker?modulePath';
 import type { GenWorkerIn, GenWorkerOut, GenWorkerInput } from './generator/worker';
 import type { GenImage, GenProgress, GenRequest, GenStatus, GenStyle, GenSize } from '@shared/types';
+import { downloadEncoder, encoderInstalled, ENCODER_BYTES } from './generator/model';
+import { pictureBytes } from './describe-service';
 import { downloadGenerator, generatorDir, generatorInstalled, MODEL_BYTES, MODEL_LICENCE, MODEL_NAME, MODEL_SOURCE, removeGenerator } from './generator/model';
 import { getSettings } from './settings';
 import { queue } from './queue';
@@ -31,7 +33,8 @@ export const STYLES: Record<GenStyle, { pre: string; post: string; avoid: string
 };
 export const AVOID = 'deformed, bad anatomy, extra limbs, fused legs, malformed hands, blurry, lowres, border, frame, white border, poster, cropped, text, signature, watermark, logo';
 const STEER = 1.5;
-const SAFETY_RETRIES = 2;   // a picture stopped by the safety filter is tried again with new seeds this many times   // strength of the avoid list (2.0 left more stray text in tests)
+const SAFETY_RETRIES = 2;
+const STALL_MS = 180_000;   // no word from the generator this long: treated as a lost graphics card   // a picture stopped by the safety filter is tried again with new seeds this many times   // strength of the avoid list (2.0 left more stray text in tests)
 export const SIZES: Record<GenSize, [number, number]> = { square: [512, 512], portrait: [512, 768], landscape: [768, 512] };
 const IDLE_MS = 5 * 60_000;
 
@@ -94,6 +97,7 @@ let dlAbort: AbortController | null = null;
 export function status(): GenStatus {
   return {
     installed: generatorInstalled(), bytes: MODEL_BYTES, device, loaded: !!worker, outputDir: outputDir(), download: dl,
+    encoder: { installed: encoderInstalled(), bytes: ENCODER_BYTES, download: encDl },
     modelName: MODEL_NAME, source: MODEL_SOURCE, licence: MODEL_LICENCE,
   };
 }
@@ -115,7 +119,31 @@ export async function download(onUpdate: (s: GenStatus) => void): Promise<void> 
     log('warn', 'Image Generator download failed', e);
   } finally { dlAbort = null; onUpdate(status()); }
 }
-export function cancelDownload(): void { dlAbort?.abort(); }
+export function cancelDownload(): void { dlAbort?.abort(); encAbort?.abort(); }
+
+// v2.8: the image-to-image encoder (68 MB), downloaded the first time a picture is used as a start.
+let encDl: GenStatus['encoder']['download'] = { state: 'idle', got: 0, total: ENCODER_BYTES };
+let encAbort: AbortController | null = null;
+export async function downloadEncoderPart(onUpdate: (s: GenStatus) => void): Promise<void> {
+  if (encDl.state === 'downloading') return;
+  encAbort = new AbortController();
+  encDl = { state: 'downloading', got: 0, total: ENCODER_BYTES };
+  onUpdate(status());
+  let last = 0;
+  try {
+    await downloadEncoder((got, total) => {
+      encDl = { state: 'downloading', got, total };
+      if (Date.now() - last > 250) { last = Date.now(); onUpdate(status()); }
+    }, encAbort.signal);
+    encDl = { state: 'idle', got: ENCODER_BYTES, total: ENCODER_BYTES };
+  } catch (e) {
+    encDl = { state: 'error', got: encDl.got, total: ENCODER_BYTES, error: (e as Error).message };
+    log('warn', 'Image-to-image encoder download failed', e);
+  } finally { encAbort = null; onUpdate(status()); }
+}
+
+/** The shape closest to a picture's own (image to image follows the picture). */
+export function shapeFor(w: number, h: number): GenSize { return w / h > 1.25 ? 'landscape' : w / h < 0.8 ? 'portrait' : 'square'; }
 
 export async function remove(): Promise<void> {
   await worker?.terminate(); worker = null; device = null;
@@ -146,7 +174,7 @@ const xmlEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').rep
 
 /** The prompt and settings go inside the PNG (XMP description), so the picture remembers how it was made. */
 function xmp(img: Omit<GenImage, 'url' | 'path' | 'id'>): string {
-  const desc = `${img.prompt} | style ${img.style}, seed ${img.seed}, ${img.steps} steps, ${img.width}x${img.height} | ${MODEL_NAME}`;
+  const desc = `${img.prompt} | style ${img.style}, seed ${img.seed}, ${img.steps} steps, ${img.width}x${img.height}${img.from ? `, from ${img.from} (strength ${img.strength})` : ''} | ${MODEL_NAME}`;
   return `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
 <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xmp="http://ns.adobe.com/xap/1.0/">
 <dc:description><rdf:Alt><rdf:li xml:lang="x-default">${xmlEsc(desc)}</rdf:li></rdf:Alt></dc:description>
@@ -159,7 +187,11 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
   if (!generatorInstalled()) throw new Error('Download the Image Generator model first.');
   const prompt = req.prompt.trim();
   if (!prompt) throw new Error('Describe the picture you want first.');
-  const [width, height] = SIZES[req.size];
+  if (req.init && !encoderInstalled()) throw new Error('Download the image-to-image part first (68 MB).');
+  let [width, height] = SIZES[req.size];
+  // v2.8 image to image: the starting picture (read when the job starts), how freely it is redrawn.
+  let start: { name: string; rgb: Uint8Array } | null = null;
+  const strength = Math.min(0.9, Math.max(0.2, req.strength ?? 0.55));
   const steps = req.quality === 'better' ? 8 : 4;
   const count = Math.min(4, Math.max(1, Math.round(req.count)));
   const seed0 = req.seed ?? Math.floor(Math.random() * 2 ** 31);
@@ -181,8 +213,30 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
   const seedFor = (i: number) => seedOf.get(i) ?? seed0 + i;
   const images = (idx: number[]) => idx.map(i => ({ prompt: full, negative, cfg: STEER, seed: seedFor(i), steps, width, height }));
   // The queue may start this at once (before queue.add returns): wait a tick so the job id is known.
-  const job = queue.add('generate', `Image Generator: ${count} image${count === 1 ? '' : 's'}`, async () => { await new Promise(r => setImmediate(r)); return run(); }, () => { cancel = true; if (worker) send({ type: 'cancel' }); });
+  const job = queue.add('generate', `Image Generator: ${count} image${count === 1 ? '' : 's'}`, async () => {
+    await new Promise(r => setImmediate(r));
+    if (req.init) {
+      try {
+        const bytes = await pictureBytes(req.init);
+        const m = await sharp(bytes).metadata();
+        const [w, h] = (m.orientation ?? 1) >= 5 ? [m.height ?? 1, m.width ?? 1] : [m.width ?? 1, m.height ?? 1];
+        [width, height] = SIZES[shapeFor(w, h)];
+        const rgb = await sharp(bytes, { limitInputPixels: false }).rotate().removeAlpha().resize(width, height, { fit: 'cover' }).raw().toBuffer();
+        start = { name: path.basename(req.init), rgb: new Uint8Array(rgb.buffer, rgb.byteOffset, rgb.length) };
+      } catch (e) {
+        log('warn', `Image Generator: could not read ${req.init}`, e);
+        onProgress({ jobId: job.id, index: 0, count, step: 0, steps: steps + 1, phase: 'error', error: 'The starting picture could not be read.' });
+        return;
+      }
+    }
+    return run();
+  }, () => { cancel = true; if (worker) send({ type: 'cancel' }); });
   const run = () => new Promise<void>((resolve) => {
+    // v2.8 watchdog: no word from the generator for STALL_MS (the laptop slept, the driver hung) counts as a lost
+    // graphics card: restart and retry the missing pictures once.
+    let lastSign = Date.now(), dog: NodeJS.Timeout | undefined;
+    const settle = resolve;
+    resolve = (() => { if (dog) clearInterval(dog); settle(); }) as typeof resolve;
     if (idle) clearTimeout(idle);
     const dir = outputDir();
     fs.mkdirSync(dir, { recursive: true });
@@ -203,7 +257,7 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
         }
         made.add(index);
         const seed = seedFor(index);
-        const base = { prompt, style: req.style, seed, width: m.width, height: m.height, steps, created: Date.now() };
+        const base = { prompt, style: req.style, seed, width: m.width, height: m.height, steps, created: Date.now(), ...(start ? { from: start.name, strength } : {}) };
         let image: GenImage;
         if (m.nsfw) {
           // Stopped by the safety filter: not saved, shown only as a heavily blurred tile.
@@ -222,19 +276,19 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
         // make the pictures still missing.
         retried = true;
         log('warn', `Image Generator: graphics device lost (${m.message.slice(0, 120)}); restarting and retrying ${count - made.size} image(s)`);
-        await worker?.terminate(); worker = null; device = null;
+        void worker?.terminate(); worker = null; device = null;
         batch = Array.from({ length: count }, (_, i) => i).filter(i => !made.has(i)); redo = [];
         id = crypto.randomUUID();
         onProgress({ jobId: job.id, index: batch[0], count, step: 0, steps: steps + 1, phase: 'loading' });
-        send({ type: 'generate', id, images: images(batch) });
+        send({ type: 'generate', id, images: images(batch), ...(start ? { init: start.rgb, strength } : {}) });
       } else if (m.type === 'done' && !m.cancelled && !cancel && redo.length) {
         // Another round for the pictures the safety filter stopped.
         batch = redo; redo = [];
         id = crypto.randomUUID();
-        send({ type: 'generate', id, images: images(batch) });
+        send({ type: 'generate', id, images: images(batch), ...(start ? { init: start.rgb, strength } : {}) });
       } else if (m.type === 'done' || m.type === 'error') {
         listeners.delete(l);
-        if (m.type === 'error' && deviceLost(m.message)) { await worker?.terminate(); worker = null; device = null; }   // next request starts fresh
+        if (m.type === 'error' && deviceLost(m.message)) { void worker?.terminate(); worker = null; device = null; }   // next request starts fresh
         onProgress({ jobId: job.id, index: count - 1, count, step: steps + 1, steps: steps + 1,
           phase: m.type === 'error' ? 'error' : m.cancelled ? 'cancelled' : 'done', error: m.type === 'error' ? friendly(m.message) : undefined });
         keepAlive();
@@ -244,6 +298,7 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
     // Messages one after another: an image is saved before the next one (or the end) is handled.
     let chain = Promise.resolve();
     const l = (m: GenWorkerOut) => {
+      lastSign = Date.now();
       chain = chain.then(() => handle(m)).catch(e => {
         listeners.delete(l);
         send({ type: 'cancel' });
@@ -254,8 +309,14 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
       });
     };
     listeners.add(l);
+    dog = setInterval(() => {
+      if (Date.now() - lastSign < STALL_MS) return;
+      lastSign = Date.now();
+      log('warn', `Image Generator: no answer for ${STALL_MS / 1000} s`);
+      l({ type: 'error', id, message: 'The graphics card stopped answering (device instance has been suspended)' });
+    }, 10_000);
     if (cancel) { send({ type: 'cancel' }); }
-    send({ type: 'generate', id, images: images(batch) });
+    send({ type: 'generate', id, images: images(batch), ...(start ? { init: start.rgb, strength } : {}) });
   }).catch(e => {
     // Anything unexpected still ends the request in the window.
     log('error', 'Image Generator request failed', e);

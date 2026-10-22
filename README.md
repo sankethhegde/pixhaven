@@ -163,6 +163,13 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   `generator-history.json`. Node 24 note: onnxruntime-node wraps fp16 data in a Float16Array its native side can't read,
   so the Uint16Array view is put back (`cpuData`). `PIXHAVEN_GEN_MODEL` points tests at a model folder;
   `PIXHAVEN_GEN_DL_TEST` downloads only the small files (resume/checksum test).
+- **Make similar / image to image (next release):** "Make similar to a picture…" in the Image Generator, or "Make
+  similar" in the Library / Photos viewer. The picture is described (prompt + style, editable) and used as the start:
+  encoded by the VAE encoder (an extra 68 MB file from the same pinned revision, downloaded when first needed), noised
+  to a point of a longer LCM schedule and only the last part runs. "How different": Close 0.35, Similar 0.55, Loose
+  0.75 (strength). The shape follows the picture (cover crop to square / portrait / landscape). The file records
+  "from <name> (strength …)" in its XMP. A watchdog restarts the generator when it gives no sign of life for 3
+  minutes (laptop slept mid-picture) and retries the missing pictures once.
 - **Describe a picture (0.9.0):** any picture → a description in the Image Generator's prompt box, plus a style guess.
   "Describe a picture…" in the Image Generator (or drop a picture on the description box), and "Get prompt" in the
   Library / Photos viewer. Model: Florence-2 base (Microsoft, MIT) from `onnx-community/Florence-2-base-ft`, pinned

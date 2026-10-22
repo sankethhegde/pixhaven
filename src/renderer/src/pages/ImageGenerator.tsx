@@ -11,6 +11,7 @@ interface Props {
   active: boolean;
   onUpscale: (paths: string[]) => void;
   describeRequest: { path: string; n: number } | null;   // v2.7: "Get prompt" from the Library / Photos viewer
+  similarRequest: { path: string; n: number } | null;    // v2.8: "Make similar" from the Library / Photos viewer
 }
 
 const STYLES: { value: GenStyle; label: string }[] = [
@@ -29,7 +30,7 @@ const IDEAS = [
 ];
 const store = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private */ } } };
 
-export function ImageGenerator({ settings, onSettings, active, onUpscale, describeRequest }: Props) {
+export function ImageGenerator({ settings, onSettings, active, onUpscale, describeRequest, similarRequest }: Props) {
   const g = settings.generator;
   const [status, setStatus] = useState<GenStatus | null>(null);
   const [prompt, setPrompt] = useState(() => store.get('gen.prompt') ?? '');
@@ -44,6 +45,15 @@ export function ImageGenerator({ settings, onSettings, active, onUpscale, descri
   const [error, setError] = useState<string | null>(null);
   const jobRef = useRef<string | null>(null);
   useEffect(() => { if (describeRequest) setDropReq(describeRequest); }, [describeRequest]);
+  // v2.8 image to image: the picture to start from (also described, so the description matches it).
+  const [startPic, setStartPic] = useState<{ path: string; name: string; url: string } | null>(null);
+  const [level, setLevel] = useState<'close' | 'similar' | 'loose'>('similar');
+  const useStart = async (p: string) => {
+    const pv = await api.lib.preview(p).catch(() => null);
+    setStartPic({ path: p, name: p.split(/[\\/]/).pop() ?? p, url: pv?.url ?? '' });
+    setDropReq({ path: p, n: Date.now() });
+  };
+  useEffect(() => { if (similarRequest) void useStart(similarRequest.path); }, [similarRequest]);  // eslint-disable-line react-hooks/exhaustive-deps
   const [described, setDescribed] = useState<{ name: string; prev: { prompt: string; style: GenStyle }; style: GenStyle | null } | null>(null);
   const [dropReq, setDropReq] = useState<{ path: string; n: number } | null>(null);
   const onDescribed = (r: { prompt: string; style: GenStyle | null; name: string }) => {
@@ -88,7 +98,8 @@ export function ImageGenerator({ settings, onSettings, active, onUpscale, descri
     setError(null); setProg(null); setArrived(0);
     const s = seed.trim() === '' ? null : Math.abs(Math.floor(Number(seed))) % 2 ** 31;
     try {
-      const id = await api.gen.generate({ prompt, style: g.style, size: g.size, count: g.count, quality: g.quality, format: g.format, seed: Number.isFinite(s as number) ? s : null });
+      const id = await api.gen.generate({ prompt, style: g.style, size: g.size, count: g.count, quality: g.quality, format: g.format, seed: Number.isFinite(s as number) ? s : null,
+        ...(startPic ? { init: startPic.path, strength: LEVELS.find(l => l.value === level)!.strength } : {}) });
       jobRef.current = id; setJob(id);
       setProg({ jobId: id, index: 0, count: g.count, step: 0, steps: 5, phase: 'loading' });
     } catch (e) { setError(errorText(e)); }
@@ -171,6 +182,11 @@ export function ImageGenerator({ settings, onSettings, active, onUpscale, descri
               </div>
             )}
             <DescribeBox request={dropReq} onResult={onDescribed} />
+            {startPic
+              ? <StartBox start={startPic} level={level} onLevel={setLevel} onRemove={() => setStartPic(null)} status={status} />
+              : <Button className="!h-8 w-full" variant="secondary" onClick={async () => { const p = await api.describe.pick(); if (p) void useStart(p); }}>
+                  <Icon name="copy" size={15} />Make similar to a picture…
+                </Button>}
             {!prompt.trim() && (
               <div className="flex flex-wrap gap-1.5">
                 {IDEAS.map(i => <button key={i} onClick={() => setPrompt(i)} className="text-xs rounded-full border border-line px-2.5 py-1 text-muted hover:text-fg hover:bg-panel-2">{i}</button>)}
@@ -178,7 +194,9 @@ export function ImageGenerator({ settings, onSettings, active, onUpscale, descri
             )}
           </div>
           <Field label="Style"><Wrap><Segmented label="Style" value={g.style} onChange={v => void set({ style: v })} options={STYLES} /></Wrap></Field>
-          <Field label="Shape"><Segmented label="Shape" value={g.size} onChange={v => void set({ size: v })} options={SIZES} /></Field>
+          <Field label="Shape">{startPic
+            ? <div className="text-sm text-muted">Follows the starting picture.</div>
+            : <Segmented label="Shape" value={g.size} onChange={v => void set({ size: v })} options={SIZES} />}</Field>
           <Field label="Images"><Segmented label="Images" value={String(g.count)} onChange={v => void set({ count: Number(v) })} options={['1', '2', '3', '4'].map(v => ({ value: v, label: v }))} /></Field>
           <Field label="Quality">
             <Segmented label="Quality" value={g.quality} onChange={v => void set({ quality: v })}
@@ -209,7 +227,7 @@ export function ImageGenerator({ settings, onSettings, active, onUpscale, descri
             </div>
           ) : (
             <Button variant="primary" className="w-full h-10" disabled={!prompt.trim()} onClick={() => void start()} title="Ctrl+Enter">
-              <Icon name="wand" size={16} />Generate {g.count} image{g.count === 1 ? '' : 's'}
+              <Icon name="wand" size={16} />{startPic ? `Make ${g.count} similar image${g.count === 1 ? '' : 's'}` : `Generate ${g.count} image${g.count === 1 ? '' : 's'}`}
             </Button>
           )}
           <div className="text-xs text-muted leading-relaxed">
@@ -344,6 +362,45 @@ function DescribeBox({ request, onResult }: { request: { path: string; n: number
               {d?.state === 'error' && <span className="text-danger">{d.error}</span>}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const LEVELS: { value: 'close' | 'similar' | 'loose'; label: string; title: string; strength: number }[] = [
+  { value: 'close', label: 'Close', title: 'A light redraw: almost the same picture', strength: 0.35 },
+  { value: 'similar', label: 'Similar', title: 'Same scene and layout, new details', strength: 0.55 },
+  { value: 'loose', label: 'Loose', title: 'Inspired by it: rough layout and colours', strength: 0.75 },
+];
+
+/** v2.8 image to image: the starting picture, how different the new ones may be, and the one-time 68 MB part. */
+function StartBox({ start, level, onLevel, onRemove, status }: {
+  start: { path: string; name: string; url: string }; level: 'close' | 'similar' | 'loose'; onLevel: (l: 'close' | 'similar' | 'loose') => void;
+  onRemove: () => void; status: GenStatus | null;
+}) {
+  const enc = status?.encoder;
+  return (
+    <div className="rounded-xl border border-line p-3 space-y-3" data-testid="start-from">
+      <div className="flex items-center gap-3">
+        <img src={start.url} alt="" className="h-14 w-14 rounded-lg object-cover bg-panel-2 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium">Starting from</div>
+          <div className="text-xs text-muted truncate" title={start.path}>{start.name}</div>
+        </div>
+        <button className="text-muted hover:text-fg" onClick={onRemove} aria-label="Don't start from a picture"><Icon name="x" size={16} /></button>
+      </div>
+      <div className="space-y-1">
+        <div className="text-xs text-muted">How different</div>
+        <Segmented label="How different" value={level} onChange={onLevel} options={LEVELS} />
+      </div>
+      {enc && !enc.installed && (
+        <div className="text-xs space-y-1.5" data-testid="encoder-download">
+          <div className="text-muted">Starting from a picture needs one more part of the model: a one-time {fmtBytes(enc.bytes)} download.</div>
+          {enc.download.state === 'downloading'
+            ? <><ProgressBar value={enc.download.total ? enc.download.got / enc.download.total : 0} /><div className="text-muted">{fmtBytes(enc.download.got)} of {fmtBytes(enc.download.total)}</div></>
+            : <div className="flex items-center gap-2"><Button className="!h-8" variant="primary" onClick={() => void api.gen.downloadEncoder()}><Icon name="download" size={14} />Download ({fmtBytes(enc.bytes)})</Button>
+                {enc.download.state === 'error' && <span className="text-danger">{enc.download.error}</span>}</div>}
         </div>
       )}
     </div>

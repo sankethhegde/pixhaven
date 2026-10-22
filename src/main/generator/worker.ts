@@ -5,7 +5,7 @@ import { ImageGenerator, type GenerateOptions } from './pipeline';
 
 export interface GenWorkerInput { modelDir: string; preferGpu: boolean }
 export type GenWorkerIn =
-  | { type: 'generate'; id: string; images: GenerateOptions[] }
+  | { type: 'generate'; id: string; images: GenerateOptions[]; init?: Uint8Array; strength?: number }
   | { type: 'tokens'; id: string; prompt: string }
   | { type: 'cancel' };
 export type GenWorkerOut =
@@ -40,7 +40,8 @@ parentPort!.on('message', (m: GenWorkerIn) => {
       if (m.type === 'tokens') { post({ type: 'tokens', id: m.id, count: g.tokens(m.prompt) }); return; }
       cancelled = false;
       for (let i = 0; i < m.images.length && !cancelled; i++) {
-        const r = await g.generate(m.images[i], (done, total) => post({ type: 'step', id: m.id, index: i, done, total }), () => cancelled);
+        const opts = m.init ? { ...m.images[i], init: Buffer.from(m.init.buffer, m.init.byteOffset, m.init.byteLength), strength: m.strength } : m.images[i];
+        const r = await g.generate(opts, (done, total) => post({ type: 'step', id: m.id, index: i, done, total }), () => cancelled);
         if (!r) break;
         const rgb = new Uint8Array(r.rgb.buffer, r.rgb.byteOffset, r.rgb.length);
         post({ type: 'image', id: m.id, index: i, rgb, width: r.width, height: r.height, nsfw: r.nsfw, ms: r.ms }, [rgb.buffer as ArrayBuffer]);

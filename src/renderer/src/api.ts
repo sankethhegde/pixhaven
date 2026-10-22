@@ -111,6 +111,7 @@ interface WatchApi {
 interface GenApi {
   status(): Promise<GenStatus>;
   download(): Promise<void>;
+  downloadEncoder(): Promise<void>;
   cancelDownload(): Promise<void>;
   remove(): Promise<void>;
   generate(req: GenRequest): Promise<string>;

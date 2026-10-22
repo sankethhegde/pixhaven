@@ -180,6 +180,9 @@ export interface GenerateOptions {
   negative?: string;     // what to steer away from (with cfg > 1): a second, unconditioned pass per step
   cfg?: number;          // strength of that steering (1 = off)
   keepBorders?: boolean; // tests: leave plain edge bands as they are
+  /** v2.8 image to image: start from this picture (RGB, already width × height) instead of pure noise. */
+  init?: Buffer;
+  strength?: number;     // how much of it is redrawn: 0.3 close … 0.8 loose
 }
 export interface Generated { rgb: Buffer; width: number; height: number; nsfw: boolean | null; ms: number; trimmed?: boolean }
 
@@ -188,7 +191,25 @@ export class ImageGenerator {
     private tok: ClipTokenizer, private sched: LcmScheduler,
     private text: ort.InferenceSession, private unet: ort.InferenceSession, private vae: ort.InferenceSession,
     private safety: ort.InferenceSession | null, readonly device: 'dml' | 'cpu',
+    private dir: string, private opts: (ep: string[]) => ort.InferenceSession.SessionOptions,
   ) {}
+
+  private encoder: Promise<ort.InferenceSession> | null = null;
+  /** The VAE encoder (image to image only), loaded the first time it is needed. It needs the graphics card. */
+  private encoderSession(): Promise<ort.InferenceSession> {
+    this.encoder ??= ort.InferenceSession.create(path.join(this.dir, 'vae_encoder', 'model.onnx'), this.opts(this.device === 'dml' ? ['dml', 'cpu'] : ['cpu']))
+      .catch(e => { this.encoder = null; throw e; });
+    return this.encoder;
+  }
+
+  /** A picture → the model's latent space (scaled as the UNet expects). */
+  private async toLatent(rgb: Buffer, W: number, H: number): Promise<Float32Array> {
+    const enc = await this.encoderSession();
+    const x = new Float32Array(3 * W * H);
+    for (let i = 0; i < W * H; i++) for (let c = 0; c < 3; c++) x[c * W * H + i] = rgb[i * 3 + c] / 127.5 - 1;
+    const r = await enc.run({ [enc.inputNames[0]]: tensor(enc, enc.inputNames[0], x, [1, 3, H, W]) });
+    return floats(r[enc.outputNames[0]]).map(v => v * 0.18215);
+  }
 
   static async load(dir: string, preferGpu = true): Promise<ImageGenerator> {
     const opts = (ep: string[]): ort.InferenceSession.SessionOptions => ({
@@ -207,7 +228,7 @@ export class ImageGenerator {
     catch (e) { if (device === 'cpu') throw e; device = 'cpu'; s = await tryLoad(['cpu']); }
     const safety = await ort.InferenceSession.create(path.join(dir, 'safety_checker', 'model.onnx'), opts(device === 'dml' && !onCpu.has('safety') ? ['dml', 'cpu'] : ['cpu'])).catch(() => null);
     const sched = new LcmScheduler(JSON.parse(fs.readFileSync(path.join(dir, 'scheduler', 'scheduler_config.json'), 'utf8')));
-    return new ImageGenerator(new ClipTokenizer(path.join(dir, 'tokenizer')), sched, s[0], s[1], s[2], safety, device);
+    return new ImageGenerator(new ClipTokenizer(path.join(dir, 'tokenizer')), sched, s[0], s[1], s[2], safety, device, dir, opts);
   }
 
   tokens(prompt: string): number { return this.tok.count(prompt); }
@@ -224,9 +245,22 @@ export class ImageGenerator {
     const hiddenNeg = cfg > 1 ? await encode(o.negative ?? '') : null;
     const noise = gaussian(o.seed);
     let lat: Float32Array = new Float32Array(n);
-    for (let i = 0; i < n; i++) lat[i] = noise();
+    let ts: number[];
+    if (o.init) {
+      // Image to image: a longer schedule, of which only the last part runs, starting from the picture noised to that
+      // point. Strength 0.5 with 4 steps: 8 steps planned, the last 4 run (from about half way).
+      const st = Math.min(1, Math.max(0.1, o.strength ?? 0.55));
+      const N = Math.max(o.steps, Math.round(o.steps / st));
+      const full = this.sched.timesteps(N);
+      ts = full.slice(full.length - Math.max(1, Math.min(full.length, Math.round(N * st))));
+      const x0 = await this.toLatent(o.init, W, H);
+      const a = this.sched.alphas[ts[0]], ra = Math.sqrt(a), r1a = Math.sqrt(1 - a);
+      for (let i = 0; i < n; i++) lat[i] = ra * x0[i] + r1a * noise();
+    } else {
+      for (let i = 0; i < n; i++) lat[i] = noise();
+      ts = this.sched.timesteps(o.steps);
+    }
     const w = guidanceEmbedding((o.guidance ?? 8) - 1);
-    const ts = this.sched.timesteps(o.steps);
     for (let k = 0; k < ts.length; k++) {
       if (cancelled?.()) return null;
       const feeds: Record<string, ort.Tensor> = {
@@ -277,7 +311,7 @@ export class ImageGenerator {
   }
 
   async release(): Promise<void> {
-    for (const s of [this.text, this.unet, this.vae, this.safety]) await s?.release().catch(() => {});
+    for (const s of [this.text, this.unet, this.vae, this.safety, this.encoder ? await this.encoder.catch(() => null) : null]) await s?.release().catch(() => {});
   }
 }
 

@@ -65,7 +65,7 @@ export async function remove(): Promise<void> { await worker?.terminate(); worke
 
 // ---------- describing ----------
 /** The picture as bytes the describer can read: as it is, or the library's JPEG preview (RAW, HEIC, video stills…). */
-async function pictureBytes(file: string): Promise<Buffer> {
+export async function pictureBytes(file: string): Promise<Buffer> {
   const pv = await library.preview(file);
   if (pv.converted) {
     const cached = library.cacheFile('preview', pv.url.replace('clearup://preview/', ''));

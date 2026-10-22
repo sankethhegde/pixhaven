@@ -34,6 +34,7 @@ export default function App() {
   const [photosVisited, setPhotosVisited] = useState(false);
   const [genVisited, setGenVisited] = useState(false);
   const [describeReq, setDescribeReq] = useState<{ path: string; n: number } | null>(null);
+  const [similarReq, setSimilarReq] = useState<{ path: string; n: number } | null>(null);
 
   useEffect(() => {
     api.getSettings().then(setSettings).catch(e => setFatal(errorText(e)));
@@ -60,6 +61,7 @@ export default function App() {
     w.__clearupSort = f => { setPendingSort(f); setPage('sort'); };
     (w as { __clearupPage?: (p: Page) => void }).__clearupPage = p => setPage(p);
     (w as { __clearupDescribe?: (p: string) => void }).__clearupDescribe = p => { setDescribeReq({ path: p, n: Date.now() }); setPage('generator'); };
+    (w as { __clearupSimilar?: (p: string) => void }).__clearupSimilar = p => { setSimilarReq({ path: p, n: Date.now() }); setPage('generator'); };
   }, []);
 
   if (fatal) return <div className="p-8"><Notice tone="danger">PixHaven could not start: {fatal}</Notice></div>;
@@ -83,6 +85,7 @@ export default function App() {
   if (page === 'generator' && !genVisited) setGenVisited(true);
   const sortFolder = (f: string) => { setPendingSort(f); setPage('sort'); };
   const describePicture = (p: string) => { setDescribeReq({ path: p, n: Date.now() }); setPage('generator'); };
+  const similarPicture = (p: string) => { setSimilarReq({ path: p, n: Date.now() }); setPage('generator'); };
   const cpuMode = settings.cpuOnly || (gpu !== null && !gpu.ok);
 
   return (
@@ -141,17 +144,17 @@ export default function App() {
             <div className={page === 'library' ? 'h-full' : 'hidden'}>
               <Library settings={settings} onSettings={setSettings} active={page === 'library'} initialDir={pendingLib} onConsumedInitial={() => setPendingLib(null)}
                 initialPlay={pendingPlay} onPlayed={() => setPendingPlay(null)}
-                onUpscale={upscaleFiles} onSort={sortFolder} onDescribe={describePicture} />
+                onUpscale={upscaleFiles} onSort={sortFolder} onDescribe={describePicture} onSimilar={similarPicture} />
             </div>
           )}
           {genVisited && (
             <div className={page === 'generator' ? 'h-full' : 'hidden'}>
-              <ImageGenerator settings={settings} onSettings={setSettings} active={page === 'generator'} onUpscale={upscaleFiles} describeRequest={describeReq} />
+              <ImageGenerator settings={settings} onSettings={setSettings} active={page === 'generator'} onUpscale={upscaleFiles} describeRequest={describeReq} similarRequest={similarReq} />
             </div>
           )}
           {photosVisited && (
             <div className={page === 'photos' ? 'h-full' : 'hidden'}>
-              <Photos active={page === 'photos'} onUpscale={upscaleFiles} onSort={sortFolder} onDescribe={describePicture} />
+              <Photos active={page === 'photos'} onUpscale={upscaleFiles} onSort={sortFolder} onDescribe={describePicture} onSimilar={similarPicture} />
             </div>
           )}
           {/* Kept mounted so running jobs and results survive visiting other pages. */}

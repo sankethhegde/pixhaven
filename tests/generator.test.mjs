@@ -84,3 +84,21 @@ test('borders: plain bands along the edges are found and trimmed, keeping the sh
   for (let i = 0; i < tex.length; i++) tex[i] = (i * 2654435761) % 251;
   assert.equal((await G.trimBorders(tex, W, H)).trimmed, false);
 });
+
+test('image to image: "Close" stays near the starting picture, "Loose" moves further', {
+  skip: !(HAS_MODEL && fs.existsSync(path.join(MODEL, 'vae_encoder', 'model.onnx'))) && 'needs the model folder with vae_encoder (PIXHAVEN_GEN_MODEL)', timeout: 300000,
+}, async () => {
+  const gen = await G.ImageGenerator.load(MODEL, true);
+  try {
+    const base = { prompt: 'a red apple on a wooden table, photo', steps: 4, width: 512, height: 512 };
+    const start = (await gen.generate({ ...base, seed: 5 })).rgb;
+    const other = (await gen.generate({ ...base, seed: 99 })).rgb;
+    const diff = (a, b) => { let d = 0; for (let i = 0; i < a.length; i += 3) d += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]); return d / (a.length); };
+    const close = (await gen.generate({ ...base, seed: 7, init: start, strength: 0.35 })).rgb;
+    const loose = (await gen.generate({ ...base, seed: 7, init: start, strength: 0.75 })).rgb;
+    const [dc, dl, dn] = [diff(close, start), diff(loose, start), diff(other, start)];
+    console.log(`  difference from the start: close ${dc.toFixed(1)}, loose ${dl.toFixed(1)}, unrelated ${dn.toFixed(1)}`);
+    assert.ok(dc < dl && dl < dn, `close ${dc} < loose ${dl} < unrelated ${dn}`);
+    assert.ok(dc < dn * 0.5, 'close is much nearer than an unrelated picture');
+  } finally { await gen.release(); }
+});

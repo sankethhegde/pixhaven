@@ -129,6 +129,37 @@ export default async function run(win, app) {
         await typeInto('#gen-prompt', prompt);
         await typeInto('[aria-label=Seed]', '42');   // describing clears the seed (a new picture)
         await sleep(300);
+
+        // v2.8 "Make similar": start from the first picture at "Close"; the new one is much nearer to it than the
+        // other text-to-image picture is.
+        if (fs.existsSync(path.join(MODEL, 'vae_encoder', 'model.onnx'))) {
+          const src = path.join(PICS, pngs[0]);
+          await js(`window.__clearupSimilar(${JSON.stringify(src)})`);
+          await waitFor(async () => !!(await js(`!!document.querySelector('[data-testid=start-from]')`)) && !!(await js(`!!document.querySelector('[data-testid=described]')`)), 120000);
+          check('Make similar: starting picture shown, its description in the prompt box, shape follows it',
+            (await text()).includes('Follows the starting picture') && (await js(`document.querySelector('#gen-prompt').value`)).length > 10);
+          await radio('How different', 'Close');
+          await radio('Images', '1');
+          await sleep(300);
+          await shot('02c-similar-ready');
+          const before = new Set(fs.readdirSync(PICS));
+          t = Date.now();
+          await click('Make 1 similar image');
+          await waitFor(async () => fs.readdirSync(PICS).some(f => !before.has(f)) && !(await js(`!!document.querySelector('[data-testid=gen-progress]')`)), 180000);
+          const made = fs.readdirSync(PICS).find(f => !before.has(f));
+          const small = async f => (await sharp(path.join(PICS, f)).resize(64, 64).removeAlpha().raw().toBuffer());
+          const [a, b, c] = await Promise.all([small(made), small(pngs[0]), small(pngs[1])]);
+          const diff = (x, y) => x.reduce((s, v, i) => s + Math.abs(v - y[i]), 0) / x.length;
+          const xmp2 = (await sharp(path.join(PICS, made)).metadata()).xmp?.toString() ?? '';
+          check('Make similar (Close): near the starting picture, and says where it came from', diff(a, b) < diff(c, b) * 0.6 && xmp2.includes(`from ${pngs[0]}`),
+            `${((Date.now() - t) / 1000).toFixed(1)} s; difference ${diff(a, b).toFixed(1)} vs other picture ${diff(c, b).toFixed(1)}`);
+          await shot('02d-similar-done');
+          await js(`document.querySelector('[aria-label="Don\\'t start from a picture"]').click()`);
+          await radio('Images', '2');
+          await typeInto('#gen-prompt', prompt);
+          await typeInto('[aria-label=Seed]', '42');
+          await sleep(300);
+        }
       }
 
       // Same seed → same picture; Portrait → 512×768; one image is quick once loaded.

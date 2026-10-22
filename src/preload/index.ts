@@ -64,6 +64,7 @@ const api = {
   gen: {
     status: () => invoke('gen:status'),
     download: () => invoke('gen:download'),
+    downloadEncoder: () => invoke('gen:downloadEncoder'),
     cancelDownload: () => invoke('gen:cancelDownload'),
     remove: () => invoke('gen:remove'),
     generate: (req: unknown) => invoke('gen:generate', req),

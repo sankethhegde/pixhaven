@@ -429,6 +429,7 @@ handle('describe:pick', async () => {
 handle('gen:status', () => generator.status());
 handle('gen:openLicence', () => shell.openExternal(generator.status().licence));   // only this one page
 handle('gen:download', () => { void generator.download(s => send('gen:status', s)); });
+handle('gen:downloadEncoder', () => { void generator.downloadEncoderPart(s => send('gen:status', s)); });
 handle('gen:cancelDownload', () => generator.cancelDownload());
 handle('gen:remove', () => generator.remove());
 handle('gen:generate', (req: GenRequest) => generator.generate(req, p => send('gen:progress', p)));

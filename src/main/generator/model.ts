@@ -34,6 +34,16 @@ export function downloadGenerator(onProgress: (got: number, total: number) => vo
   return downloadModel({ name: 'Image Generator', repo: REPO, revision: REVISION, files: files() }, generatorDir(), onProgress, signal);
 }
 
+// v2.8 image to image: the VAE encoder, an optional extra from the same revision (downloaded when first needed).
+const ENCODER: ModelFile[] = [
+  { path: 'vae_encoder/model.onnx', size: 68391734, sha256: '9855ebc42edfac6e07df762ec53cc446d2ae847b80d1aacaf38c1a33de961f3b' },
+];
+export const ENCODER_BYTES = modelBytes(ENCODER);
+export const encoderInstalled = () => ENCODER.every(f => { try { return fs.statSync(path.join(generatorDir(), f.path)).size === f.size; } catch { return false; } });
+export function downloadEncoder(onProgress: (got: number, total: number) => void, signal: AbortSignal): Promise<void> {
+  return downloadModel({ name: 'Image to image', repo: REPO, revision: REVISION, files: ENCODER }, generatorDir(), onProgress, signal);
+}
+
 /** Settings → free the space again. */
 export function removeGenerator(): void {
   if (process.env.PIXHAVEN_GEN_MODEL && !process.env.PIXHAVEN_GEN_DL_TEST) return;

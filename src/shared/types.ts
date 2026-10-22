@@ -41,13 +41,19 @@ export interface GeneratorSettings {
   quality: 'fast' | 'better'; // 4 or 8 steps
   format: OutputFormat;       // v2.6: JPG (quality 92) by default; PNG or WEBP
 }
-export interface GenRequest { prompt: string; style: GenStyle; size: GenSize; count: number; quality: 'fast' | 'better'; seed: number | null; format?: OutputFormat }
+export interface GenRequest {
+  prompt: string; style: GenStyle; size: GenSize; count: number; quality: 'fast' | 'better'; seed: number | null; format?: OutputFormat;
+  init?: string;        // v2.8: start from this picture (image to image); the shape follows it
+  strength?: number;    // how much is redrawn: 0.35 close, 0.55 similar, 0.75 loose
+}
 export interface GenImage {
   id: string; path: string | null; url: string; prompt: string; style: GenStyle; seed: number;
-  width: number; height: number; steps: number; created: number; hidden?: boolean;   // hidden: stopped by the safety filter (not saved)
+  width: number; height: number; steps: number; created: number; hidden?: boolean;
+  from?: string; strength?: number;   // v2.8: made from this picture (its file name), and how freely   // hidden: stopped by the safety filter (not saved)
 }
 export interface GenStatus {
   installed: boolean; bytes: number; device: 'dml' | 'cpu' | null; loaded: boolean; outputDir: string;
+  encoder: { installed: boolean; bytes: number; download: { state: 'idle' | 'downloading' | 'error'; got: number; total: number; error?: string } };
   download: { state: 'idle' | 'downloading' | 'error'; got: number; total: number; error?: string };
   modelName: string; source: string; licence: string;
 }
