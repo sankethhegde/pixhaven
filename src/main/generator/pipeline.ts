@@ -252,7 +252,9 @@ export class ImageGenerator {
     for (let c = 0; c < 3; c++) for (let i = 0; i < W * H; i++) raw[i * 3 + c] = Math.round(Math.min(1, Math.max(0, img[c * W * H + i] / 2 + 0.5)) * 255);
     const { rgb, trimmed } = o.keepBorders ? { rgb: raw, trimmed: false } : await trimBorders(raw, W, H);
     onStep?.(ts.length + 1, ts.length + 1);
-    return { rgb, width: W, height: H, nsfw: await this.check(rgb, W, H), ms: Date.now() - t0, trimmed };
+    // Tests only: PIXHAVEN_GEN_FAKE_BLOCK lists seeds the safety filter should stop (it can only block more, never less).
+    const fake = (process.env.PIXHAVEN_GEN_FAKE_BLOCK ?? '').split(',').includes(String(o.seed));
+    return { rgb, width: W, height: H, nsfw: fake || await this.check(rgb, W, H), ms: Date.now() - t0, trimmed };
   }
 
   /** The model's safety checker: true = explicit content (the image is not shown or saved). null = could not run. */

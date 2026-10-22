@@ -148,7 +148,9 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   Licence CreativeML OpenRAIL-M: its use rules are shown before the download and linked. Pipeline
   (`src/main/generator/pipeline.ts`): CLIP BPE tokenizer (75 tokens), LCM scheduler (4 steps 999/759/519/279, or 8),
   guidance-scale embedding w = 7, VAE decode, then the model's safety checker on a proper 224-px resize (a
-  nearest-pixel resize gave false alarms); flagged images are not saved and show only as a blurred tile. Runs in a
+  nearest-pixel resize gave false alarms); a flagged picture is made again with the next unused seed, up to 2 more
+  times (0.9.1), and only then shows as a blurred tile (never saved). `PIXHAVEN_GEN_FAKE_BLOCK` (tests) marks seeds as
+  blocked. Runs in a
   worker thread through the job queue; the worker (~5 GB) ends after 5 idle minutes. About 5–6 s per 512×512 image on
   Intel Arc integrated graphics; the very first image after installing takes about a minute (DirectML prepares
   shaders, then caches them). 0.8.1: each style goes first in the prompt with its own words, plus a built-in avoid

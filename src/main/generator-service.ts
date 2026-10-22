@@ -30,7 +30,8 @@ export const STYLES: Record<GenStyle, { pre: string; post: string; avoid: string
   '3d': { pre: '3d render of ', post: ', octane render, soft studio lighting, subsurface scattering, highly detailed', avoid: 'photo, painting, drawing, anime, flat' },
 };
 export const AVOID = 'deformed, bad anatomy, extra limbs, fused legs, malformed hands, blurry, lowres, border, frame, white border, poster, cropped, text, signature, watermark, logo';
-const STEER = 1.5;   // strength of the avoid list (2.0 left more stray text in tests)
+const STEER = 1.5;
+const SAFETY_RETRIES = 2;   // a picture stopped by the safety filter is tried again with new seeds this many times   // strength of the avoid list (2.0 left more stray text in tests)
 export const SIZES: Record<GenSize, [number, number]> = { square: [512, 512], portrait: [512, 768], landscape: [768, 512] };
 const IDLE_MS = 5 * 60_000;
 
@@ -172,7 +173,13 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
   let batch = Array.from({ length: count }, (_, i) => i);
   const made = new Set<number>();
   let retried = false;
-  const images = (idx: number[]) => idx.map(i => ({ prompt: full, negative, cfg: STEER, seed: seed0 + i, steps, width, height }));
+  // v2.7.1: a picture stopped by the safety filter is made again with a fresh seed (up to SAFETY_RETRIES times).
+  const seedOf = new Map<number, number>();
+  const tries = new Map<number, number>();
+  let nextSeed = seed0 + count;
+  let redo: number[] = [];
+  const seedFor = (i: number) => seedOf.get(i) ?? seed0 + i;
+  const images = (idx: number[]) => idx.map(i => ({ prompt: full, negative, cfg: STEER, seed: seedFor(i), steps, width, height }));
   // The queue may start this at once (before queue.add returns): wait a tick so the job id is known.
   const job = queue.add('generate', `Image Generator: ${count} image${count === 1 ? '' : 's'}`, async () => { await new Promise(r => setImmediate(r)); return run(); }, () => { cancel = true; if (worker) send({ type: 'cancel' }); });
   const run = () => new Promise<void>((resolve) => {
@@ -186,8 +193,16 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
       if (m.type === 'step') onProgress({ jobId: job.id, index: batch[m.index], count, step: m.done, steps: m.total, phase: 'working' });
       else if (m.type === 'image') {
         const index = batch[m.index];
+        if (m.nsfw && (tries.get(index) ?? 0) < SAFETY_RETRIES && !cancel) {
+          // Not shown, not saved: tried again (after this round) with the next unused seed.
+          tries.set(index, (tries.get(index) ?? 0) + 1);
+          seedOf.set(index, nextSeed++);
+          redo.push(index);
+          log('info', `Image Generator: picture ${index + 1} stopped by the safety filter; trying seed ${seedFor(index)}`);
+          return;
+        }
         made.add(index);
-        const seed = seed0 + index;
+        const seed = seedFor(index);
         const base = { prompt, style: req.style, seed, width: m.width, height: m.height, steps, created: Date.now() };
         let image: GenImage;
         if (m.nsfw) {
@@ -208,9 +223,14 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
         retried = true;
         log('warn', `Image Generator: graphics device lost (${m.message.slice(0, 120)}); restarting and retrying ${count - made.size} image(s)`);
         await worker?.terminate(); worker = null; device = null;
-        batch = Array.from({ length: count }, (_, i) => i).filter(i => !made.has(i));
+        batch = Array.from({ length: count }, (_, i) => i).filter(i => !made.has(i)); redo = [];
         id = crypto.randomUUID();
         onProgress({ jobId: job.id, index: batch[0], count, step: 0, steps: steps + 1, phase: 'loading' });
+        send({ type: 'generate', id, images: images(batch) });
+      } else if (m.type === 'done' && !m.cancelled && !cancel && redo.length) {
+        // Another round for the pictures the safety filter stopped.
+        batch = redo; redo = [];
+        id = crypto.randomUUID();
         send({ type: 'generate', id, images: images(batch) });
       } else if (m.type === 'done' || m.type === 'error') {
         listeners.delete(l);

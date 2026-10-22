@@ -52,7 +52,25 @@ export default async function run(win, app) {
     await js(`window.clearup.setSettings(${JSON.stringify({ generator: { ...s.generator, outputDir: PICS, count: 2, quality: 'fast', style: 'photo', size: 'square', format: 'png' } })})`);
     await js(`window.__clearupPage('generator')`);
 
-    if (DL_TEST) {
+    if (process.env.PIXHAVEN_GEN_FAKE_BLOCK) {
+      // ---- v2.7.1: a picture the safety filter stops is made again with new seeds (seeds 42, 43 "blocked"; 100–102 all) ----
+      await waitFor('Describe the picture', 15000);
+      await typeInto('#gen-prompt', 'a red apple on a wooden table');
+      await radio('Images', '1');
+      await typeInto('[aria-label=Seed]', '42');
+      await sleep(300);
+      await click('Generate 1 image');
+      await waitFor(async () => !(await js(`!!document.querySelector('[data-testid=gen-progress]')`)) && (await shown()).length >= 1, 180000);
+      const files = fs.existsSync(PICS) ? fs.readdirSync(PICS) : [];
+      check('blocked picture retried: saved with the next free seed, nothing blurred', files.length === 1 && files[0].includes('(seed 44)') && !(await shown()).includes('hidden'),
+        files.join(', '));
+      await typeInto('[aria-label=Seed]', '100');
+      await sleep(300);
+      await click('Generate 1 image');
+      await waitFor(async () => !(await js(`!!document.querySelector('[data-testid=gen-progress]')`)) && (await shown()).includes('hidden'), 180000);
+      check('after 3 blocked tries: a blurred tile, nothing saved', fs.readdirSync(PICS).length === 1, fs.readdirSync(PICS).join(', '));
+      await shot('06-blocked');
+    } else if (DL_TEST) {
       // ---- download: a partial file is resumed (HTTP range through the redirect), every file checked ----
       fs.rmSync(MODEL, { recursive: true, force: true });
       fs.mkdirSync(path.join(MODEL, 'tokenizer'), { recursive: true });
