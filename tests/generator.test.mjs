@@ -63,3 +63,24 @@ test('generates a 512×512 image (same seed, same picture)', { skip: !HAS_MODEL 
     console.log(`  ${gen.device}: ${a.ms} ms, then ${b.ms} ms`);
   } finally { await gen.release(); }
 });
+
+test('borders: plain bands along the edges are found and trimmed, keeping the shape; real pictures are left alone', async () => {
+  const W = 512, H = 768;
+  // A "poster": white bands 30 px top and bottom around a textured picture.
+  const rgb = Buffer.alloc(W * H * 3);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 3, band = y < 30 || y >= H - 30;
+    const v = band ? 240 : (x * 7 + y * 13 + ((x * y) % 97)) % 256;
+    rgb[i] = v; rgb[i + 1] = band ? 238 : (v * 3) % 256; rgb[i + 2] = band ? 236 : (v * 5) % 256;
+  }
+  const b = G.findBorders(rgb, W, H);
+  assert.ok(b.top >= 28 && b.top <= 32 && b.bottom >= 28 && b.bottom <= 32 && !b.left && !b.right, JSON.stringify(b));
+  const t = await G.trimBorders(rgb, W, H);
+  assert.ok(t.trimmed);
+  assert.equal(t.rgb.length, W * H * 3, 'same size after trimming');
+  assert.deepEqual(G.findBorders(t.rgb, W, H), { top: 0, bottom: 0, left: 0, right: 0 }, 'no band left');
+  // A picture with a plain sky (but texture below it within the band limit) is not cut; neither is a fully textured one.
+  const tex = Buffer.alloc(W * H * 3);
+  for (let i = 0; i < tex.length; i++) tex[i] = (i * 2654435761) % 251;
+  assert.equal((await G.trimBorders(tex, W, H)).trimmed, false);
+});

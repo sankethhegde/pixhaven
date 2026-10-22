@@ -151,8 +151,12 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   nearest-pixel resize gave false alarms); flagged images are not saved and show only as a blurred tile. Runs in a
   worker thread through the job queue; the worker (~5 GB) ends after 5 idle minutes. About 5–6 s per 512×512 image on
   Intel Arc integrated graphics; the very first image after installing takes about a minute (DirectML prepares
-  shaders, then caches them). No negative prompt: LCM's guidance is built into the model. Styles add words to the
-  prompt; shapes 512×512 / 512×768 / 768×512; seed (same description + style + seed = same picture). Images are saved
+  shaders, then caches them). 0.8.1: each style goes first in the prompt with its own words, plus a built-in avoid
+  list (bad anatomy, borders, frames, text, signatures, watermarks) applied as a second guidance pass at 1.5 (doubles
+  the UNet work; Fast is 4 steps with it, about as long as 8 steps without); plain bands along the edges (poster
+  margins in portrait/landscape) are found and trimmed, keeping the shape. Text encoder and safety checker run on the
+  CPU so the UNet has room in shared GPU memory (with all on the GPU the second 768-px picture made Windows suspend the
+  device); a lost device restarts the worker and retries the missing pictures once. Styles: shapes 512×512 / 512×768 / 768×512; seed (same description + style + seed = same picture). Images are saved
   as JPG (quality 92, default), PNG or WEBP in `Pictures\PixHaven` (changeable) with the prompt and settings inside (XMP description, all three formats); history in
   `generator-history.json`. Node 24 note: onnxruntime-node wraps fp16 data in a Float16Array its native side can't read,
   so the Uint16Array view is put back (`cpuData`). `PIXHAVEN_GEN_MODEL` points tests at a model folder;

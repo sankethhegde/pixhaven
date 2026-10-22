@@ -174,8 +174,14 @@ export function guidanceEmbedding(w: number, dim = 256): Float32Array {
 }
 
 // ---------- the generator ----------
-export interface GenerateOptions { prompt: string; seed: number; steps: number; width: number; height: number; guidance?: number }
-export interface Generated { rgb: Buffer; width: number; height: number; nsfw: boolean | null; ms: number }
+export interface GenerateOptions {
+  prompt: string; seed: number; steps: number; width: number; height: number;
+  guidance?: number;     // LCM's built-in guidance (default 8)
+  negative?: string;     // what to steer away from (with cfg > 1): a second, unconditioned pass per step
+  cfg?: number;          // strength of that steering (1 = off)
+  keepBorders?: boolean; // tests: leave plain edge bands as they are
+}
+export interface Generated { rgb: Buffer; width: number; height: number; nsfw: boolean | null; ms: number; trimmed?: boolean }
 
 export class ImageGenerator {
   private constructor(
@@ -189,12 +195,17 @@ export class ImageGenerator {
       executionProviders: ep, logSeverityLevel: 3, graphOptimizationLevel: 'all', enableMemPattern: false,
       extra: { session: { intra_op: { allow_spinning: '0' } } },
     } as ort.InferenceSession.SessionOptions);
-    const tryLoad = async (ep: string[]) => Promise.all(['text_encoder', 'unet', 'vae_decoder'].map(m => ort.InferenceSession.create(path.join(dir, m, 'model.onnx'), opts(ep))));
+    // The text encoder and the safety checker run on the processor: on integrated graphics (memory shared with the
+    // system, ~4 GB) the UNet's attention at 768 px needs the room — with everything on the GPU the second large picture
+    // made Windows suspend the device. They are small and quick on the CPU. PIXHAVEN_GEN_PLACE overrides (tests).
+    const onCpu = new Set((process.env.PIXHAVEN_GEN_PLACE ?? 'text,safety').split(',').filter(Boolean));
+    const tryLoad = async (ep: string[]) => Promise.all(['text_encoder', 'unet', 'vae_decoder'].map(m =>
+      ort.InferenceSession.create(path.join(dir, m, 'model.onnx'), opts(onCpu.has(m.split('_')[0]) ? ['cpu'] : ep))));
     let device: 'dml' | 'cpu' = preferGpu && process.platform === 'win32' ? 'dml' : 'cpu';
     let s: ort.InferenceSession[];
     try { s = await tryLoad(device === 'dml' ? ['dml', 'cpu'] : ['cpu']); }
     catch (e) { if (device === 'cpu') throw e; device = 'cpu'; s = await tryLoad(['cpu']); }
-    const safety = await ort.InferenceSession.create(path.join(dir, 'safety_checker', 'model.onnx'), opts(device === 'dml' ? ['dml', 'cpu'] : ['cpu'])).catch(() => null);
+    const safety = await ort.InferenceSession.create(path.join(dir, 'safety_checker', 'model.onnx'), opts(device === 'dml' && !onCpu.has('safety') ? ['dml', 'cpu'] : ['cpu'])).catch(() => null);
     const sched = new LcmScheduler(JSON.parse(fs.readFileSync(path.join(dir, 'scheduler', 'scheduler_config.json'), 'utf8')));
     return new ImageGenerator(new ClipTokenizer(path.join(dir, 'tokenizer')), sched, s[0], s[1], s[2], safety, device);
   }
@@ -204,9 +215,13 @@ export class ImageGenerator {
   async generate(o: GenerateOptions, onStep?: (done: number, total: number) => void, cancelled?: () => boolean): Promise<Generated | null> {
     const t0 = Date.now();
     const W = o.width, H = o.height, lw = W / 8, lh = H / 8, n = 4 * lw * lh;
-    const ids = this.tok.encode(o.prompt);
-    const te = await this.text.run({ [this.text.inputNames[0]]: tensor(this.text, this.text.inputNames[0], ids, [1, CONTEXT]) });
-    const hidden = floats(te[this.text.outputNames[0]]);
+    const encode = async (text: string) => {
+      const te = await this.text.run({ [this.text.inputNames[0]]: tensor(this.text, this.text.inputNames[0], this.tok.encode(text), [1, CONTEXT]) });
+      return floats(te[this.text.outputNames[0]]);
+    };
+    const hidden = await encode(o.prompt);
+    const cfg = o.cfg ?? 1;
+    const hiddenNeg = cfg > 1 ? await encode(o.negative ?? '') : null;
     const noise = gaussian(o.seed);
     let lat: Float32Array = new Float32Array(n);
     for (let i = 0; i < n; i++) lat[i] = noise();
@@ -221,16 +236,23 @@ export class ImageGenerator {
       };
       if (this.unet.inputNames.includes('timestep_cond')) feeds.timestep_cond = tensor(this.unet, 'timestep_cond', w, [1, 256]);
       const out = await this.unet.run(feeds);
-      lat = this.sched.step(lat, floats(out[this.unet.outputNames[0]]), ts[k], k + 1 < ts.length ? ts[k + 1] : null, noise);
+      let eps = floats(out[this.unet.outputNames[0]]);
+      if (hiddenNeg) {
+        // Steer away from the negative description: eps = neg + cfg × (prompt − neg).
+        const neg = floats((await this.unet.run({ ...feeds, encoder_hidden_states: tensor(this.unet, 'encoder_hidden_states', hiddenNeg, [1, CONTEXT, 768]) }))[this.unet.outputNames[0]]);
+        for (let i = 0; i < eps.length; i++) eps[i] = neg[i] + cfg * (eps[i] - neg[i]);
+      }
+      lat = this.sched.step(lat, eps, ts[k], k + 1 < ts.length ? ts[k + 1] : null, noise);
       onStep?.(k + 1, ts.length + 1);
     }
     if (cancelled?.()) return null;
     const vo = await this.vae.run({ [this.vae.inputNames[0]]: tensor(this.vae, this.vae.inputNames[0], lat.map(v => v / 0.18215), [1, 4, lh, lw]) });
     const img = floats(vo[this.vae.outputNames[0]]);
-    const rgb = Buffer.alloc(W * H * 3);
-    for (let c = 0; c < 3; c++) for (let i = 0; i < W * H; i++) rgb[i * 3 + c] = Math.round(Math.min(1, Math.max(0, img[c * W * H + i] / 2 + 0.5)) * 255);
+    const raw = Buffer.alloc(W * H * 3);
+    for (let c = 0; c < 3; c++) for (let i = 0; i < W * H; i++) raw[i * 3 + c] = Math.round(Math.min(1, Math.max(0, img[c * W * H + i] / 2 + 0.5)) * 255);
+    const { rgb, trimmed } = o.keepBorders ? { rgb: raw, trimmed: false } : await trimBorders(raw, W, H);
     onStep?.(ts.length + 1, ts.length + 1);
-    return { rgb, width: W, height: H, nsfw: await this.check(rgb, W, H), ms: Date.now() - t0 };
+    return { rgb, width: W, height: H, nsfw: await this.check(rgb, W, H), ms: Date.now() - t0, trimmed };
   }
 
   /** The model's safety checker: true = explicit content (the image is not shown or saved). null = could not run. */
@@ -255,4 +277,45 @@ export class ImageGenerator {
   async release(): Promise<void> {
     for (const s of [this.text, this.unet, this.vae, this.safety]) await s?.release().catch(() => {});
   }
+}
+
+// ---------- borders ----------
+/**
+ * Plain bands along the edges (the model sometimes draws a poster's white margin or a dark frame, mostly in
+ * portrait / landscape shapes): how many rows / columns from each edge are a flat, even colour.
+ */
+export function findBorders(rgb: Uint8Array, W: number, H: number): { top: number; bottom: number; left: number; right: number } {
+  const lum = (x: number, y: number) => { const i = (y * W + x) * 3; return 0.299 * rgb[i] + 0.587 * rgb[i + 1] + 0.114 * rgb[i + 2]; };
+  const flat = (vals: number[], ref: number | null) => {
+    const m = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const sd = Math.sqrt(vals.reduce((a, b) => a + (b - m) ** 2, 0) / vals.length);
+    return { ok: sd < 7 && (ref === null || Math.abs(m - ref) < 12), m };
+  };
+  const band = (count: number, line: (k: number) => number[], limit: number) => {
+    let ref: number | null = null, n = 0;
+    for (let k = 0; k < limit; k++) { const f = flat(line(k), ref); if (!f.ok) break; ref ??= f.m; n++; }
+    return n >= 4 ? n : 0;   // a few rows of sky are not a border
+  };
+  const row = (y: number) => Array.from({ length: Math.ceil(W / 2) }, (_, i) => lum(i * 2, y));
+  const col = (x: number) => Array.from({ length: Math.ceil(H / 2) }, (_, i) => lum(x, i * 2));
+  const lh = Math.floor(H * 0.18), lw = Math.floor(W * 0.18);
+  return {
+    top: band(H, k => row(k), lh), bottom: band(H, k => row(H - 1 - k), lh),
+    left: band(W, k => col(k), lw), right: band(W, k => col(W - 1 - k), lw),
+  };
+}
+
+/** Borders cut off and the picture scaled back to its size (the crop keeps the shape, centred on what is left). */
+export async function trimBorders(rgb: Buffer, W: number, H: number): Promise<{ rgb: Buffer; trimmed: boolean }> {
+  const b = findBorders(rgb, W, H);
+  if (!b.top && !b.bottom && !b.left && !b.right) return { rgb, trimmed: false };
+  const pad = 2;   // the soft edge between band and picture
+  let x0 = b.left ? b.left + pad : 0, x1 = W - (b.right ? b.right + pad : 0), y0 = b.top ? b.top + pad : 0, y1 = H - (b.bottom ? b.bottom + pad : 0);
+  // Same shape as before: crop the other side too, around the centre of what is left.
+  const want = W / H;
+  if ((x1 - x0) / (y1 - y0) > want) { const w = Math.round((y1 - y0) * want), cx = (x0 + x1) / 2; x0 = Math.round(cx - w / 2); x1 = x0 + w; }
+  else { const h = Math.round((x1 - x0) / want), cy = (y0 + y1) / 2; y0 = Math.round(cy - h / 2); y1 = y0 + h; }
+  const out = await sharp(rgb, { raw: { width: W, height: H, channels: 3 } })
+    .extract({ left: x0, top: y0, width: x1 - x0, height: y1 - y0 }).resize(W, H, { kernel: 'lanczos3' }).raw().toBuffer();
+  return { rgb: out, trimmed: true };
 }

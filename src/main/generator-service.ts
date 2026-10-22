@@ -16,14 +16,21 @@ import { queue } from './queue';
 import { fileUrl } from './upscale-job';
 import { log } from './logger';
 
-export const STYLE_WORDS: Record<GenStyle, string> = {
-  none: '',
-  photo: ', photograph, natural light, sharp focus, highly detailed',
-  illustration: ', digital illustration, clean lines, vibrant colors',
-  anime: ', anime style, cel shading, vibrant colors',
-  painting: ', oil painting, visible brush strokes, rich colors',
-  '3d': ', 3d render, soft studio lighting, highly detailed',
+/**
+ * v2.6.1: the style goes first (the model weighs the start of a description most) and each style also says what it is
+ * not; the avoid list below goes with every picture (bad anatomy, borders, text and signatures). Tested on the user's
+ * own pictures: styles now show clearly, bodies and hands come out better, fewer fake signatures.
+ */
+export const STYLES: Record<GenStyle, { pre: string; post: string; avoid: string }> = {
+  none: { pre: '', post: ', best quality, highly detailed', avoid: '' },
+  photo: { pre: 'RAW photo, professional photograph of ', post: ', natural skin texture, sharp focus, 50mm lens, soft natural light, highly detailed', avoid: 'painting, drawing, illustration, cartoon, anime, 3d render, cgi' },
+  illustration: { pre: 'digital illustration of ', post: ', clean lines, flat shading, vibrant colors, artstation', avoid: 'photo, realistic, 3d render' },
+  anime: { pre: 'anime artwork, key visual of ', post: ', anime style, cel shading, clean line art, vibrant colors', avoid: 'photo, realistic, 3d render' },
+  painting: { pre: 'oil painting of ', post: ', visible brush strokes, canvas texture, rich colors, fine art', avoid: 'photo, realistic, 3d render, anime' },
+  '3d': { pre: '3d render of ', post: ', octane render, soft studio lighting, subsurface scattering, highly detailed', avoid: 'photo, painting, drawing, anime, flat' },
 };
+export const AVOID = 'deformed, bad anatomy, extra limbs, fused legs, malformed hands, blurry, lowres, border, frame, white border, poster, cropped, text, signature, watermark, logo';
+const STEER = 1.5;   // strength of the avoid list (2.0 left more stray text in tests)
 export const SIZES: Record<GenSize, [number, number]> = { square: [512, 512], portrait: [512, 768], landscape: [768, 512] };
 const IDLE_MS = 5 * 60_000;
 
@@ -55,7 +62,11 @@ function keepAlive(): void {
 }
 const send = (m: GenWorkerIn) => startWorker().postMessage(m);
 
+/** The graphics card went away under the generator (DXGI device removed / suspended). */
+const deviceLost = (msg: string) => /887A0005|887A0006|887A0007|887A0020|device instance has been suspended|DEVICE_REMOVED|device removed/i.test(msg);
+
 function friendly(msg: string): string {
+  if (deviceLost(msg)) return 'The graphics card stopped responding (this can happen on battery power or after sleep). Plug the laptop in and try again; PixHaven restarts the generator by itself.';
   if (/DmlExecutionProvider|D3D12|DXGI|dml/i.test(msg)) return 'The graphics card could not run the Image Generator. Update the graphics driver, or turn off "Use the processor only" in Settings.';
   if (/memory|bad_alloc|ENOMEM/i.test(msg)) return 'Not enough memory to make the image. Close other programs, or choose a smaller size.';
   return msg;
@@ -151,10 +162,17 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
   const steps = req.quality === 'better' ? 8 : 4;
   const count = Math.min(4, Math.max(1, Math.round(req.count)));
   const seed0 = req.seed ?? Math.floor(Math.random() * 2 ** 31);
-  const full = prompt + STYLE_WORDS[req.style];
+  const st = STYLES[req.style];
+  const full = st.pre + prompt + st.post;
+  const negative = [st.avoid, AVOID].filter(Boolean).join(', ');
   const format = req.format ?? 'jpg';
-  const id = crypto.randomUUID();
+  let id = crypto.randomUUID();
   let cancel = false;
+  // Which of the request's images the worker is making now (all of them; after a recovery, the ones still missing).
+  let batch = Array.from({ length: count }, (_, i) => i);
+  const made = new Set<number>();
+  let retried = false;
+  const images = (idx: number[]) => idx.map(i => ({ prompt: full, negative, cfg: STEER, seed: seed0 + i, steps, width, height }));
   // The queue may start this at once (before queue.add returns): wait a tick so the job id is known.
   const job = queue.add('generate', `Image Generator: ${count} image${count === 1 ? '' : 's'}`, async () => { await new Promise(r => setImmediate(r)); return run(); }, () => { cancel = true; if (worker) send({ type: 'cancel' }); });
   const run = () => new Promise<void>((resolve) => {
@@ -165,9 +183,11 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
     const handle = async (m: GenWorkerOut) => {
       if (m.type === 'ready') onProgress({ jobId: job.id, index: 0, count, step: 0, steps: steps + 1, phase: 'working' });
       if (!('id' in m) || m.id !== id) { if (m.type === 'error' && !('id' in m && m.id)) { listeners.delete(l); onProgress({ jobId: job.id, index: 0, count, step: 0, steps: steps + 1, phase: 'error', error: m.message }); keepAlive(); resolve(); } return; }
-      if (m.type === 'step') onProgress({ jobId: job.id, index: m.index, count, step: m.done, steps: m.total, phase: 'working' });
+      if (m.type === 'step') onProgress({ jobId: job.id, index: batch[m.index], count, step: m.done, steps: m.total, phase: 'working' });
       else if (m.type === 'image') {
-        const seed = seed0 + m.index;
+        const index = batch[m.index];
+        made.add(index);
+        const seed = seed0 + index;
         const base = { prompt, style: req.style, seed, width: m.width, height: m.height, steps, created: Date.now() };
         let image: GenImage;
         if (m.nsfw) {
@@ -181,9 +201,20 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
           image = { ...base, id: crypto.randomUUID(), path: file, url: fileUrl(file) };
           writeHistory([image, ...readHistory()]);
         }
-        onProgress({ jobId: job.id, index: m.index, count, step: steps + 1, steps: steps + 1, phase: 'working', image });
+        onProgress({ jobId: job.id, index, count, step: steps + 1, steps: steps + 1, phase: 'working', image });
+      } else if (m.type === 'error' && deviceLost(m.message) && !retried && !cancel && made.size < count) {
+        // Windows suspended the graphics card (driver reset, power saving): start the generator again, once, and
+        // make the pictures still missing.
+        retried = true;
+        log('warn', `Image Generator: graphics device lost (${m.message.slice(0, 120)}); restarting and retrying ${count - made.size} image(s)`);
+        await worker?.terminate(); worker = null; device = null;
+        batch = Array.from({ length: count }, (_, i) => i).filter(i => !made.has(i));
+        id = crypto.randomUUID();
+        onProgress({ jobId: job.id, index: batch[0], count, step: 0, steps: steps + 1, phase: 'loading' });
+        send({ type: 'generate', id, images: images(batch) });
       } else if (m.type === 'done' || m.type === 'error') {
         listeners.delete(l);
+        if (m.type === 'error' && deviceLost(m.message)) { await worker?.terminate(); worker = null; device = null; }   // next request starts fresh
         onProgress({ jobId: job.id, index: count - 1, count, step: steps + 1, steps: steps + 1,
           phase: m.type === 'error' ? 'error' : m.cancelled ? 'cancelled' : 'done', error: m.type === 'error' ? friendly(m.message) : undefined });
         keepAlive();
@@ -204,7 +235,7 @@ export function generate(req: GenRequest, onProgress: (p: GenProgress) => void):
     };
     listeners.add(l);
     if (cancel) { send({ type: 'cancel' }); }
-    send({ type: 'generate', id, images: Array.from({ length: count }, (_, i) => ({ prompt: full, seed: seed0 + i, steps, width, height })) });
+    send({ type: 'generate', id, images: images(batch) });
   }).catch(e => {
     // Anything unexpected still ends the request in the window.
     log('error', 'Image Generator request failed', e);
