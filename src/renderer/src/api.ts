@@ -3,7 +3,7 @@ import type {
   ApplyProgress, ApplyResult, FolderStatus, GpuStatus, ImageInfo, JobItem, JobUpdate, ModelDownload, ModelId, PhotoRef,
   PowerStatus, QueueItem, ReviewData, SaveResult, ScanProgress, Settings, SortHistory, SortPlan, TidyResults, UpdateStatus, UpscaleOptions,
   FileWriteStatus, Playlist, WatchChange, WatchedFolder, WatchQuery, WatchResult,
-  FileOpResult, KnownFolder, MediaEntry, GenImage, GenProgress, GenRequest, GenStatus,
+  FileOpResult, KnownFolder, MediaEntry, DescribeResult, DescribeStatus, GenImage, GenProgress, GenRequest, GenStatus,
   DriveInfo, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
 } from '@shared/types';
 
@@ -120,6 +120,14 @@ interface GenApi {
   chooseFolder(): Promise<string | null>;
   openLicence(): Promise<void>;
 }
+interface DescribeApi {
+  status(): Promise<DescribeStatus>;
+  download(): Promise<void>;
+  cancelDownload(): Promise<void>;
+  remove(): Promise<void>;
+  run(file: string): Promise<DescribeResult>;
+  pick(): Promise<string | null>;
+}
 interface PhotosApi {
   folders(): Promise<KnownFolder[]>;
   person(pid: number): Promise<{ dir: string | null; items: MediaEntry[] }>;
@@ -135,6 +143,8 @@ interface Api {
   gen: GenApi;
   onGenStatus(cb: (s: GenStatus) => void): Off;
   onGenProgress(cb: (p: GenProgress) => void): Off;
+  describe: DescribeApi;
+  onDescribeStatus(cb: (s: DescribeStatus) => void): Off;
   photos: PhotosApi;
   files: FilesApi;
   lib: LibApi;

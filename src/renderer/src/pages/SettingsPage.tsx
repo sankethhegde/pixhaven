@@ -1,6 +1,6 @@
 // Settings (GEN-03/04/05): GPU, low-spec mode, tile size, threads, output folder, theme, logs, licences.
 import { useEffect, useState, type ReactNode } from 'react';
-import type { GenStatus, GpuStatus, ModelDownload, ModelId, Settings, Theme, UpdateStatus } from '@shared/types';
+import type { DescribeStatus, GenStatus, GpuStatus, ModelDownload, ModelId, Settings, Theme, UpdateStatus } from '@shared/types';
 import { api, errorText, fmtBytes } from '../api';
 import { Button, Icon, Notice, Segmented, Toggle } from '../components/ui';
 import { LabelsSettings } from '../components/LabelsSettings';
@@ -22,6 +22,8 @@ export function SettingsPage({ settings, gpu, dedicated, version, onSettings, on
   const [faceBytes, setFaceBytes] = useState<number | null>(null);
   const [gen, setGen] = useState<GenStatus | null>(null);
   const [confirmGen, setConfirmGen] = useState(false);
+  const [desc, setDesc] = useState<DescribeStatus | null>(null);
+  useEffect(() => { void api.describe.status().then(setDesc); }, []);
   useEffect(() => { void api.gen.status().then(setGen); }, []);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -166,6 +168,9 @@ export function SettingsPage({ settings, gpu, dedicated, version, onSettings, on
                 <Button variant="danger" onClick={async () => { setConfirmGen(false); await api.gen.remove(); setGen(await api.gen.status()); }}>Remove</Button>
               </div>
             ) : <Button variant="danger" onClick={() => setConfirmGen(true)}>Remove the model</Button>)}
+          </Row>
+          <Row label="Describe a picture" hint={desc ? (desc.installed ? `${desc.modelName} is installed (${fmtBytes(desc.bytes)}).` : `Not downloaded. “Describe a picture…” downloads it once (${fmtBytes(desc.bytes)}).`) : ''}>
+            {desc?.installed && <Button variant="danger" onClick={async () => { await api.describe.remove(); setDesc(await api.describe.status()); }}>Remove</Button>}
           </Row>
           <Row label="Save generated images in" hint={gen?.outputDir ?? ''}>
             <Button onClick={async () => { if (await api.gen.chooseFolder()) { onSettings(await api.getSettings()); setGen(await api.gen.status()); } }}><Icon name="folder" size={15} />Change…</Button>

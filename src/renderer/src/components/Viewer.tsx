@@ -20,12 +20,13 @@ interface Props {
   onClose: () => void;
   onUpscale: (paths: string[]) => void;
   onSort: (folder: string) => void;
+  onDescribe?: (path: string) => void;   // v2.7: the picture's description → Image Generator
 }
 
 const ext = (n: string) => n.slice(n.lastIndexOf('.') + 1).toLowerCase();
 const dirOf = (p: string) => p.slice(0, Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'))) || p;
 
-export function Viewer({ items, index, infos, onIndex, onClose, onUpscale, onSort }: Props) {
+export function Viewer({ items, index, infos, onIndex, onClose, onUpscale, onSort, onDescribe }: Props) {
   const item = items[index];
   const info = infos.get(item.path);
   const [pic, setPic] = useState<{ path: string; url: string; width: number; height: number; converted: boolean } | null>(null);
@@ -144,6 +145,11 @@ export function Viewer({ items, index, infos, onIndex, onClose, onUpscale, onSor
           {item.kind === 'image' && (
             <Button variant="primary" disabled={!canUpscale} onClick={() => onUpscale([item.path])}
               title={canUpscale ? 'Open in Upscale' : 'Upscale works with JPG, PNG, WEBP, BMP and TIFF'}><Icon name="sparkle" size={16} />Upscale</Button>
+          )}
+          {item.kind === 'image' && onDescribe && (
+            <Button onClick={() => onDescribe(item.path)} className="!bg-white/10 !border-white/10 !text-white hover:!bg-white/20" title="Describe this picture and use it as a prompt in the Image Generator">
+              <Icon name="wand" size={16} />Get prompt
+            </Button>
           )}
           <Button onClick={() => onSort(dirOf(item.path))} className="!bg-white/10 !border-white/10 !text-white hover:!bg-white/20" title="Sort the photos in this folder by person">
             <Icon name="people" size={16} />Sort this folder

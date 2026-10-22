@@ -33,6 +33,7 @@ export default function App() {
   const [libVisited, setLibVisited] = useState(false);
   const [photosVisited, setPhotosVisited] = useState(false);
   const [genVisited, setGenVisited] = useState(false);
+  const [describeReq, setDescribeReq] = useState<{ path: string; n: number } | null>(null);
 
   useEffect(() => {
     api.getSettings().then(setSettings).catch(e => setFatal(errorText(e)));
@@ -58,6 +59,7 @@ export default function App() {
     w.__clearupOpen = paths => { setPending(paths); setPage('upscale'); };
     w.__clearupSort = f => { setPendingSort(f); setPage('sort'); };
     (w as { __clearupPage?: (p: Page) => void }).__clearupPage = p => setPage(p);
+    (w as { __clearupDescribe?: (p: string) => void }).__clearupDescribe = p => { setDescribeReq({ path: p, n: Date.now() }); setPage('generator'); };
   }, []);
 
   if (fatal) return <div className="p-8"><Notice tone="danger">PixHaven could not start: {fatal}</Notice></div>;
@@ -80,6 +82,7 @@ export default function App() {
   if (page === 'photos' && !photosVisited) setPhotosVisited(true);
   if (page === 'generator' && !genVisited) setGenVisited(true);
   const sortFolder = (f: string) => { setPendingSort(f); setPage('sort'); };
+  const describePicture = (p: string) => { setDescribeReq({ path: p, n: Date.now() }); setPage('generator'); };
   const cpuMode = settings.cpuOnly || (gpu !== null && !gpu.ok);
 
   return (
@@ -138,17 +141,17 @@ export default function App() {
             <div className={page === 'library' ? 'h-full' : 'hidden'}>
               <Library settings={settings} onSettings={setSettings} active={page === 'library'} initialDir={pendingLib} onConsumedInitial={() => setPendingLib(null)}
                 initialPlay={pendingPlay} onPlayed={() => setPendingPlay(null)}
-                onUpscale={upscaleFiles} onSort={sortFolder} />
+                onUpscale={upscaleFiles} onSort={sortFolder} onDescribe={describePicture} />
             </div>
           )}
           {genVisited && (
             <div className={page === 'generator' ? 'h-full' : 'hidden'}>
-              <ImageGenerator settings={settings} onSettings={setSettings} active={page === 'generator'} onUpscale={upscaleFiles} />
+              <ImageGenerator settings={settings} onSettings={setSettings} active={page === 'generator'} onUpscale={upscaleFiles} describeRequest={describeReq} />
             </div>
           )}
           {photosVisited && (
             <div className={page === 'photos' ? 'h-full' : 'hidden'}>
-              <Photos active={page === 'photos'} onUpscale={upscaleFiles} onSort={sortFolder} />
+              <Photos active={page === 'photos'} onUpscale={upscaleFiles} onSort={sortFolder} onDescribe={describePicture} />
             </div>
           )}
           {/* Kept mounted so running jobs and results survive visiting other pages. */}

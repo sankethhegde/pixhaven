@@ -26,6 +26,7 @@ interface Props {
   onPlayed: () => void;
   onUpscale: (paths: string[]) => void;
   onSort: (folder: string) => void;
+  onDescribe: (path: string) => void;
 }
 
 interface Search { id: number; root: string; query: string; items: MediaEntry[]; scanned: number; done: boolean; truncated?: boolean; indexed?: boolean }
@@ -57,7 +58,7 @@ function shuffle<X>(list: X[]): X[] {
   return a;
 }
 
-export function Library({ settings, onSettings, active, initialDir, onConsumedInitial, initialPlay, onPlayed, onUpscale, onSort }: Props) {
+export function Library({ settings, onSettings, active, initialDir, onConsumedInitial, initialPlay, onPlayed, onUpscale, onSort, onDescribe }: Props) {
   const lib = settings.library;
   const { labels, playlists, version } = T.useTags();
   const [drives, setDrives] = useState<DriveInfo[]>([]);
@@ -685,7 +686,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
       )}
       {viewer !== null && media[viewer]?.kind === 'image' && (
         <Viewer items={media} index={viewer} infos={infos.current} onIndex={setViewer} onClose={() => setViewer(null)}
-          onUpscale={p => { setViewer(null); onUpscale(p); }} onSort={f => { setViewer(null); onSort(f); }} />
+          onUpscale={p => { setViewer(null); onUpscale(p); }} onSort={f => { setViewer(null); onSort(f); }} onDescribe={p => { setViewer(null); onDescribe(p); }} />
       )}
       {playing && (
         <Player items={playing.items} index={playing.index} infos={infos.current} playlist={playing.name}

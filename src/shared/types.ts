@@ -51,6 +51,12 @@ export interface GenStatus {
   download: { state: 'idle' | 'downloading' | 'error'; got: number; total: number; error?: string };
   modelName: string; source: string; licence: string;
 }
+/** v2.7 "Describe a picture" */
+export interface DescribeResult { prompt: string; style: GenStyle | null; short: string; paragraph: string; ms: number }
+export interface DescribeStatus {
+  installed: boolean; bytes: number; modelName: string; source: string;
+  download: { state: 'idle' | 'downloading' | 'error'; got: number; total: number; error?: string };
+}
 export interface GenProgress { jobId: string; index: number; count: number; step: number; steps: number; phase: 'loading' | 'working' | 'done' | 'cancelled' | 'error'; error?: string; image?: GenImage }
 
 export interface Settings {

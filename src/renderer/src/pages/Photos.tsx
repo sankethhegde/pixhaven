@@ -14,6 +14,7 @@ interface Props {
   active: boolean;
   onUpscale: (paths: string[]) => void;
   onSort: (folder: string) => void;
+  onDescribe: (path: string) => void;
 }
 
 type View = 'people' | 'folders';
@@ -24,7 +25,7 @@ const parentOf = (p: string) => { const t = p.replace(/[\\/]+$/, ''); const i = 
 const plural = (n: number, w: string) => `${n} ${n === 1 ? w : w === 'person' ? 'people' : `${w}s`}`;
 const usable = (e: MediaEntry) => e.kind === 'folder' || e.kind === 'image';
 
-export function Photos({ active, onUpscale, onSort }: Props) {
+export function Photos({ active, onUpscale, onSort, onDescribe }: Props) {
   const [known, setKnown] = useState<KnownFolder[]>([]);
   const [root, setRoot] = useState<string | null>(null);
   const [status, setStatus] = useState<FolderStatus | null>(null);
@@ -335,7 +336,7 @@ export function Photos({ active, onUpscale, onSort }: Props) {
       </div>
 
       {viewer !== null && photos[viewer] && (
-        <Viewer items={photos} index={viewer} infos={infos.current} onIndex={setViewer} onClose={() => setViewer(null)} onUpscale={onUpscale} onSort={onSort} />
+        <Viewer items={photos} index={viewer} infos={infos.current} onIndex={setViewer} onClose={() => setViewer(null)} onUpscale={onUpscale} onSort={onSort} onDescribe={p => { setViewer(null); onDescribe(p); }} />
       )}
       {ask && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center" onClick={() => setAsk(null)}>

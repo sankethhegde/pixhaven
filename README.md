@@ -161,6 +161,17 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   `generator-history.json`. Node 24 note: onnxruntime-node wraps fp16 data in a Float16Array its native side can't read,
   so the Uint16Array view is put back (`cpuData`). `PIXHAVEN_GEN_MODEL` points tests at a model folder;
   `PIXHAVEN_GEN_DL_TEST` downloads only the small files (resume/checksum test).
+- **Describe a picture (0.9.0):** any picture → a description in the Image Generator's prompt box, plus a style guess.
+  "Describe a picture…" in the Image Generator (or drop a picture on the description box), and "Get prompt" in the
+  Library / Photos viewer. Model: Florence-2 base (Microsoft, MIT) from `onnx-community/Florence-2-base-ft`, pinned
+  revision `e88a44e`, 8-bit ONNX (vision encoder, token embeddings, encoder, merged decoder; ~280 MB), downloaded once
+  through `model-download.ts` (shared with the Image Generator: checksums, resuming). Runs on the CPU in its own worker
+  (unloaded after 5 idle minutes): a short caption plus the first sentences of the paragraph caption, greedy decoding
+  with no repeated 3-grams, about 3 s per picture (5–6 s with loading). `describe/prompt.ts` turns them into a prompt:
+  "In this image we can see…"-type phrases removed, "She is wearing…" → "wearing…", repeats and rambling dropped,
+  ~55 words; the style is guessed from words like painting / cartoon / photo. RAW, HEIC and BMP go through the
+  library's preview. Undo restores the previous description. It describes what it sees: the exact prompt of a picture
+  made elsewhere can't be recovered. `PIXHAVEN_DESCRIBE_MODEL` points tests at a model folder.
 - **Batch upscale replaces the originals (0.7.7):** on by default ("Replace the originals" in the batch options, saved in
   settings as `replaceInBatch`). Each image is upscaled to a hidden temp file beside it, the original goes to the Recycle
   Bin, and the result takes its name and date (EXIF, colour profile, people and labels kept). Each keeps its own format;

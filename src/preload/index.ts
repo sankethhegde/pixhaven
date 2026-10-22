@@ -74,6 +74,15 @@ const api = {
     openLicence: () => invoke('gen:openLicence'),
   },
   onGenStatus: listen('gen:status'),
+  describe: {
+    status: () => invoke('describe:status'),
+    download: () => invoke('describe:download'),
+    cancelDownload: () => invoke('describe:cancelDownload'),
+    remove: () => invoke('describe:remove'),
+    run: (file: string) => invoke('describe:run', file),
+    pick: () => invoke('describe:pick'),
+  },
+  onDescribeStatus: listen('describe:status'),
   onGenProgress: listen('gen:progress'),
   photos: {
     folders: () => invoke('photos:folders'),

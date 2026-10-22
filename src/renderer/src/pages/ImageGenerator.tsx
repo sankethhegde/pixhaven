@@ -1,7 +1,7 @@
 // v2.6 Image Generator: describe a picture, get images made on this computer (offline, free). LCM Dreamshaper v7 runs
 // on the graphics card; images are saved with their prompt inside, and can go straight to Upscale.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GenImage, GenProgress, GenSize, GenStatus, GenStyle, Settings } from '@shared/types';
+import type { DescribeStatus, GenImage, GenProgress, GenSize, GenStatus, GenStyle, Settings } from '@shared/types';
 import { api, errorText, fmtBytes } from '../api';
 import { Button, Icon, Notice, ProgressBar, Segmented } from '../components/ui';
 
@@ -10,6 +10,7 @@ interface Props {
   onSettings: (s: Settings) => void;
   active: boolean;
   onUpscale: (paths: string[]) => void;
+  describeRequest: { path: string; n: number } | null;   // v2.7: "Get prompt" from the Library / Photos viewer
 }
 
 const STYLES: { value: GenStyle; label: string }[] = [
@@ -28,7 +29,7 @@ const IDEAS = [
 ];
 const store = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private */ } } };
 
-export function ImageGenerator({ settings, onSettings, active, onUpscale }: Props) {
+export function ImageGenerator({ settings, onSettings, active, onUpscale, describeRequest }: Props) {
   const g = settings.generator;
   const [status, setStatus] = useState<GenStatus | null>(null);
   const [prompt, setPrompt] = useState(() => store.get('gen.prompt') ?? '');
@@ -42,6 +43,14 @@ export function ImageGenerator({ settings, onSettings, active, onUpscale }: Prop
   const [open, setOpen] = useState<GenImage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const jobRef = useRef<string | null>(null);
+  useEffect(() => { if (describeRequest) setDropReq(describeRequest); }, [describeRequest]);
+  const [described, setDescribed] = useState<{ name: string; prev: { prompt: string; style: GenStyle }; style: GenStyle | null } | null>(null);
+  const [dropReq, setDropReq] = useState<{ path: string; n: number } | null>(null);
+  const onDescribed = (r: { prompt: string; style: GenStyle | null; name: string }) => {
+    setDescribed({ name: r.name, prev: { prompt, style: g.style }, style: r.style });
+    setPrompt(r.prompt); setSeed('');
+    if (r.style && r.style !== g.style) void set({ style: r.style });
+  };
 
   // Merged with what is saved now: the output folder is changed by the main process ("Change…").
   const set = async (patch: Partial<Settings['generator']>) => onSettings(await api.setSettings({ generator: { ...(await api.getSettings()).generator, ...patch } }));
@@ -149,10 +158,19 @@ export function ImageGenerator({ settings, onSettings, active, onUpscale }: Prop
           <Title small />
           <div className="space-y-1.5">
             <label className="text-sm font-medium" htmlFor="gen-prompt">Describe the picture</label>
-            <textarea id="gen-prompt" value={prompt} onChange={e => setPrompt(e.target.value)} rows={5} placeholder={IDEAS[0]}
+            <textarea id="gen-prompt" value={prompt} onChange={e => { setPrompt(e.target.value); setDescribed(null); }} rows={5} placeholder={IDEAS[0]}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { const f = e.dataTransfer.files[0]; if (!f) return; e.preventDefault(); const p = api.pathForFile(f); if (p) setDropReq({ path: p, n: Date.now() }); }}
               onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void start(); } }}
               className="w-full rounded-lg bg-panel-2 border border-line p-3 text-sm outline-none focus:border-accent resize-none" />
             {tokens > 75 && <div className="text-xs text-warn">This description is long: only about the first 75 words and symbols are used.</div>}
+            {described && (
+              <div className="text-xs text-muted flex items-start gap-2" data-testid="described">
+                <span className="flex-1">Description of “{described.name}”{described.style ? `, style set to ${STYLES.find(x => x.value === described.style)?.label}` : ''}. Edit it as you like.</span>
+                <button className="text-accent hover:underline shrink-0" onClick={() => { setPrompt(described.prev.prompt); void set({ style: described.prev.style }); setDescribed(null); }}>Undo</button>
+              </div>
+            )}
+            <DescribeBox request={dropReq} onResult={onDescribed} />
             {!prompt.trim() && (
               <div className="flex flex-wrap gap-1.5">
                 {IDEAS.map(i => <button key={i} onClick={() => setPrompt(i)} className="text-xs rounded-full border border-line px-2.5 py-1 text-muted hover:text-fg hover:bg-panel-2">{i}</button>)}
@@ -271,3 +289,63 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <div className="space-y-1.5"><div className="text-sm font-medium">{label}</div>{children}</div>;
 }
 function Wrap({ children }: { children: React.ReactNode }) { return <div className="[&>div]:flex-wrap [&>div]:flex">{children}</div>; }
+
+/**
+ * v2.7 "Describe a picture": any picture → a description in the prompt box (and a style guess). The first time, a
+ * one-time ~280 MB download (Florence-2 base, MIT licence). Undo puts the previous description back.
+ */
+function DescribeBox({ request, onResult }: { request: { path: string; n: number } | null; onResult: (r: { prompt: string; style: GenStyle | null; name: string }) => void }) {
+  const [st, setSt] = useState<DescribeStatus | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const pendingRef = useRef<string | null>(null);
+  useEffect(() => { void api.describe.status().then(setSt); return api.onDescribeStatus(s => { setSt(s); if (s.installed && pendingRef.current) { const p = pendingRef.current; pendingRef.current = null; void run(p); } }); }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (request) void start(request.path); }, [request?.n]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const name = (p: string) => p.split(/[\\/]/).pop() ?? p;
+  async function run(path: string) {
+    setError(null); setBusy(name(path)); setOpen(false);
+    try { const r = await api.describe.run(path); onResult({ prompt: r.prompt, style: r.style, name: name(path) }); }
+    catch (e) { setError(errorText(e)); }
+    finally { setBusy(null); }
+  }
+  async function start(path?: string) {
+    const s = st ?? await api.describe.status();
+    if (!s.installed) { pendingRef.current = path ?? null; setOpen(true); return; }
+    const p = path ?? await api.describe.pick();
+    if (p) await run(p);
+  }
+
+  const d = st?.download;
+  return (
+    <div className="space-y-2" data-testid="describe">
+      <Button className="!h-8 w-full" variant="secondary" disabled={!!busy} onClick={() => void start()}>
+        <Icon name="image" size={15} />{busy ? `Describing ${busy}…` : 'Describe a picture…'}
+      </Button>
+      {error && <div className="text-xs text-danger" role="alert">{error}</div>}
+      {open && st && !st.installed && (
+        <div className="rounded-xl bg-panel-2 p-3 space-y-2 text-xs" data-testid="describe-download">
+          <div className="font-medium text-sm">One-time download: {st.modelName} ({fmtBytes(st.bytes)})</div>
+          <div className="text-muted leading-relaxed">
+            Writes a description of any picture, on this computer and offline, as a starting point for your own.
+            It describes what it sees; it can’t recover the exact prompt of a picture made elsewhere. Microsoft, MIT licence.
+          </div>
+          {d?.state === 'downloading' ? (
+            <div className="space-y-1">
+              <ProgressBar value={d.total ? d.got / d.total : 0} />
+              <div className="flex justify-between text-muted"><span>{fmtBytes(d.got)} of {fmtBytes(d.total)}</span>
+                <button className="hover:text-fg" onClick={() => void api.describe.cancelDownload()}>Stop</button></div>
+            </div>
+          ) : (
+            <div className="flex gap-2 items-center">
+              <Button className="!h-8" variant="primary" onClick={() => void api.describe.download()}><Icon name="download" size={14} />{d && d.got > 0 ? 'Continue' : 'Download'}</Button>
+              <Button className="!h-8" variant="ghost" onClick={() => { setOpen(false); pendingRef.current = null; }}>Not now</Button>
+              {d?.state === 'error' && <span className="text-danger">{d.error}</span>}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

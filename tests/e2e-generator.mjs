@@ -94,6 +94,25 @@ export default async function run(win, app) {
       check('the prompt and settings are inside the PNG', meta.width === 512 && meta.height === 512 && xmp.includes(prompt) && /seed 4[23]/.test(xmp) && xmp.includes('PixHaven Image Generator'), `${meta.width}×${meta.height}`);
       await shot('03-results');
 
+      // v2.7 Describe a picture: one of the lighthouse pictures → a description in the prompt box; Undo puts it back.
+      if (process.env.PIXHAVEN_DESCRIBE_MODEL) {
+        await typeInto('#gen-prompt', 'my own words');
+        await sleep(300);
+        t = Date.now();
+        await js(`window.__clearupDescribe(${JSON.stringify(path.join(PICS, pngs[0]))})`);
+        await waitFor(async () => !!(await js(`!!document.querySelector('[data-testid=described]')`)), 120000);
+        const described = await js(`document.querySelector('#gen-prompt').value`);
+        check('Describe a picture: its description lands in the prompt box', /lighthouse|tower/i.test(described) && described.split(/s+/).length >= 4,
+          `${((Date.now() - t) / 1000).toFixed(1)} s: "${described}"`);
+        await shot('02b-described');
+        await click('Undo');
+        await sleep(300);
+        check('Undo puts the previous description back', (await js(`document.querySelector('#gen-prompt').value`)) === 'my own words');
+        await typeInto('#gen-prompt', prompt);
+        await typeInto('[aria-label=Seed]', '42');   // describing clears the seed (a new picture)
+        await sleep(300);
+      }
+
       // Same seed → same picture; Portrait → 512×768; one image is quick once loaded.
       const seed42 = pngs.find(f => f.includes('(seed 42)'));
       const px42 = await sharp(path.join(PICS, seed42)).raw().toBuffer();

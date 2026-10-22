@@ -18,6 +18,7 @@ import * as tidy from './tidy-service';
 import * as library from './library-service';
 import * as player from './player-service';
 import * as generator from './generator-service';
+import * as describer from './describe-service';
 import * as tags from './tags-service';
 import * as watch from './watch-service';
 import { SEARCH_LIMIT } from './library/browse';
@@ -261,7 +262,7 @@ app.on('before-quit', e => {
   player.closeAll();     // a video still open in the player would otherwise keep its labels waiting until next time
   void tags.flushNow().catch(() => {}).finally(() => app.quit());
 });
-app.on('quit', () => { cleanTemp(true); watch.close(); tags.close(); generator.close(); });
+app.on('quit', () => { cleanTemp(true); watch.close(); tags.close(); generator.close(); describer.close(); });
 
 /** GEN-04: low-spec mode follows the GPU until the user sets it themselves. */
 function applyAutoLowSpec(gpu: Awaited<ReturnType<typeof detectGpu>>): void {
@@ -414,6 +415,17 @@ handle('queue:cancel', (id: string) => {
 // ---- quality models (download on first use) ----
 let modelDl: ModelDownload = { state: 'idle', progress: 0 };
 // v2.6 Image Generator
+// v2.7 Describe a picture
+handle('describe:status', () => describer.status());
+handle('describe:download', () => { void describer.download(s => send('describe:status', s)); });
+handle('describe:cancelDownload', () => describer.cancelDownload());
+handle('describe:remove', () => describer.remove());
+handle('describe:run', (file: string) => describer.describe(file));
+handle('describe:pick', async () => {
+  const r = await dialog.showOpenDialog(win!, { title: 'Choose a picture to describe', properties: ['openFile'],
+    filters: [{ name: 'Pictures', extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tif', 'tiff', 'gif', 'heic', 'heif', 'avif', 'dng', 'cr2', 'cr3', 'nef', 'arw', 'orf', 'rw2', 'raf'] }] });
+  return r.canceled ? null : r.filePaths[0];
+});
 handle('gen:status', () => generator.status());
 handle('gen:openLicence', () => shell.openExternal(generator.status().licence));   // only this one page
 handle('gen:download', () => { void generator.download(s => send('gen:status', s)); });
