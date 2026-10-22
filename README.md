@@ -141,6 +141,22 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Batch upscale recommendation (0.7.6):** the batch list has a checkbox per image. Images already HD (shorter side
   720 px or more, i.e. 720p) start unticked with "Already HD · skip recommended" and a note saying why; "Include them
   anyway" / "Leave them out", Select all / none — the user decides.
+- **Image Generator (0.8.0):** text → image, offline and free. Model: LCM Dreamshaper v7 (Stable Diffusion 1.5,
+  ONNX/Olive fp16 for DirectML) from `huggingface.co/softwareweaver/LCM_Dreamshaper_v7_Olive_Onnx`, pinned revision
+  `25bf953`; downloaded once on first use (2.7 GB: tokenizer, text encoder, UNet, VAE decoder, safety checker) into
+  `%APPDATA%\PixHaven\models\generator`, each file checked against its SHA-256, resumed with HTTP ranges after a drop.
+  Licence CreativeML OpenRAIL-M: its use rules are shown before the download and linked. Pipeline
+  (`src/main/generator/pipeline.ts`): CLIP BPE tokenizer (75 tokens), LCM scheduler (4 steps 999/759/519/279, or 8),
+  guidance-scale embedding w = 7, VAE decode, then the model's safety checker on a proper 224-px resize (a
+  nearest-pixel resize gave false alarms); flagged images are not saved and show only as a blurred tile. Runs in a
+  worker thread through the job queue; the worker (~5 GB) ends after 5 idle minutes. About 5–6 s per 512×512 image on
+  Intel Arc integrated graphics; the very first image after installing takes about a minute (DirectML prepares
+  shaders, then caches them). No negative prompt: LCM's guidance is built into the model. Styles add words to the
+  prompt; shapes 512×512 / 512×768 / 768×512; seed (same description + style + seed = same picture). Images are saved
+  as JPG (quality 92, default), PNG or WEBP in `Pictures\PixHaven` (changeable) with the prompt and settings inside (XMP description, all three formats); history in
+  `generator-history.json`. Node 24 note: onnxruntime-node wraps fp16 data in a Float16Array its native side can't read,
+  so the Uint16Array view is put back (`cpuData`). `PIXHAVEN_GEN_MODEL` points tests at a model folder;
+  `PIXHAVEN_GEN_DL_TEST` downloads only the small files (resume/checksum test).
 - **Batch upscale replaces the originals (0.7.7):** on by default ("Replace the originals" in the batch options, saved in
   settings as `replaceInBatch`). Each image is upscaled to a hidden temp file beside it, the original goes to the Recycle
   Bin, and the result takes its name and date (EXIF, colour profile, people and labels kept). Each keeps its own format;

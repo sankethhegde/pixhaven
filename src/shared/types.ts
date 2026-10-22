@@ -30,6 +30,29 @@ export interface UpscaleOptions {
   jpgQuality: number; // 1-100, also used for WEBP
 }
 
+// ---------------- v2.6 Image Generator ----------------
+export type GenStyle = 'none' | 'photo' | 'illustration' | 'anime' | 'painting' | '3d';
+export type GenSize = 'square' | 'portrait' | 'landscape';
+export interface GeneratorSettings {
+  outputDir: string | null;   // null = PicturesPixHaven
+  style: GenStyle;
+  size: GenSize;
+  count: number;              // images per request, 1–4
+  quality: 'fast' | 'better'; // 4 or 8 steps
+  format: OutputFormat;       // v2.6: JPG (quality 92) by default; PNG or WEBP
+}
+export interface GenRequest { prompt: string; style: GenStyle; size: GenSize; count: number; quality: 'fast' | 'better'; seed: number | null; format?: OutputFormat }
+export interface GenImage {
+  id: string; path: string | null; url: string; prompt: string; style: GenStyle; seed: number;
+  width: number; height: number; steps: number; created: number; hidden?: boolean;   // hidden: stopped by the safety filter (not saved)
+}
+export interface GenStatus {
+  installed: boolean; bytes: number; device: 'dml' | 'cpu' | null; loaded: boolean; outputDir: string;
+  download: { state: 'idle' | 'downloading' | 'error'; got: number; total: number; error?: string };
+  modelName: string; source: string; licence: string;
+}
+export interface GenProgress { jobId: string; index: number; count: number; step: number; steps: number; phase: 'loading' | 'working' | 'done' | 'cancelled' | 'error'; error?: string; image?: GenImage }
+
 export interface Settings {
   lowSpec: boolean;          // GEN-04
   lowSpecAuto: boolean;      // true until the user flips the toggle themselves
@@ -46,6 +69,7 @@ export interface Settings {
   sort: SortSettings;
   tidy: TidySettings;
   library: LibrarySettings;
+  generator: GeneratorSettings;
   version: number;           // settings format (migrations in settings.ts)
 }
 
@@ -221,7 +245,7 @@ export interface FolderStatus {
 // ---------------- Job queue (GEN-01) ----------------
 export interface QueueItem {
   id: string;
-  kind: 'upscale' | 'scan' | 'regroup' | 'apply' | 'undo' | 'download';
+  kind: 'upscale' | 'scan' | 'regroup' | 'apply' | 'undo' | 'download' | 'generate';
   label: string;
   state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
   added: number;

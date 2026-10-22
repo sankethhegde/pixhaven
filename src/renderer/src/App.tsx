@@ -9,9 +9,10 @@ import { SettingsPage } from './pages/SettingsPage';
 import { Tidy, type TidyTab } from './pages/Tidy';
 import { Library } from './pages/Library';
 import { Photos } from './pages/Photos';
+import { ImageGenerator } from './pages/ImageGenerator';
 import { Icon, Notice } from './components/ui';
 
-type Page = 'home' | 'library' | 'photos' | 'upscale' | 'sort' | 'tidy' | 'settings';
+type Page = 'home' | 'library' | 'photos' | 'generator' | 'upscale' | 'sort' | 'tidy' | 'settings';
 
 export default function App() {
   const [page, setPage] = useState<Page>('home');
@@ -31,6 +32,7 @@ export default function App() {
   const [pendingPlay, setPendingPlay] = useState<string | null>(null);
   const [libVisited, setLibVisited] = useState(false);
   const [photosVisited, setPhotosVisited] = useState(false);
+  const [genVisited, setGenVisited] = useState(false);
 
   useEffect(() => {
     api.getSettings().then(setSettings).catch(e => setFatal(errorText(e)));
@@ -68,6 +70,7 @@ export default function App() {
     { id: 'library', label: 'Library', icon: 'library' },
     { id: 'photos', label: 'Photos', icon: 'image' },
     { id: 'upscale', label: 'Upscale', icon: 'sparkle' },
+    { id: 'generator', label: 'Image Generator', icon: 'wand' },
     { id: 'sort', label: 'Sort by person', icon: 'people' },
     { id: 'tidy', label: 'Tidy up', icon: 'broom' },
     { id: 'settings', label: 'Settings', icon: 'settings' },
@@ -75,6 +78,7 @@ export default function App() {
   const running = queue.find(q => q.state === 'running');
   if (page === 'library' && !libVisited) setLibVisited(true);
   if (page === 'photos' && !photosVisited) setPhotosVisited(true);
+  if (page === 'generator' && !genVisited) setGenVisited(true);
   const sortFolder = (f: string) => { setPendingSort(f); setPage('sort'); };
   const cpuMode = settings.cpuOnly || (gpu !== null && !gpu.ok);
 
@@ -120,7 +124,7 @@ export default function App() {
         </div>
       </nav>
       <main className="flex-1 min-w-0 flex flex-col">
-        {onBattery && (page === 'upscale' || page === 'sort' || page === 'tidy') && (
+        {onBattery && (page === 'upscale' || page === 'sort' || page === 'tidy' || page === 'generator') && (
           <div className="flex items-center gap-2 px-5 h-9 text-sm bg-warn-soft text-warn border-b border-line shrink-0" role="status">
             <Icon name="battery" size={16} />On battery power: long jobs run slower and drain the battery. Plug in for best speed.
           </div>
@@ -135,6 +139,11 @@ export default function App() {
               <Library settings={settings} onSettings={setSettings} active={page === 'library'} initialDir={pendingLib} onConsumedInitial={() => setPendingLib(null)}
                 initialPlay={pendingPlay} onPlayed={() => setPendingPlay(null)}
                 onUpscale={upscaleFiles} onSort={sortFolder} />
+            </div>
+          )}
+          {genVisited && (
+            <div className={page === 'generator' ? 'h-full' : 'hidden'}>
+              <ImageGenerator settings={settings} onSettings={setSettings} active={page === 'generator'} onUpscale={upscaleFiles} />
             </div>
           )}
           {photosVisited && (

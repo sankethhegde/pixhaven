@@ -60,6 +60,7 @@ const PATHS: Record<string, ReactNode> = {
   eye: <><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="3" /></>,
   shuffle: <><path d="M16 4h4v4M20 4l-6.5 6.5M4 20l6-6M16 20h4v-4M20 20 4 4" /></>,
   playlist: <><path d="M4 6h12M4 11h12M4 16h7" /><path d="m15 14 5 3-5 3z" /></>,
+  wand: <><path d="m4 20 11-11" /><path d="m13 7 4 4" /><path d="M17 3v3M15.5 4.5h3M20 8v2M19 9h2M10 3v2M9 4h2" /></>,
   keyboard: <><rect x="2.5" y="6" width="19" height="12" rx="2" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" /></>,
 };
 

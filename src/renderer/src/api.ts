@@ -3,7 +3,7 @@ import type {
   ApplyProgress, ApplyResult, FolderStatus, GpuStatus, ImageInfo, JobItem, JobUpdate, ModelDownload, ModelId, PhotoRef,
   PowerStatus, QueueItem, ReviewData, SaveResult, ScanProgress, Settings, SortHistory, SortPlan, TidyResults, UpdateStatus, UpscaleOptions,
   FileWriteStatus, Playlist, WatchChange, WatchedFolder, WatchQuery, WatchResult,
-  FileOpResult, KnownFolder, MediaEntry,
+  FileOpResult, KnownFolder, MediaEntry, GenImage, GenProgress, GenRequest, GenStatus,
   DriveInfo, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
 } from '@shared/types';
 
@@ -108,6 +108,18 @@ interface WatchApi {
   query(q: WatchQuery): Promise<WatchResult>;
 }
 
+interface GenApi {
+  status(): Promise<GenStatus>;
+  download(): Promise<void>;
+  cancelDownload(): Promise<void>;
+  remove(): Promise<void>;
+  generate(req: GenRequest): Promise<string>;
+  history(): Promise<GenImage[]>;
+  forget(id: string): Promise<void>;
+  tokens(prompt: string): Promise<number>;
+  chooseFolder(): Promise<string | null>;
+  openLicence(): Promise<void>;
+}
 interface PhotosApi {
   folders(): Promise<KnownFolder[]>;
   person(pid: number): Promise<{ dir: string | null; items: MediaEntry[] }>;
@@ -120,6 +132,9 @@ interface FilesApi {
 }
 
 interface Api {
+  gen: GenApi;
+  onGenStatus(cb: (s: GenStatus) => void): Off;
+  onGenProgress(cb: (p: GenProgress) => void): Off;
   photos: PhotosApi;
   files: FilesApi;
   lib: LibApi;

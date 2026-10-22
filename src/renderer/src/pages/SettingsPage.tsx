@@ -1,6 +1,6 @@
 // Settings (GEN-03/04/05): GPU, low-spec mode, tile size, threads, output folder, theme, logs, licences.
 import { useEffect, useState, type ReactNode } from 'react';
-import type { GpuStatus, ModelDownload, ModelId, Settings, Theme, UpdateStatus } from '@shared/types';
+import type { GenStatus, GpuStatus, ModelDownload, ModelId, Settings, Theme, UpdateStatus } from '@shared/types';
 import { api, errorText, fmtBytes } from '../api';
 import { Button, Icon, Notice, Segmented, Toggle } from '../components/ui';
 import { LabelsSettings } from '../components/LabelsSettings';
@@ -20,6 +20,9 @@ export function SettingsPage({ settings, gpu, dedicated, version, onSettings, on
   const [licences, setLicences] = useState<{ name: string; text: string }[]>([]);
   const [openLicence, setOpenLicence] = useState<string | null>(null);
   const [faceBytes, setFaceBytes] = useState<number | null>(null);
+  const [gen, setGen] = useState<GenStatus | null>(null);
+  const [confirmGen, setConfirmGen] = useState(false);
+  useEffect(() => { void api.gen.status().then(setGen); }, []);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [models, setModels] = useState<{ installed: Record<ModelId, boolean>; download: ModelDownload; sizeMb: number } | null>(null);
@@ -153,6 +156,20 @@ export function SettingsPage({ settings, gpu, dedicated, version, onSettings, on
             ) : <Button variant="danger" disabled={!faceBytes} onClick={() => setConfirmDelete(true)}>Delete face data</Button>}
           </Row>
           {note && <div className="text-xs text-muted">{note}</div>}
+        </Card>
+
+        <Card title="Image Generator">
+          <Row label="Model" hint={gen ? (gen.installed ? `${gen.modelName} is installed (${fmtBytes(gen.bytes)}). It works offline.` : `Not downloaded. The Image Generator tab downloads it once (${fmtBytes(gen.bytes)}).`) : ''}>
+            {gen?.installed && (confirmGen ? (
+              <div className="flex gap-2">
+                <Button variant="ghost" onClick={() => setConfirmGen(false)}>Cancel</Button>
+                <Button variant="danger" onClick={async () => { setConfirmGen(false); await api.gen.remove(); setGen(await api.gen.status()); }}>Remove</Button>
+              </div>
+            ) : <Button variant="danger" onClick={() => setConfirmGen(true)}>Remove the model</Button>)}
+          </Row>
+          <Row label="Save generated images in" hint={gen?.outputDir ?? ''}>
+            <Button onClick={async () => { if (await api.gen.chooseFolder()) { onSettings(await api.getSettings()); setGen(await api.gen.status()); } }}><Icon name="folder" size={15} />Change…</Button>
+          </Row>
         </Card>
 
         <Card title="Upscaling folders">

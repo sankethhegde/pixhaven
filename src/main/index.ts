@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, powerMonitor, protocol, shell } from 'electron';
-import type { JobItem, JobUpdate, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery } from '@shared/types';
+import type { JobItem, JobUpdate, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery, GenRequest } from '@shared/types';
 import { IMAGE_EXTENSIONS } from '@shared/types';
 import { getSettings, updateSettings, writeTurnedOn } from './settings';
 import { detectGpu, hasDedicatedGpu } from './gpu-detect';
@@ -17,6 +17,7 @@ import * as sort from './sort-service';
 import * as tidy from './tidy-service';
 import * as library from './library-service';
 import * as player from './player-service';
+import * as generator from './generator-service';
 import * as tags from './tags-service';
 import * as watch from './watch-service';
 import { SEARCH_LIMIT } from './library/browse';
@@ -260,7 +261,7 @@ app.on('before-quit', e => {
   player.closeAll();     // a video still open in the player would otherwise keep its labels waiting until next time
   void tags.flushNow().catch(() => {}).finally(() => app.quit());
 });
-app.on('quit', () => { cleanTemp(true); watch.close(); tags.close(); });
+app.on('quit', () => { cleanTemp(true); watch.close(); tags.close(); generator.close(); });
 
 /** GEN-04: low-spec mode follows the GPU until the user sets it themselves. */
 function applyAutoLowSpec(gpu: Awaited<ReturnType<typeof detectGpu>>): void {
@@ -412,6 +413,22 @@ handle('queue:cancel', (id: string) => {
 
 // ---- quality models (download on first use) ----
 let modelDl: ModelDownload = { state: 'idle', progress: 0 };
+// v2.6 Image Generator
+handle('gen:status', () => generator.status());
+handle('gen:openLicence', () => shell.openExternal(generator.status().licence));   // only this one page
+handle('gen:download', () => { void generator.download(s => send('gen:status', s)); });
+handle('gen:cancelDownload', () => generator.cancelDownload());
+handle('gen:remove', () => generator.remove());
+handle('gen:generate', (req: GenRequest) => generator.generate(req, p => send('gen:progress', p)));
+handle('gen:history', () => generator.history());
+handle('gen:forget', (id: string) => generator.forget(id));
+handle('gen:tokens', (prompt: string) => generator.tokens(prompt));
+handle('gen:chooseFolder', async () => {
+  const r = await dialog.showOpenDialog(win!, { title: 'Save generated images in…', defaultPath: generator.outputDir(), properties: ['openDirectory', 'createDirectory'] });
+  if (r.canceled) return null;
+  updateSettings({ generator: { ...getSettings().generator, outputDir: r.filePaths[0] } });
+  return r.filePaths[0];
+});
 handle('models:status', () => ({ installed: modelStatus(), download: modelDl, sizeMb: DOWNLOAD_MB }));
 handle('models:download', async () => {
   if (modelDl.state === 'downloading') return;
