@@ -4,7 +4,7 @@
 // v2.1: labels and stars on photos too, playlists (saved filters, "Play all"), watched folders (indexed in the
 // background: instant search and filters without browsing, live updates) and keyboard shortcuts.
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import type { DriveInfo, FolderListing, LibrarySettings, MediaEntry, MediaInfo, Playlist, SearchUpdate, Settings, TaggedMedia, TagFilter, WatchedFolder } from '@shared/types';
+import type { DriveInfo, FileOpResult, FolderListing, LibrarySettings, MediaEntry, MediaInfo, Playlist, SearchUpdate, Settings, TaggedMedia, TagFilter, WatchedFolder } from '@shared/types';
 import { IMAGE_EXTENSIONS } from '@shared/types';
 import { api, errorText } from '../api';
 import { FolderTree } from '../components/FolderTree';
@@ -13,6 +13,7 @@ import { Viewer } from '../components/Viewer';
 import { Player } from '../components/Player';
 import { FilterBar, ManageLabels, NO_FILTER, TagEditor, filterActive, noun } from '../components/Tags';
 import { ShortcutsDialog } from '../components/Shortcuts';
+import { MoveDialog } from '../components/MoveDialog';
 import { Button, Icon, Notice, Segmented } from '../components/ui';
 import * as T from '../tags';
 
@@ -86,6 +87,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
   const [tagPanel, setTagPanel] = useState(false);
   const [manage, setManage] = useState(false);
   const [rename, setRename] = useState<{ path: string; name: string; error?: string } | null>(null);
+  const [moveTo, setMoveTo] = useState<string[] | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [allLabels, setAllLabels] = useState(false);
   // v2.1
@@ -332,23 +334,28 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
   const doRename = async () => {
     if (!rename) return;
     try {
-      const to = await api.tags.renameFile(rename.path, rename.name);
+      // Files keep their type (tags.renameFile); folders are renamed with everything inside (labels follow).
+      const isFolder = items.find(e => e.path === rename.path)?.kind === 'folder';
+      const to = isFolder ? await api.files.rename(rename.path, rename.name) : await api.tags.renameFile(rename.path, rename.name);
       T.movedLocally(rename.path, to);
       replaceEntry(rename.path, to);
       setSelected(new Set([to]));
       setRename(null);
     } catch (e) { setRename({ ...rename, error: errorText(e) }); }
   };
-  const doMove = async () => {
-    const paths = [...selected].filter(p => items.some(e => e.path === p && e.kind !== 'folder' && !offline(e)));
-    const r = await api.tags.moveFiles(paths);
-    if (!r) return;
-    for (const m of r.moved) {
+  /** Move to…: files and folders, through PixHaven's own folder chooser (components/MoveDialog.tsx). */
+  const doMove = () => {
+    const paths = [...selected].filter(p => items.some(e => e.path === p && !offline(e)));
+    if (paths.length) setMoveTo(paths);
+  };
+  const moved = (r: FileOpResult) => {
+    setMoveTo(null);
+    for (const m of r.done) {
       T.movedLocally(m.from, m.to);
       replaceEntry(m.from, mode === 'folder' ? null : m.to);   // gone from this folder; still listed in the other views
     }
     setSelected(new Set());
-    setNote(`Moved ${r.moved.length} file${r.moved.length === 1 ? '' : 's'}${r.failed.length ? `; ${r.failed.length} could not be moved (${r.failed[0].reason})` : ''}.`);
+    setNote(`Moved ${r.done.length} item${r.done.length === 1 ? '' : 's'}${r.failed.length ? `; ${r.failed.length} could not be moved: ${baseName(r.failed[0].path)} (${r.failed[0].reason})` : ''}.`);
   };
 
   const selectedEntries = items.filter(e => selected.has(e.path));
@@ -406,7 +413,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
       else if (key === 'F2') {
         if (selected.size !== 1) return;
         const it = items.find(x => x.path === [...selected][0]);
-        if (it && it.kind !== 'folder' && !offline(it)) setRename({ path: it.path, name: baseName(it.path) }); else return;
+        if (it && !offline(it)) setRename({ path: it.path, name: baseName(it.path) }); else return;
       }
       else if (key === '?') setHelp(true);
       else if ((key === 'l' || key === 'L') && !e.ctrlKey) { if (!selectedTaggable.length) return; setTagPanel(true); }
@@ -663,7 +670,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
               {selected.size === 1 && selectedEntries[0] && !offline(selectedEntries[0]) && (
                 <Button className="!h-8" variant="ghost" onClick={() => setRename({ path: selectedEntries[0].path, name: selectedEntries[0].name })} title="Rename (F2)">Rename</Button>
               )}
-              <Button className="!h-8" variant="ghost" onClick={() => void doMove()} disabled={!selectedEntries.some(e => !offline(e))}>Move to…</Button>
+              <Button className="!h-8" variant="ghost" onClick={doMove} disabled={!selectedEntries.some(e => !offline(e))}>Move to…</Button>
               {mode === 'folder' && (
                 <Button className="!h-8" variant="ghost" disabled={!selectedPhotos.length} onClick={() => onUpscale(selectedPhotos)}
                   title={selectedPhotos.length ? undefined : 'Upscale works with JPG, PNG, WEBP, BMP and TIFF'}>
@@ -710,6 +717,9 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
           </div>
         </Dialog>
       )}
+      {moveTo && (
+        <MoveDialog mode="move" paths={moveTo} start={mode === 'folder' && listing?.dir ? listing.dir : (moveTo[0].replace(/[\\/][^\\/]*$/, '') || moveTo[0])} onDone={moved} onClose={() => setMoveTo(null)} />
+      )}
       {rename && (
         <Dialog label="Rename" onClose={() => setRename(null)}>
           <div className="font-semibold">Rename</div>
@@ -719,7 +729,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
             onKeyDown={e => { if (e.key === 'Enter') void doRename(); if (e.key === 'Escape') setRename(null); e.stopPropagation(); }}
             className="w-full h-9 rounded-lg bg-panel-2 border border-line px-3 text-sm outline-none focus:border-accent" />
           {rename.error && <div className="text-sm text-danger" role="alert">{rename.error}</div>}
-          <div className="text-xs text-muted">Labels, stars and the resume position stay with the file.</div>
+          <div className="text-xs text-muted">Labels, stars and the resume position stay with it.</div>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setRename(null)}>Cancel</Button>
             <Button variant="primary" onClick={() => void doRename()}>Rename</Button>

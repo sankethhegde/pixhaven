@@ -45,13 +45,14 @@ test('copy and move files and folders; names that are taken get " (2)"; never ov
   assert.deepEqual(moved, [[path.join('a', 'Trip', 'one.jpg'), path.join('b', 'Trip (2)', 'one.jpg')], ['dir', path.join('b', 'Trip (2)')], [path.join('a', 'beach.jpg'), path.join('b', 'beach (3).jpg')], [path.join('a', 'shot.cr2'), path.join('b', 'shot (3).cr2')]]);
 });
 
-test('a folder cannot go inside itself; moving into the same folder does nothing', async () => {
+test('a folder cannot go inside itself; moving into the same folder does nothing and says why', async () => {
   const d = tmp();
   put(path.join(d, 'Trip', 'Day 1', 'x.jpg'));
   const r = await pasteItems([path.join(d, 'Trip')], path.join(d, 'Trip', 'Day 1'), 'move', () => {});
   assert.equal(r.failed[0].reason, 'A folder cannot go inside itself');
   const same = await pasteItems([path.join(d, 'Trip', 'Day 1', 'x.jpg')], path.join(d, 'Trip', 'Day 1'), 'move', () => {});
-  assert.deepEqual([same.done.length, same.failed.length], [0, 0]);
+  assert.equal(same.done.length, 0);
+  assert.equal(same.failed[0].reason, 'It is already in that folder');
   assert.deepEqual(tree(d), ['Trip/', 'Trip/Day 1/', 'Trip/Day 1/x.jpg']);
 });
 

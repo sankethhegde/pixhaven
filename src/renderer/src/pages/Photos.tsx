@@ -4,11 +4,12 @@
 // are kept and which other folders show them. v2.8: Combine people brings the same person from several sorted folders
 // into one folder (components/Combine.tsx).
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import type { FolderListing, FolderStatus, KnownFolder, MediaEntry, MediaInfo, PersonSummary } from '@shared/types';
+import type { FileOpResult, FolderListing, FolderStatus, KnownFolder, MediaEntry, MediaInfo, PersonSummary } from '@shared/types';
 import { api, errorText } from '../api';
 import { MediaGrid } from '../components/MediaGrid';
 import { Viewer } from '../components/Viewer';
 import { Combine } from '../components/Combine';
+import { MoveDialog } from '../components/MoveDialog';
 import { Button, Icon, Notice, Segmented } from '../components/ui';
 import * as T from '../tags';
 
@@ -47,6 +48,7 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [combining, setCombining] = useState(false);
+  const [moveTo, setMoveTo] = useState<Clip | null>(null);
   const infos = useRef(new Map<string, MediaInfo>());
   const [, setTick] = useState(0);
 
@@ -65,10 +67,11 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
   const loadPeople = useCallback(async (r: string) => {
     const st = await api.sort.status(r);
     setStatus(st);
-    if (st.folderId == null || !st.people) { setPeople([]); return st; }
+    if (st.folderId == null || !st.people) { setPeople([]); return { st, list: [] as PersonSummary[] }; }
     const rv = await api.sort.review(st.folderId);
-    setPeople(rv.people.filter(p => p.photos > 0 && !p.unsorted));
-    return st;
+    const list = rv.people.filter(p => p.photos > 0 && !p.unsorted);
+    setPeople(list);
+    return { st, list };
   }, []);
 
   const listDir = useCallback(async (d: string) => {
@@ -82,7 +85,7 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
     try {
       if ((await api.pathKind(r)) !== 'folder') throw new Error('Please choose a folder.');
       setRoot(r); setDir(r);
-      const st = await loadPeople(r);
+      const { st } = await loadPeople(r);
       setView(st.people ? 'people' : 'folders');
       await listDir(r);
     } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
@@ -106,8 +109,13 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
   const refresh = async () => {
     if (!root) return;
     if (dir) await listDir(dir);
-    await loadPeople(root);
-    if (person) setPersonItems(await personPhotos(person.id));
+    const { list } = await loadPeople(root);
+    if (person) {
+      // The person's folder may have been renamed: their name and folder follow.
+      const now = list.find(p => p.id === person.id);
+      if (now) setPerson(now);
+      setPersonItems(await personPhotos(person.id));
+    }
   };
 
   // ---- what the grid shows ----
@@ -159,16 +167,15 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
       await refresh();
     } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
-  const sendTo = async (mode: Clip['mode']) => {
-    if (!sel.length) return;
-    try {
-      const r = await api.files.pasteTo(sel, mode);
-      if (!r) return;
-      for (const m of r.done) if (mode === 'move') T.movedLocally(m.from, m.to);
-      report(mode === 'copy' ? 'Copied' : 'Moved', r);
-      setSelected(new Set());
-      await refresh();
-    } catch (e) { setError(errorText(e)); }
+  /** Move to… / Copy to…: PixHaven's own folder chooser (components/MoveDialog.tsx). */
+  const sendTo = (mode: Clip['mode']) => { if (sel.length) setMoveTo({ mode, paths: sel }); };
+  const sent = async (r: FileOpResult) => {
+    const mode = moveTo!.mode;
+    setMoveTo(null);
+    for (const m of r.done) if (mode === 'move') T.movedLocally(m.from, m.to);
+    report(mode === 'copy' ? 'Copied' : 'Moved', r);
+    setSelected(new Set());
+    await refresh();
   };
   const submitAsk = async () => {
     if (!ask) return;
@@ -260,8 +267,8 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
       <Button className="!h-8" variant="ghost" disabled={!sel.length} onClick={() => copy('copy')} title="Ctrl+C"><Icon name="copy" size={15} />Copy</Button>
       {view === 'folders' && <Button className="!h-8" variant="ghost" disabled={!clip || !pasteHere || busy} onClick={() => void paste()} title="Ctrl+V">Paste{clip ? ` (${clip.paths.length})` : ''}</Button>}
       <Button className="!h-8" variant="ghost" disabled={sel.length !== 1} onClick={() => setAsk({ kind: 'rename', path: sel[0], name: baseName(sel[0]) })} title="F2">Rename</Button>
-      <Button className="!h-8" variant="ghost" disabled={!sel.length} onClick={() => void sendTo('move')}>Move to…</Button>
-      <Button className="!h-8" variant="ghost" disabled={!sel.length} onClick={() => void sendTo('copy')}>Copy to…</Button>
+      <Button className="!h-8" variant="ghost" disabled={!sel.length} onClick={() => sendTo('move')}>Move to…</Button>
+      <Button className="!h-8" variant="ghost" disabled={!sel.length} onClick={() => sendTo('copy')}>Copy to…</Button>
     </div>
   );
 
@@ -317,6 +324,7 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
             <Button className="!h-8" variant="ghost" onClick={() => { setPerson(null); setSelected(new Set()); }}><Icon name="back" size={16} />People</Button>
             <span className="font-semibold">{person.label}</span>
             <span className="text-sm text-muted">{plural(personItems.length, 'photo')}{person.dir ? ` · folder “${baseName(person.dir)}”` : ''}</span>
+            {person.dir && <Button className="!h-8" variant="ghost" onClick={() => setAsk({ kind: 'rename', path: person.dir!, name: baseName(person.dir!) })} title="Rename this person's folder (the name inside their photos follows)">Rename person</Button>}
           </>}>
             <MediaGrid items={items} infos={infos.current} view="grid" size="m" selected={selected} onVisible={onVisible}
               onClick={onItemClick} onOpen={onItemOpen} resetKey={`p${person.id}`} />
@@ -346,6 +354,9 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
 
       {viewer !== null && photos[viewer] && (
         <Viewer items={photos} index={viewer} infos={infos.current} onIndex={setViewer} onClose={() => setViewer(null)} onUpscale={onUpscale} onSort={onSort} onDescribe={p => { setViewer(null); onDescribe(p); }} onSimilar={p => { setViewer(null); onSimilar(p); }} />
+      )}
+      {moveTo && root && (
+        <MoveDialog mode={moveTo.mode} paths={moveTo.paths} start={view === 'folders' && dir ? dir : root} onDone={r => void sent(r)} onClose={() => setMoveTo(null)} />
       )}
       {ask && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center" onClick={() => setAsk(null)}>

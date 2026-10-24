@@ -77,7 +77,7 @@ export async function pasteItems(paths: string[], dest: string, mode: 'copy' | '
       if (!st) throw new Error('It is not there any more');
       const isDir = st.isDirectory();
       if (isDir && isInside(dest, from)) throw new Error('A folder cannot go inside itself');
-      if (mode === 'move' && key(path.dirname(from)) === key(dest)) continue;     // already here
+      if (mode === 'move' && key(path.dirname(from)) === key(dest)) throw new Error('It is already in that folder');
       const to = freeName(path.join(dest, path.basename(from)), isDir);
       if (mode === 'move') {
         const inside = isDir ? filesIn(from) : [];

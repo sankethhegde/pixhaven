@@ -156,6 +156,58 @@ export default async function run(win, app) {
     check('Photos shows the combined folder: Mom with 8 photos', cards.includes('Mom: 8'), cards.join(', '));
     await shot('05-photos');
 
+    // ---- v2.8.1: Move to a new folder, rename a person, rename and move folders in the Library ----
+    const pick = async p => { await js(`[...document.querySelectorAll('[data-path]')].find(b => b.dataset.path.toLowerCase() === ${JSON.stringify(p.toLowerCase())}).click()`); await sleep(300); };
+    const dialogClick = async label => {
+      const ok = await js(`(() => { const b = [...document.querySelectorAll('[role=dialog] button')].find(b => b.innerText.trim() === ${JSON.stringify(label)}); if (!b || b.disabled) return false; b.click(); return true; })()`);
+      if (!ok) throw new Error(`No enabled dialog button "${label}"`);
+      await sleep(400);
+    };
+    await js(`document.querySelector('[data-photos-person="Mom"]').click()`);
+    await waitFor('Rename person');
+    await sleep(800);
+    const one = path.join(momDir, 'mom-0.jpg');
+    await pick(one);
+    await click('Move to…');
+    await waitFor('Move 1 item to…');
+    const rows = await js(`[...document.querySelectorAll('[data-move-folder]')].map(r => r.innerText.replace(/\\n/g, ' '))`);
+    check('Move to: the chooser lists the folders and marks where the photo is now', rows.some(r => r.startsWith('Mom') && r.includes('(here)')) && rows.length === 3, rows.join(' | '));
+    const hereDisabled = await js(`[...document.querySelectorAll('[data-move-folder]')].find(r => r.dataset.moveFolder === 'Mom').querySelector('button:last-child').disabled`);
+    check('Move to: moving into its own folder is not offered', hereDisabled === true);
+    await js(`(() => { const i = document.querySelector('[aria-label="New folder name"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'Mom best'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await sleep(300);
+    await shot('07-move-to');
+    await dialogClick('New folder and move');
+    await waitFor('Moved 1 item');
+    check('Move to a new folder: the photo moved', fs.existsSync(path.join(dest, 'Mom best', 'mom-0.jpg')) && !fs.existsSync(one));
+
+    await click('Rename person');
+    await js(`(() => { const i = document.querySelector('[role=dialog] input'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'Amma'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await dialogClick('Rename');
+    await sleep(1500);
+    const head = await text();
+    check('Rename person: folder renamed, the person view follows', fs.existsSync(path.join(dest, 'Amma')) && !fs.existsSync(momDir) && head.includes('folder “Amma”'), head.match(/\d+ photos · folder “[^”]+”/)?.[0] ?? '');
+    await shot('08-renamed-person');
+
+    // Library: a folder renamed (button) and moved (Move to… → "Move here").
+    await js(`window.__clearupLibrary(${JSON.stringify(dest)})`);
+    await waitFor('Mom best', 20000);
+    await sleep(1000);
+    const raviDir = path.join(dest, raviName);
+    await pick(raviDir);
+    await click('Rename');
+    await js(`(() => { const i = document.querySelector('[role=dialog] input'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'Ravi'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await dialogClick('Rename');
+    await sleep(800);
+    check('Library: a folder can be renamed', fs.existsSync(path.join(dest, 'Ravi')) && !fs.existsSync(raviDir));
+    await pick(path.join(dest, 'Mom best'));
+    await click('Move to…');
+    await waitFor('Move 1 item to…');
+    await js(`[...document.querySelectorAll('[data-move-folder]')].find(r => r.dataset.moveFolder === 'Amma').querySelector('button:last-child').click()`);
+    await sleep(1200);
+    check('Library: a folder can be moved into another', fs.existsSync(path.join(dest, 'Amma', 'Mom best', 'mom-0.jpg')) && !fs.existsSync(path.join(dest, 'Mom best')));
+    await shot('09-library');
+
     // ---- Sort → Estimate time ----
     const scanDir = path.join(BASE, 'To scan');
     for (let i = 0; i < 30; i++) await photo(path.join(scanDir, `p${i}.jpg`), 200 + i);

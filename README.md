@@ -152,6 +152,12 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   shortcuts move to the destination, and the old folders' sort logs follow the files (their Undo still finds them).
   Every move is listed in `<destination>/.clearup/combine-log.jsonl`; there is no one-click undo. Choosing one of the
   sorted folders as the destination keeps its people where they are. 3,000 people in 40 folders compare in ~7 s.
+- **Move to / Rename (0.9.3):** "Move to…" and "Copy to…" (Photos and Library) open PixHaven's own folder chooser:
+  browse folders (the one the items are in is marked "(here)" and not offered), "New folder and move" in one step, or
+  "Other folder…" for the Windows picker. Windows' picker returned the folder it showed when a new folder was not
+  selected, so the move silently did nothing; moving into the same folder now says "It is already in that folder".
+  Folders can be renamed and moved in the Library too, and a person's folder renamed from the People view ("Rename
+  person"; the name inside their photos follows).
 - **Scan time estimate (Sort, 0.9.2):** "Estimate time" counts the photos (only new or changed ones are
   scanned), times face finding on up to 9 of them on this computer (engine load counted, first photo as warm-up), and
   estimates grouping from how fast this computer compares fingerprints. Nothing is saved. Grouping got ~25% faster
