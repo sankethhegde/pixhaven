@@ -28,23 +28,38 @@ const ORPHAN_BELOW = 0.04;   // a leftover face joins a person at threshold − 
 const ORPHAN_LEAD = 0.1;     // …when that person is clearly closer than anyone else
 export interface ClusterResult { groups: { anchor: number | null; faceIds: number[] }[] }
 
-interface Group { anchor: number | null; sum: Float32Array; n: number; faces: number[]; members: Float32Array[]; images: Map<number, number>; alive: boolean }
+/** Faces of one group or person: their sum (for average similarity) and the fingerprints themselves. */
+export interface FaceSet { sum: Float32Array; n: number; members: Float32Array[] }
+interface Group extends FaceSet { anchor: number | null; faces: number[]; images: Map<number, number>; alive: boolean }
 
-const dot = (a: Float32Array, b: Float32Array) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+// Four sums at a time: about twice as fast in V8, which matters at 100,000+ faces.
+export const dot = (a: Float32Array, b: Float32Array) => {
+  let s0 = 0, s1 = 0, s2 = 0, s3 = 0, i = 0;
+  const n = a.length - (a.length % 4);
+  for (; i < n; i += 4) { s0 += a[i] * b[i]; s1 += a[i + 1] * b[i + 1]; s2 += a[i + 2] * b[i + 2]; s3 += a[i + 3] * b[i + 3]; }
+  for (; i < a.length; i++) s0 += a[i] * b[i];
+  return s0 + s1 + s2 + s3;
+};
 const add = (s: Float32Array, v: Float32Array) => { for (let i = 0; i < s.length; i++) s[i] += v[i]; };
 
-/** Mean similarity of a face to its KNN nearest faces in a group. */
-function nearest(e: Float32Array, g: Group): number {
-  const top: number[] = [];
+/** Mean similarity of a face to its k nearest faces in a group (kept in a small sorted list, no allocations). */
+const topBuf = new Float64Array(KNN);
+function nearestK(e: Float32Array, g: FaceSet, k: number): number {
+  let n = 0;
   for (const m of g.members) {
     const s = dot(e, m);
-    if (top.length < KNN) { top.push(s); top.sort((a, b) => a - b); } else if (s > top[0]) { top[0] = s; top.sort((a, b) => a - b); }
+    if (n < k) { let j = n++; while (j > 0 && topBuf[j - 1] > s) { topBuf[j] = topBuf[j - 1]; j--; } topBuf[j] = s; }
+    else if (s > topBuf[0]) { let j = 0; while (j + 1 < k && topBuf[j + 1] < s) { topBuf[j] = topBuf[j + 1]; j++; } topBuf[j] = s; }
   }
-  return top.reduce((a, b) => a + b, 0) / (top.length || 1);
+  let t = 0;
+  for (let j = 0; j < n; j++) t += topBuf[j];
+  return t / (n || 1);
 }
+const nearest = (e: Float32Array, g: FaceSet) => nearestK(e, g, KNN);
 
-/** How close two groups are: average linkage, or (for clear matches) nearest-face linkage. */
-function linkage(a: Group, b: Group, threshold: number): number {
+/** How close two groups are: average linkage, or (for clear matches) nearest-face linkage. Also used to match people
+ * across sorted folders (sorter/combine.ts). */
+export function linkage(a: FaceSet, b: FaceSet, threshold: number): number {
   const avg = dot(a.sum, b.sum) / (a.n * b.n);
   if (avg < threshold - 0.3) return avg;                 // far apart: skip the costlier check
   const [small, big] = a.n <= b.n ? [a, b] : [b, a];
@@ -133,10 +148,7 @@ export function cluster(faces: ClusterFace[], threshold: number): ClusterResult 
   //    nearest faces there are close (threshold − ORPHAN_BELOW) and that person is clearly closer than any other
   //    (ORPHAN_LEAD ahead). On a real folder different people never came closer than 0.29 this way, while one-off
   //    photos of a known person (filters, turned heads) scored 0.31–0.39 with nobody else above 0.24.
-  const near3 = (e: Float32Array, g: Group) => {
-    const s = g.members.map(m => dot(e, m)).sort((a, b) => b - a).slice(0, 3);
-    return s.reduce((a, b) => a + b, 0) / (s.length || 1);
-  };
+  const near3 = (e: Float32Array, g: Group) => nearestK(e, g, 3);
   const people = live.filter(g => g.images.size >= 2 && g.members.length);
   const placed = new Set(live.flatMap(g => g.faces));
   const leftovers: { f: ClusterFace; from: Group | null }[] = [

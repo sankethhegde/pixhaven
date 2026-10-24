@@ -105,6 +105,19 @@ export async function scanImage(db: Db, engine: FaceEngine, imageId: number, thu
   return { faces: faces.length, embs: faces.filter(f => f.emb).map(f => f.emb!) };
 }
 
+/** v2.8 estimate: the work of scanImage on one photo (read, find faces, thumbnails), nothing saved. Faces found, or -1. */
+export async function trialScan(engine: FaceEngine, file: string, s: SortSettings): Promise<number> {
+  try {
+    const r = await openImage(file).rotate().resize(WORK, WORK, { fit: 'inside', withoutEnlargement: true }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const faces = await engine.analyse(r.data, r.info.width, r.info.height, s.minFaceSize, MIN_SHARPNESS);
+    await openImage(file).metadata();
+    const raw = { raw: { width: r.info.width, height: r.info.height, channels: 3 as const } };
+    await sharp(r.data, raw).resize(320, 320, { fit: 'inside' }).jpeg({ quality: 78 }).toBuffer();
+    for (const _ of faces) await sharp(r.data, raw).resize(128, 128).jpeg({ quality: 82 }).toBuffer();
+    return faces.length;
+  } catch { return -1; }
+}
+
 /** Overlap of two boxes (intersection over union). */
 function overlap(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): number {
   const x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y), x2 = Math.min(a.x + a.w, b.x + b.w), y2 = Math.min(a.y + a.h, b.y + b.h);

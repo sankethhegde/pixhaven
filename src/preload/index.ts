@@ -50,6 +50,7 @@ const api = {
     dataSize: () => invoke('sort:dataSize'),
     deleteData: () => invoke('sort:deleteData'),
     upscaleLow: (files: unknown[]) => invoke('sort:upscaleLow', files),
+    estimate: (root: string) => invoke('sort:estimate', root),
   },
   tidy: {
     status: (root: string) => invoke('tidy:status', root),
@@ -88,6 +89,9 @@ const api = {
   photos: {
     folders: () => invoke('photos:folders'),
     person: (pid: number) => invoke('photos:person', pid),
+    match: (folderIds: number[]) => invoke('photos:match', folderIds),
+    combineEstimate: (req: unknown) => invoke('photos:combineEstimate', req),
+    combine: (req: unknown) => invoke('photos:combine', req),
   },
   files: {
     paste: (paths: string[], dest: string, mode: string) => invoke('files:paste', paths, dest, mode),
@@ -180,6 +184,7 @@ const api = {
   onSortProgress: listen('sort:progress'),
   onSortScanned: listen('sort:scanned'),
   onApplyProgress: listen('sort:apply-progress'),
+  onCombineProgress: listen('photos:combine-progress'),
   onOpenSort: listen('open:sort'),
 };
 

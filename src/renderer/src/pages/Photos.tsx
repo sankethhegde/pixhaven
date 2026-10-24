@@ -1,12 +1,14 @@
 // v2.5 Photos: an image viewer for sorted folders. Choose a folder (or one sorted before): it opens on its people, as
 // it was left — person folders renamed in Explorer are recognised. A Folders view browses it with cut / copy / paste,
 // new folder, rename, move to and copy to (labels, people and group photo links follow). Group photos say where they
-// are kept and which other folders show them.
+// are kept and which other folders show them. v2.8: Combine people brings the same person from several sorted folders
+// into one folder (components/Combine.tsx).
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import type { FolderListing, FolderStatus, KnownFolder, MediaEntry, MediaInfo, PersonSummary } from '@shared/types';
 import { api, errorText } from '../api';
 import { MediaGrid } from '../components/MediaGrid';
 import { Viewer } from '../components/Viewer';
+import { Combine } from '../components/Combine';
 import { Button, Icon, Notice, Segmented } from '../components/ui';
 import * as T from '../tags';
 
@@ -44,6 +46,7 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [combining, setCombining] = useState(false);
   const infos = useRef(new Map<string, MediaInfo>());
   const [, setTick] = useState(0);
 
@@ -204,7 +207,11 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
   });
 
   // ---------- start: choose a folder ----------
+  if (!root && combining) {
+    return <Combine known={known} onClose={() => { setCombining(false); loadKnown(); }} onOpen={d => { setCombining(false); loadKnown(); void openRoot(d); }} />;
+  }
   if (!root) {
+    const canCombine = known.filter(k => (k.personFolders ?? 0) > 0).length >= 2;
     return (
       <div className="h-full overflow-auto p-8">
         <div className="max-w-4xl mx-auto space-y-5">
@@ -213,6 +220,7 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
               <h1 className="text-2xl font-semibold">Photos</h1>
               <p className="text-sm text-muted mt-1">See a sorted folder person by person, and copy, move or organise its photos.</p>
             </div>
+            {canCombine && <Button className="h-10" onClick={() => setCombining(true)} title="The same person in several sorted folders, brought together in one folder"><Icon name="people" size={16} />Combine people…</Button>}
             <Button variant="primary" className="h-10" onClick={() => void choose()}><Icon name="folder" size={16} />Choose folder…</Button>
           </div>
           {error && <Notice tone="danger">{error}</Notice>}

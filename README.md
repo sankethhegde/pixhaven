@@ -35,6 +35,7 @@ npm run setup:engine     # downloads the engine, models, face models, places, FF
 | `npm run e2e:library` | v2.0 Phase A: drives, media-only browsing, a thumbnail for every format, list view, search, viewer, no-permission folder, a drive appearing (subst), a 5,000-file folder |
 | `node tests/make-media.mjs <folder>` | Builds the mixed-format test folder (17 photo formats incl. HEIC and 7 RAW, 17 video formats) |
 | `npm run e2e:sort` | Same for Sort by person: scan → review → dry run → apply (no copies, people tagged, folders checked against the photos' real names) → re-scan → undo, on ~50 public test photos (`phase0/fetch-test-photos.mjs`, or set `CLEARUP_TESTPHOTOS`) |
+| `npm run e2e:combine` | Photos → Combine people on two sorted folders made by the test (the same person in both): match, name, estimate, combine, files/face data/names/shortcuts checked, destination opened; then Sort → Estimate time |
 | `npm run dist` | Type-check, build and make the Windows installer `dist/PixHaven-Setup-<version>.exe` |
 | `PixHaven.exe --selftest out.json` | Installed app: GPU check, one real upscale, a face scan, a video thumbnail, an on-the-fly video conversion, labels export/import, ExifTool writing and reading back (labels, stars, people) and the folder index; JSON report, then exits. Add `--cpu` to test CPU mode, `--with-download` to test the model download |
 
@@ -76,7 +77,8 @@ src/main/            Electron main process
   sort-service.ts      Sort by person: file listing (skips OneDrive online-only), worker, review/merge/split
   faces/               detect.ts (YuNet + ArcFace, face quality), cluster.ts, pipeline.ts, sort-worker.ts
   sorter/              plan.ts (dry run), apply.ts (apply, people written into photos, log, undo),
-                       people-manifest.ts (.clearup/people.json: group photos shown in other people's folders)
+                       people-manifest.ts (.clearup/people.json: group photos shown in other people's folders),
+                       combine.ts (people across sorted folders: match by face, move into one destination)
   tidy/                inspect.ts (SHA-1, dHash, blur, EXIF date/GPS), dupes.ts, organize.ts, geo.ts (offline places)
   tidy-service.ts      Tidy up: scan, results, previews, apply, Recycle Bin
   cli.ts               command-line mode (--cli)
@@ -138,6 +140,23 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   view browses it with New folder (Ctrl+Shift+N), Cut / Copy / Paste (Ctrl+X / C / V, in-app clipboard), Rename (F2,
   files and folders), Move to… and Copy to…. Never overwrites (" (2)"), moves across drives copy-check-delete, RAW
   sidecars travel along; labels, the people list and the shortcuts follow moves, face data on the next open.
+- **Combine people (Photos tab, 0.9.2):** each sorted folder has its own people, so the same person sorted in
+  several folders had several folders. "Combine people…" takes the sorted folders and a destination, compares their
+  people by face (average fingerprint of each person's best 300 faces, plus a face-by-face check on 24; the same name
+  given in two folders counts a little; two people of one folder are never joined; a group only grows when every pair
+  in it matches) and lists who is in more than one folder, with the name the user gave (else numbered). After ticking
+  and naming, a time estimate (files and size counted on disk, same drive or not, names to rewrite) and a confirmation,
+  every person folder moves into the destination — renamed in one go on the same drive, copied-checked-deleted across
+  drives — and the same person's folders become one. Face data moves with them (the destination opens like any sorted
+  folder), the names inside the photos change where needed, labels and stars follow, the group photo list and
+  shortcuts move to the destination, and the old folders' sort logs follow the files (their Undo still finds them).
+  Every move is listed in `<destination>/.clearup/combine-log.jsonl`; there is no one-click undo. Choosing one of the
+  sorted folders as the destination keeps its people where they are. 3,000 people in 40 folders compare in ~7 s.
+- **Scan time estimate (Sort, 0.9.2):** "Estimate time" counts the photos (only new or changed ones are
+  scanned), times face finding on up to 9 of them on this computer (engine load counted, first photo as warm-up), and
+  estimates grouping from how fast this computer compares fingerprints. Nothing is saved. Grouping got ~25% faster
+  (unrolled dot product, no sorting in the nearest-face checks) with the same results; the OneDrive online-only check
+  allows 5 minutes for very large folders.
 - **Batch upscale recommendation (0.7.6):** the batch list has a checkbox per image. Images already HD (shorter side
   720 px or more, i.e. 720p) start unticked with "Already HD · skip recommended" and a note saying why; "Include them
   anyway" / "Leave them out", Select all / none — the user decides.

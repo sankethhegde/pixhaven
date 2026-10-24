@@ -38,7 +38,7 @@ function listFiles(root: string): { path: string; size: number }[] {
 }
 
 /** A path rewriter: exact files first, then folder prefixes (longest first). */
-function mapper(files: Map<string, string>, dirs: { from: string; to: string }[]): (p: string) => string {
+export function mapper(files: Map<string, string>, dirs: { from: string; to: string }[]): (p: string) => string {
   const sorted = [...dirs].sort((a, b) => b.from.length - a.from.length);
   return p => {
     const f = files.get(key(p));
@@ -82,6 +82,13 @@ function rewrite(db: Db, fid: number, root: string, map: (p: string) => string):
     }
   });
   // The undo log (absolute paths) and the "also shown in" list (relative to root) follow too.
+  remapLog(root, map);
+  try { remapManifest(root, map); } catch { /* list unreadable */ }
+  return moved;
+}
+
+/** The undo log of a sorted folder follows files that moved, so Undo still finds them (also used by combine.ts). */
+export function remapLog(root: string, map: (p: string) => string): void {
   try {
     const file = logPath(root);
     if (fs.existsSync(file)) {
@@ -98,8 +105,6 @@ function rewrite(db: Db, fid: number, root: string, map: (p: string) => string):
       if (next !== old) { fs.writeFileSync(`${file}.tmp`, next); fs.renameSync(`${file}.tmp`, file); }
     }
   } catch { /* log unreadable: Undo reports what it cannot find */ }
-  try { remapManifest(root, map); } catch { /* list unreadable */ }
-  return moved;
 }
 
 /**

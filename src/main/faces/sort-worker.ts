@@ -1,17 +1,20 @@
-// Worker thread for Sort by person. Tasks: scan (→ group), regroup, apply, finish, undo.
+// Worker thread for Sort by person. Tasks: scan (→ group), regroup, apply, finish, undo; v2.8: estimate (time a few
+// photos), match and combine (people across sorted folders).
 // Scan results are saved after every image, so a cancelled or crashed scan resumes where it stopped.
 // Apply/undo hash every file, so they also run here to keep the window responsive.
 import { parentPort, workerData } from 'node:worker_threads';
 import path from 'node:path';
-import type { ScanProgress, SortPlan, SortSettings } from '../../shared/types';
+import type { CombineRequest, ScanProgress, SortPlan, SortSettings } from '../../shared/types';
 import { openDb } from '../db';
 import { FaceEngine } from './detect';
-import { syncImages, scanImage, groupFolder, type ListedFile } from './pipeline';
+import { syncImages, scanImage, groupFolder, trialScan, type ListedFile } from './pipeline';
+import { dot } from './cluster';
+import { combineFolders, estimateCombine, matchPeople, peopleOf } from '../sorter/combine';
 import { applyPlan, undoSort } from '../sorter/apply';
 import { syncPhotoInfo, inspectRow } from '../tidy/inspect';
 
 export interface WorkerInput {
-  task: 'scan' | 'regroup' | 'apply' | 'finish' | 'undo' | 'inspect';
+  task: 'scan' | 'regroup' | 'apply' | 'finish' | 'undo' | 'inspect' | 'estimate' | 'match' | 'combine';
   sortId?: number;
   plan?: SortPlan;
   dbPath: string;
@@ -24,6 +27,10 @@ export interface WorkerInput {
   settings: SortSettings;
   preferGpu: boolean;
   exiftool?: string;
+  folderIds?: number[];          // match
+  combine?: CombineRequest;      // combine (dry: only the estimate)
+  dry?: boolean;
+  samples?: string[];            // estimate
 }
 
 const input = workerData as WorkerInput;
@@ -64,6 +71,54 @@ async function main(): Promise<void> {
     }
     post({ phase: 'done', done: input.files.length, total: input.files.length });
     parentPort!.postMessage({ type: 'result', result: { inspected: todo.length } });
+    db.close();
+    return;
+  }
+  if (input.task === 'estimate') {
+    // Model load, then a few of the folder's photos timed (the first one warms up the engine and is not counted).
+    let t = Date.now();
+    const engine = await FaceEngine.create(path.join(input.modelsDir, 'face'), input.preferGpu);
+    const loadMs = Date.now() - t;
+    const times: number[] = [];
+    let faces = 0, read = 0;
+    for (const [k, f] of (input.samples ?? []).entries()) {
+      if (cancelled) break;
+      t = Date.now();
+      const n = await trialScan(engine, f, s);
+      if (n < 0) continue;
+      if (k > 0 || (input.samples ?? []).length === 1) times.push(Date.now() - t);
+      faces += n; read++;
+      post({ phase: 'scanning', done: k + 1, total: input.samples!.length, faces });
+    }
+    // How fast this computer compares face fingerprints (for the grouping step).
+    const a = new Float32Array(512).map(() => Math.random()), b = new Float32Array(512).map(() => Math.random());
+    t = performance.now();
+    let x = 0;
+    for (let i = 0; i < 200_000; i++) x += dot(a, b);
+    const dotsPerSecond = 200_000 / Math.max(1e-3, (performance.now() - t) / 1000);
+    if (!Number.isFinite(x)) post({ phase: 'scanning', done: 0, total: 0 });   // keeps the timed loop from being optimised away
+    times.sort((p, q) => p - q);
+    parentPort!.postMessage({ type: 'result', result: {
+      provider: engine.provider, loadMs, sampled: read, msPerPhoto: times.length ? times[Math.floor(times.length / 2)] : 0,
+      facesPerPhoto: read ? faces / read : 0, dotsPerSecond,
+    } });
+    db.close();
+    return;
+  }
+  if (input.task === 'match') {
+    const people = peopleOf(db, input.folderIds ?? []);
+    const t = Date.now();
+    const groups = matchPeople(people, s.strictness, (done, total) => post({ phase: 'grouping', done, total }));
+    parentPort!.postMessage({ type: 'result', result: {
+      people: people.map(({ set, ...p }) => ({ ...p, matchable: !!set })), groups, ms: Date.now() - t,
+    } });
+    db.close();
+    return;
+  }
+  if (input.task === 'combine') {
+    if (input.dry) { parentPort!.postMessage({ type: 'result', result: estimateCombine(db, input.combine!) }); db.close(); return; }
+    const res = await combineFolders(db, input.combine!, p => parentPort!.postMessage({ type: 'combine', progress: p }), input.exiftool);
+    parentPort!.postMessage({ type: 'result', result: res });
     db.close();
     return;
   }

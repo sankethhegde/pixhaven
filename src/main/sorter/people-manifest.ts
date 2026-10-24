@@ -21,7 +21,7 @@ export function readManifest(root: string): PeopleManifest {
   return { app: 'PixHaven', version: 1, folders: {} };
 }
 
-function writeManifest(root: string, m: PeopleManifest): void {
+export function writeManifest(root: string, m: PeopleManifest): void {
   for (const k of Object.keys(m.folders)) if (!m.folders[k].length) delete m.folders[k];
   const file = manifestPath(root);
   fs.mkdirSync(path.dirname(file), { recursive: true });

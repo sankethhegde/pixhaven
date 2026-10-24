@@ -257,7 +257,7 @@ export interface FolderStatus {
 // ---------------- Job queue (GEN-01) ----------------
 export interface QueueItem {
   id: string;
-  kind: 'upscale' | 'scan' | 'regroup' | 'apply' | 'undo' | 'download' | 'generate';
+  kind: 'upscale' | 'scan' | 'regroup' | 'apply' | 'undo' | 'download' | 'generate' | 'combine';
   label: string;
   state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
   added: number;
@@ -337,7 +337,33 @@ export interface MediaEntry {
   alsoIn?: string[];          // v2.5: a group photo kept here that these other people's folders show too
 }
 /** v2.5 Photos tab: a folder scanned or sorted before. */
-export interface KnownFolder { path: string; people: number; photos: number; lastScan: number | null; sorted: number | null }
+export interface KnownFolder { path: string; people: number; photos: number; lastScan: number | null; sorted: number | null; id?: number; personFolders?: number }
+
+// v2.8 Combine people across sorted folders (Photos tab): the same person sorted in several folders ends up in one.
+export interface CombinePerson {
+  id: number; folderId: number; folder: string;   // the sorted folder they belong to
+  label: string; named: boolean;                  // folder name; false for automatic "Person 3" names
+  dir: string; photos: number; faceUrls: string[];
+  matchable: boolean;                             // has face fingerprints of the current model
+}
+export interface CombineGroup { members: number[]; score: number; sameName: boolean }
+export interface CombineMatch { people: CombinePerson[]; groups: CombineGroup[]; ms: number }
+export interface CombineRequest { dest: string; groups: { people: number[]; name: string }[] }
+export interface CombineEstimate {
+  files: number; bytes: number; people: number; sameDrive: boolean;
+  wholeFolders: number;                           // person folders moved in one go (same drive, nothing to merge into)
+  renamed: number;                                // photos whose person name inside changes
+  seconds: number;
+}
+export interface CombineProgress { phase: 'matching' | 'moving' | 'naming' | 'finishing' | 'done' | 'error'; done: number; total: number; current?: string; error?: string }
+export interface CombineResult { dest: string; people: number; moved: number; renamed: number; skipped: { path: string; reason: string }[] }
+
+// v2.8: how long a scan will take, measured on a few of the folder's photos before it starts.
+export interface ScanEstimate {
+  files: number; toScan: number; cloud: number;
+  sampled: number; msPerPhoto: number; facesPerPhoto: number; provider: string;
+  scanSeconds: number; groupSeconds: number; seconds: number;
+}
 export interface FileOpResult { done: { from: string; to: string }[]; failed: { path: string; reason: string }[] }
 
 export interface FolderListing {

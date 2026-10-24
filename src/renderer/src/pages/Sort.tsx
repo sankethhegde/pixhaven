@@ -1,8 +1,9 @@
 // Sort photos by person: pick folder → scan → review people → dry run → apply → (undo).
 import { useEffect, useRef, useState } from 'react';
-import type { ApplyProgress, ApplyResult, FolderStatus, ReviewData, ScanProgress, Settings, SortPlan } from '@shared/types';
+import type { ApplyProgress, ApplyResult, FolderStatus, ReviewData, ScanEstimate, ScanProgress, Settings, SortPlan } from '@shared/types';
 import { api, errorText, fmtBytes, fmtDuration, isIn } from '../api';
 import { Review } from '../components/Review';
+import { roughly } from '../components/Combine';
 import { Button, Icon, Notice, ProgressBar, Toggle } from '../components/ui';
 
 type Step = 'pick' | 'scanning' | 'review' | 'dryrun' | 'applying' | 'done';
@@ -36,6 +37,7 @@ export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, o
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [found, setFound] = useState<FolderStatus['reconciled']>(null);
+  const [estimate, setEstimate] = useState<ScanEstimate | 'busy' | null>(null);
   const folderRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -61,7 +63,7 @@ export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, o
   }
 
   async function choose(f: string) {
-    setError(null); setReview(null); setPlan(null); setResult(null); setUndone(null); setFound(null);
+    setError(null); setReview(null); setPlan(null); setResult(null); setUndone(null); setFound(null); setEstimate(null);
     if ((await api.pathKind(f)) !== 'folder') { setError('Please choose a folder.'); return; }
     folderRef.current = f; setFolder(f); setStep('pick');
     const st = await refreshStatus(f);
@@ -74,6 +76,14 @@ export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, o
     setError(null); setProgress({ folder, phase: 'listing', done: 0, total: 0, faces: 0, people: 0 }); setPaused(false);
     setStep('scanning');
     try { await api.sort.scan(folder); } catch (e) { setError(errorText(e)); setStep('pick'); }
+  }
+
+  /** v2.8: how long the scan will take, measured on a few of this folder's photos before it starts. */
+  async function estimateTime() {
+    if (!folder) return;
+    setError(null); setEstimate('busy');
+    try { const e = await api.sort.estimate(folder); if (folderRef.current === folder) setEstimate(e); }
+    catch (e) { setError(errorText(e)); setEstimate(null); }
   }
 
   async function loadReview(fid: number) {
@@ -152,7 +162,25 @@ export function Sort({ settings, onSettings, initialFolder, onConsumedInitial, o
               {last && <> Last sorted {new Date(last.created).toLocaleString()}.</>}
             </div>
           )}
+          {estimate === 'busy' && <div className="rounded-xl border border-line p-4 text-sm text-muted">Counting the photos and timing a few of them on this computer…</div>}
+          {estimate && estimate !== 'busy' && (
+            <div className="rounded-xl border border-line p-4 space-y-1" data-scan-estimate>
+              <div className="font-semibold">{estimate.toScan ? `Scan time: ${roughly(estimate.seconds)}` : 'Nothing new to scan'}</div>
+              <div className="text-sm text-muted">
+                {estimate.files.toLocaleString()} photos{estimate.toScan !== estimate.files ? `, ${estimate.toScan.toLocaleString()} new or changed to scan` : ''}
+                {estimate.cloud ? ` · ${estimate.cloud.toLocaleString()} online-only (skipped)` : ''}
+              </div>
+              {estimate.toScan > 0 && (
+                <div className="text-xs text-muted">
+                  Finding faces {roughly(estimate.scanSeconds)} ({(estimate.msPerPhoto / 1000).toFixed(2)} s a photo{estimate.provider ? ` on ${/dml|gpu|cuda/i.test(estimate.provider) ? 'the graphics card' : 'the processor'}` : ''}, measured on {estimate.sampled} of your photos)
+                  {' · '}grouping faces into people {roughly(estimate.groupSeconds)}.
+                  You can pause or cancel any time; the next scan continues where it stopped.
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex gap-2 flex-wrap">
+            <Button className="h-10" disabled={!folder || estimate === 'busy'} onClick={() => void estimateTime()}><Icon name="calendar" size={16} />Estimate time</Button>
             <Button variant="primary" className="h-10" disabled={!folder || !!status?.interrupted} onClick={startScan}>
               <Icon name="sparkle" size={16} />{status?.scannedImages ? 'Scan for new photos' : 'Scan folder'}
             </Button>

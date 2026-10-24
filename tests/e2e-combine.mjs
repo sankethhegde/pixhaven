@@ -1,0 +1,182 @@
+// End-to-end check of v2.8 in the built app: Photos → Combine people (two sorted folders, the same person in both),
+// and Sort → Estimate time. Photos are made here (coloured noise) and the face data is written straight into the
+// test's own face database (made-up fingerprints), so no real photos are needed.
+// Run: npm run e2e:combine. Screenshots + results.json land in e2e-output/combine/.
+import fs from 'node:fs';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import sharp from 'sharp';
+sharp.cache(false);
+
+const OUT = process.env.CLEARUP_E2E_DIR;
+const BASE = path.join(OUT, 'Combine');
+const results = [];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const FACE_MODEL = 5, D = 512;
+
+let seed = 11;
+const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+const gauss = () => Math.sqrt(-2 * Math.log(rnd() + 1e-12)) * Math.cos(2 * Math.PI * rnd());
+const unit = v => { let s = 0; for (const x of v) s += x * x; s = Math.sqrt(s); return v.map(x => x / s); };
+const identity = () => unit(Float32Array.from({ length: D }, gauss));
+const faceOf = id => unit(Float32Array.from(id, x => x + gauss() * 0.035));
+const blob = e => new Uint8Array(e.buffer, e.byteOffset, e.byteLength);
+
+async function photo(file, i) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const raw = Buffer.alloc(320 * 240 * 3);
+  for (let k = 0; k < raw.length; k++) raw[k] = (k * 31 + i * 97 + Math.floor(rnd() * 60)) & 255;
+  await sharp(raw, { raw: { width: 320, height: 240, channels: 3 } }).jpeg({ quality: 80 }).toFile(file);
+}
+
+/** Trip (Mom, Person 1 = Ravi, a group photo of both in Mom's folder) and Family (Person 2 = Mom, Person 1 = Asha). */
+async function makeFolders(dbFile) {
+  fs.rmSync(BASE, { recursive: true, force: true });
+  const db = new DatabaseSync(dbFile);
+  db.exec('PRAGMA busy_timeout = 5000;');
+  const id = { mom: identity(), ravi: identity(), asha: identity() };
+  const face = db.prepare('INSERT INTO faces (image_id, x, y, w, h, score, sharpness, usable, emb, model, quality, person_id) VALUES (?, 0, 0, 40, 40, 0.9, 50, 1, ?, ?, 0.9, ?)');
+  const img = db.prepare("INSERT INTO images (folder_id, path, size, mtime, status, faces) VALUES (?, ?, ?, ?, 'done', ?)");
+  let n = 0;
+  const folder = async (name, people) => {
+    const root = path.join(BASE, name);
+    const fid = Number(db.prepare('INSERT INTO folders (path, created, last_scan) VALUES (?, ?, ?)').run(root, Date.now(), Date.now()).lastInsertRowid);
+    db.prepare("INSERT INTO sorts (folder_id, created, state, kind, summary) VALUES (?, ?, 'done', 'people', '{}')").run(fid, Date.now());
+    const out = { root, fid };
+    for (const p of people) {
+      const dir = path.join(root, p.folder);
+      const pid = Number(db.prepare('INSERT INTO people (folder_id, num, keep, dir) VALUES (?, ?, 1, ?)').run(fid, p.num, dir).lastInsertRowid);
+      db.prepare('INSERT INTO sort_dirs (folder_id, dir) VALUES (?, ?)').run(fid, dir);
+      out[p.key] = { pid, dir };
+      for (let i = 0; i < p.photos; i++) {
+        const file = path.join(dir, `${p.key}-${i}.jpg`);
+        await photo(file, n++);
+        const st = fs.statSync(file);
+        face.run(Number(img.run(fid, file, st.size, Math.round(st.mtimeMs), 1).lastInsertRowid), blob(faceOf(id[p.who])), FACE_MODEL, pid);
+      }
+    }
+    return out;
+  };
+  const trip = await folder('Trip', [{ key: 'mom', who: 'mom', folder: 'Mom', num: 1, photos: 4 }, { key: 'ravi', who: 'ravi', folder: 'Person 1', num: 2, photos: 3 }]);
+  const family = await folder('Family', [{ key: 'mom2', who: 'mom', folder: 'Person 2', num: 2, photos: 3 }, { key: 'asha', who: 'asha', folder: 'Person 1', num: 1, photos: 2 }]);
+  const group = path.join(trip.mom.dir, 'group.jpg');
+  await photo(group, 99);
+  const gi = Number(img.run(trip.fid, group, fs.statSync(group).size, 0, 2).lastInsertRowid);
+  face.run(gi, blob(faceOf(id.mom)), FACE_MODEL, trip.mom.pid);
+  face.run(gi, blob(faceOf(id.ravi)), FACE_MODEL, trip.ravi.pid);
+  fs.mkdirSync(path.join(trip.root, '.clearup'), { recursive: true });
+  fs.writeFileSync(path.join(trip.root, '.clearup', 'people.json'), JSON.stringify({ app: 'PixHaven', version: 1, folders: { 'Person 1': [{ file: 'Mom/group.jpg', sort: 1 }] } }));
+  db.close();
+  return { trip, family, group };
+}
+
+export default async function run(win, app) {
+  const js = code => win.webContents.executeJavaScript(code);
+  const text = () => js('document.body.innerText');
+  async function waitFor(t, ms = 60000) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if ((await text()).includes(t)) return; await sleep(300); }
+    throw new Error(`Timed out waiting for "${t}"`);
+  }
+  async function click(label, exact = true) {
+    const ok = await js(`(() => { const b = [...document.querySelectorAll('main button, [role=dialog] button')].find(b => b.offsetParent && ${exact ? `b.innerText.trim() === ${JSON.stringify(label)}` : `b.innerText.includes(${JSON.stringify(label)})`});
+      if (!b || b.disabled) return false; b.click(); return true; })()`);
+    if (!ok) throw new Error(`No enabled button "${label}"`);
+    await sleep(300);
+  }
+  async function shot(name) {
+    win.webContents.invalidate();
+    await sleep(700);
+    fs.writeFileSync(path.join(OUT, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+  }
+  const check = (name, pass, detail = '') => { results.push({ name, pass, detail }); console.log(`${pass ? 'PASS' : 'FAIL'} ${name} ${detail}`); };
+
+  try {
+    while (!win.isVisible()) await sleep(100);
+    win.setSize(1280, 900);
+    win.setAlwaysOnTop(true);
+    win.webContents.setBackgroundThrottling(false);
+    fs.mkdirSync(OUT, { recursive: true });
+    await waitFor('What would you like to do?');
+    await js('window.clearup.sort.deleteData()');
+    await js('window.clearup.photos.folders()');            // makes a fresh face database
+    const dbFile = path.join(app.getPath('userData'), 'facedata', 'faces.db');
+    const f = await makeFolders(dbFile);
+
+    // ---- Photos → Combine people ----
+    await js(`window.__clearupPage('photos')`);
+    await waitFor('Combine people…');
+    await click('Combine people…');
+    await waitFor('Sorted folders to combine');
+    const listed = await js(`[...document.querySelectorAll('[data-combine-folder]')].map(e => e.dataset.combineFolder)`);
+    check('both sorted folders are offered, ticked', listed.length === 2 && (await js(`[...document.querySelectorAll('[data-combine-folder] input')].every(i => i.checked)`)), listed.map(p => path.basename(p)).join(', '));
+    const dest = path.join(BASE, 'People');
+    await js(`window.__clearupCombineDest(${JSON.stringify(dest)})`);
+    await sleep(300);
+    await shot('01-choose');
+    await click('Find the same people');
+    await waitFor('Check the matches', 60000);
+    const matches = await js(`[...document.querySelectorAll('[data-combine-match]')].map(m => ({ name: m.querySelector('input[aria-label=Name]').value, people: m.querySelectorAll('[data-combine-person]').length, text: m.innerText }))`);
+    check('Mom is found in both folders (one match, two people)', matches.length === 1 && matches[0].people === 2, JSON.stringify(matches.map(m => ({ name: m.name, people: m.people }))));
+    check('the match takes the name given in Trip', matches[0]?.name === 'Mom');
+    await waitFor('(estimate)', 30000);
+    const est = await text();
+    check('a time estimate is shown before anything moves', /under a minute|about \d/.test(est) && est.includes('13 files'), est.match(/.*\(estimate\).*\n.*/)?.[0]?.replace(/\n/g, ' | ') ?? '');
+    check('nothing moved yet', fs.existsSync(f.family.mom2.dir) && !fs.existsSync(dest));
+    await shot('02-matches');
+
+    await click('Combine…');
+    await waitFor('Move 3 people into');
+    await shot('03-confirm');
+    await click('Combine');
+    await waitFor('People combined', 120000);
+    await shot('04-done');
+    const momDir = path.join(dest, 'Mom');
+    const momFiles = fs.existsSync(momDir) ? fs.readdirSync(momDir).filter(x => x.endsWith('.jpg')) : [];
+    check('Mom\'s photos from both folders are in one folder', momFiles.length === 8, momFiles.join(', '));
+    const dirs = fs.readdirSync(dest).filter(x => x !== '.clearup').sort();
+    check('the others are numbered again in the destination', JSON.stringify(dirs) === JSON.stringify(['Mom', 'Person 1', 'Person 2']), dirs.join(', '));
+    check('the emptied person folders are gone', !fs.existsSync(f.trip.mom.dir) && !fs.existsSync(f.family.mom2.dir));
+    // Automatic names are numbered in folder order (Family's Asha first), so Ravi is found by his photos.
+    const raviName = dirs.find(d => fs.readdirSync(path.join(dest, d)).some(x => x.startsWith('ravi-'))) ?? 'Person 2';
+    const ravi = fs.readdirSync(path.join(dest, raviName));
+    check('Ravi keeps his photos', ravi.filter(x => x.endsWith('.jpg')).length === 3, `${raviName}: ${ravi.join(', ')}`);
+
+    // Explorer: the group photo kept in Mom's folder is shown in Ravi's folder through a shortcut that points at the new place.
+    const { shell } = await import('electron');
+    const lnks = ravi.filter(x => x.endsWith('.lnk')).map(x => shell.readShortcutLink(path.join(dest, raviName, x)));
+    check('group photo shortcut points at the new place', lnks.length === 1 && lnks[0].target.toLowerCase() === path.join(momDir, 'group.jpg').toLowerCase(), lnks.map(l => l.target).join(', '));
+    const names = await js(`window.clearup.tags.peopleIn(${JSON.stringify(path.join(momDir, 'mom2-0.jpg'))})`).catch(() => null);
+    if (names) check('the name inside Family\'s photos of Mom changed to Mom', names.includes('Mom') && !names.includes('Person 2'), names.join(', '));
+
+    // The destination opens in Photos like any sorted folder.
+    await click('Open in Photos');
+    await waitFor('People (3)', 20000);
+    const cards = await js(`[...document.querySelectorAll('[data-photos-person]')].map(c => c.dataset.photosPerson + ': ' + c.innerText.match(/(\\d+) photo/)?.[1])`);
+    check('Photos shows the combined folder: Mom with 8 photos', cards.includes('Mom: 8'), cards.join(', '));
+    await shot('05-photos');
+
+    // ---- Sort → Estimate time ----
+    const scanDir = path.join(BASE, 'To scan');
+    for (let i = 0; i < 30; i++) await photo(path.join(scanDir, `p${i}.jpg`), 200 + i);
+    await js(`window.__clearupSort(${JSON.stringify(scanDir)})`);
+    await waitFor('Estimate time');
+    await sleep(800);
+    await click('Estimate time');
+    await waitFor('Scan time:', 120000);
+    const card = await js(`document.querySelector('[data-scan-estimate]')?.innerText ?? ''`);
+    check('scan estimate: photos counted and timed on this computer', card.includes('30 photos') && /measured on \d+ of your photos/.test(card) && /Scan time: (under a minute|about)/.test(card), card.replace(/\n/g, ' | '));
+    const db = new DatabaseSync(dbFile);
+    const scanned = db.prepare("SELECT COUNT(*) AS n FROM images i JOIN folders f ON f.id = i.folder_id WHERE f.path = ?").get(scanDir).n;
+    db.close();
+    check('estimating saves nothing (no photos scanned)', scanned === 0, String(scanned));
+    await shot('06-estimate');
+  } catch (e) {
+    check('run', false, String(e?.stack ?? e));
+    await shot('error').catch(() => {});
+  }
+  fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify(results, null, 2));
+  const failed = results.filter(r => !r.pass).length;
+  console.log(`${results.length - failed}/${results.length} passed`);
+  app.exit(failed ? 1 : 0);
+}

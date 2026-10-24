@@ -3,7 +3,7 @@ import type {
   ApplyProgress, ApplyResult, FolderStatus, GpuStatus, ImageInfo, JobItem, JobUpdate, ModelDownload, ModelId, PhotoRef,
   PowerStatus, QueueItem, ReviewData, SaveResult, ScanProgress, Settings, SortHistory, SortPlan, TidyResults, UpdateStatus, UpscaleOptions,
   FileWriteStatus, Playlist, WatchChange, WatchedFolder, WatchQuery, WatchResult,
-  FileOpResult, KnownFolder, MediaEntry, DescribeResult, DescribeStatus, GenImage, GenProgress, GenRequest, GenStatus,
+  FileOpResult, KnownFolder, MediaEntry, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, ScanEstimate, DescribeResult, DescribeStatus, GenImage, GenProgress, GenRequest, GenStatus,
   DriveInfo, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
 } from '@shared/types';
 
@@ -28,6 +28,7 @@ interface SortApi {
   dataSize(): Promise<number>;
   deleteData(): Promise<void>;
   upscaleLow(files: { path: string; width: number; height: number }[]): Promise<string[]>;
+  estimate(root: string): Promise<ScanEstimate>;
 }
 export interface FolderScan { files: { path: string; width: number; height: number }[]; skipped: number; unreadable: string[] }
 export type PathKind = 'folder' | 'image' | 'other' | 'missing';
@@ -132,6 +133,9 @@ interface DescribeApi {
 interface PhotosApi {
   folders(): Promise<KnownFolder[]>;
   person(pid: number): Promise<{ dir: string | null; items: MediaEntry[] }>;
+  match(folderIds: number[]): Promise<CombineMatch>;
+  combineEstimate(req: CombineRequest): Promise<CombineEstimate>;
+  combine(req: CombineRequest): Promise<CombineResult>;
 }
 interface FilesApi {
   paste(paths: string[], dest: string, mode: 'copy' | 'move'): Promise<FileOpResult>;
@@ -180,6 +184,7 @@ interface Api {
   onSortProgress(cb: (p: ScanProgress) => void): Off;
   onSortScanned(cb: (r: { folderId: number; cancelled?: boolean }) => void): Off;
   onApplyProgress(cb: (p: ApplyProgress) => void): Off;
+  onCombineProgress(cb: (p: CombineProgress) => void): Off;
   onOpenSort(cb: (folder: string) => void): Off;
   detectGpu(): Promise<{ gpu: GpuStatus; dedicated: boolean }>;
   getSettings(): Promise<Settings>;

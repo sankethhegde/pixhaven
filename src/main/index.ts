@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, powerMonitor, protocol, shell } from 'electron';
-import type { JobItem, JobUpdate, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery, GenRequest } from '@shared/types';
+import type { JobItem, JobUpdate, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery, GenRequest, CombineRequest } from '@shared/types';
 import { IMAGE_EXTENSIONS } from '@shared/types';
 import { getSettings, updateSettings, writeTurnedOn } from './settings';
 import { detectGpu, hasDedicatedGpu } from './gpu-detect';
@@ -493,6 +493,7 @@ handle('sort:apply', async (fid: number) => {
 handle('sort:finish', (sortId: number) => sort.finishSort(sortId, { apply: p => send('sort:apply-progress', p) }));
 handle('sort:undo', (sortId: number) => sort.undoSortJob(sortId, { apply: p => send('sort:apply-progress', p) }));
 handle('sort:personFiles', (pid: number) => sort.personImagePaths(pid));
+handle('sort:estimate', (root: string) => sort.estimateScan(root));
 handle('sort:dataSize', () => sort.faceDataSize());
 handle('sort:deleteData', () => sort.deleteFaceData());
 
@@ -555,6 +556,16 @@ handle('tags:renameFile', (p: string, name: string) => tags.renameFile(p, name))
 // v2.5 Photos tab
 handle('photos:folders', () => sort.knownFolders());
 handle('photos:person', (pid: number) => sort.personItems(pid));
+// v2.8 combine people across sorted folders
+handle('photos:match', (fids: number[]) => sort.matchAcross(fids, { combine: p => send('photos:combine-progress', p) }));
+handle('photos:combineEstimate', (req: CombineRequest) => sort.combineEstimate(req));
+handle('photos:combine', async (req: CombineRequest) => {
+  const { moves, files, roots: _roots, ...r } = await sort.combine(req, { combine: p => send('photos:combine-progress', p) });
+  // Labels and stars follow the moved photos; the ones whose names inside changed are read again.
+  await tags.afterSort(moves, files).catch(e => log('warn', 'Updating labels after combining failed', e));
+  notifyDone('PixHaven: people combined', `${r.people} people in ${path.basename(r.dest)}, ${r.moved} files moved.`);
+  return r;
+});
 handle('files:paste', (paths: string[], dest: string, mode: 'copy' | 'move') => tags.pasteItems(paths, dest, mode));
 handle('files:pasteTo', async (paths: string[], mode: 'copy' | 'move') => {
   const what = `${paths.length} item${paths.length > 1 ? 's' : ''}`;

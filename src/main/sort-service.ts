@@ -8,7 +8,8 @@ import { app } from 'electron';
 import sharp from 'sharp';
 import workerPath from './faces/sort-worker?modulePath';
 import type {
-  ApplyProgress, ApplyResult, FolderStatus, KnownFolder, MediaEntry, PersonSummary, PhotoRef, ReviewData, ScanProgress, SortHistory, SortPlan,
+  ApplyProgress, ApplyResult, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, FolderStatus, KnownFolder, MediaEntry,
+  PersonSummary, PhotoRef, ReviewData, ScanEstimate, ScanProgress, SortHistory, SortPlan,
 } from '@shared/types';
 import { openDb, folderId, nextPersonNum, tx, type Db } from './db';
 import { getSettings } from './settings';
@@ -33,6 +34,7 @@ export const getDb = () => (db ??= openDb(dbPath()));
 export type SortEvents = {
   scan: (p: ScanProgress) => void;
   apply: (p: ApplyProgress) => void;
+  combine: (p: CombineProgress) => void;
 };
 
 // ---------- listing files ----------
@@ -43,7 +45,7 @@ function cloudOnlyFiles(root: string, recurse: boolean): Promise<Set<string>> {
     const cmd = `Get-ChildItem -LiteralPath $env:CLEARUP_ROOT -File -Force ${recurse ? '-Recurse' : ''} -ErrorAction SilentlyContinue | ` +
       `Where-Object { ([int]$_.Attributes -band 0x441000) -ne 0 } | ForEach-Object { $_.FullName }`;
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd],
-      { windowsHide: true, timeout: 60000, maxBuffer: 64 << 20, env: { ...process.env, CLEARUP_ROOT: root } },
+      { windowsHide: true, timeout: 300000, maxBuffer: 256 << 20, env: { ...process.env, CLEARUP_ROOT: root } },
       (err, out) => resolve(new Set(err ? [] : out.split(/\r?\n/).map(s => s.trim().toLowerCase()).filter(Boolean))));
   });
 }
@@ -84,6 +86,7 @@ export function runWorker(input: Omit<WorkerInput, 'dbPath' | 'modelsDir' | 'thu
     worker.on('message', (m: any) => {
       if (m.type === 'progress') ev.scan?.(m.progress);
       else if (m.type === 'apply') ev.apply?.(m.progress);
+      else if (m.type === 'combine') ev.combine?.(m.progress);
       else if (m.type === 'log') log('info', 'sort-worker', m.message);
       // The result is the last message: end the worker right away (ONNX threads could keep it alive).
       else if (m.type === 'result') { result = m.result; resolve(result); void worker.terminate(); }
@@ -334,10 +337,11 @@ export function knownFolders(): KnownFolder[] {
       (SELECT COUNT(*) FROM people p WHERE p.folder_id = f.id AND (p.dir IS NOT NULL OR (SELECT COUNT(DISTINCT x.image_id) FROM faces x
         WHERE x.person_id = p.id AND x.removed = 0) >= ?)) AS people,
       (SELECT COUNT(*) FROM images i WHERE i.folder_id = f.id AND i.status = 'done') AS photos,
-      (SELECT MAX(created) FROM sorts s WHERE s.folder_id = f.id AND s.state = 'done') AS sorted
-    FROM folders f ORDER BY COALESCE(sorted, f.last_scan, 0) DESC`).all(getSettings().sort.minPhotos) as { id: number; path: string; last_scan: number | null; people: number; photos: number; sorted: number | null }[];
+      (SELECT MAX(created) FROM sorts s WHERE s.folder_id = f.id AND s.state = 'done') AS sorted,
+      (SELECT COUNT(*) FROM people p WHERE p.folder_id = f.id AND p.dir IS NOT NULL) AS dirs
+    FROM folders f ORDER BY COALESCE(sorted, f.last_scan, 0) DESC`).all(getSettings().sort.minPhotos) as { id: number; path: string; last_scan: number | null; people: number; photos: number; sorted: number | null; dirs: number }[];
   return rows.filter(r => r.people > 0 && fs.existsSync(r.path))
-    .map(r => ({ path: r.path, people: r.people, photos: r.photos, lastScan: r.last_scan, sorted: r.sorted }));
+    .map(r => ({ id: r.id, path: r.path, people: r.people, photos: r.photos, lastScan: r.last_scan, sorted: r.sorted, personFolders: r.dirs }));
 }
 
 /** One person's photos: their folder when it exists (the renderer lists it), else the photos where they are now. */
@@ -356,6 +360,80 @@ export function personImagePaths(pid: number): { path: string; width: number; he
   return (getDb().prepare(`SELECT DISTINCT i.path, i.width, i.height FROM faces f JOIN images i ON i.id = f.image_id
     WHERE f.person_id = ? AND f.removed = 0 ORDER BY i.path`).all(pid) as { path: string; width: number; height: number }[])
     .filter(r => fs.existsSync(r.path));
+}
+
+// ---------- v2.8: time estimate before a scan ----------
+
+/**
+ * How long a scan of this folder will take: the photos are counted (only new or changed ones are scanned), then a few
+ * of them are put through face finding on this computer. Grouping is estimated from how fast it compares faces.
+ */
+export function estimateScan(root: string): Promise<ScanEstimate> {
+  let result: ScanEstimate | null = null;
+  return queue.add('scan', `Sort by person: time a scan of ${path.basename(root)}`, async () => {
+    const d = getDb();
+    const fid = folderId(d, root, false);
+    const files = await listImages(root, getSettings().sort.includeSubfolders, [...(fid != null ? sortDirs(fid) : []), ...sortedFolders(root)]);
+    const known = new Map((fid != null ? d.prepare('SELECT path, size, mtime, status FROM images WHERE folder_id = ?').all(fid) as { path: string; size: number; mtime: number; status: string }[] : [])
+      .map(r => [r.path.toLowerCase(), r]));
+    const todo = files.filter(f => {
+      if (f.cloud) return false;
+      const r = known.get(f.path.toLowerCase());
+      return !r || r.size !== f.size || r.mtime !== f.mtime || r.status === 'pending' || r.status === 'skipped';
+    });
+    // Up to 9 photos spread over the folder (different subfolders, cameras and sizes).
+    const pool = todo.length ? todo : files.filter(f => !f.cloud);
+    const step = Math.max(1, Math.floor(pool.length / 9));
+    const samples = pool.filter((_, i) => i % step === 0).slice(0, 9).map(f => f.path);
+    const t: { provider: string; loadMs: number; sampled: number; msPerPhoto: number; facesPerPhoto: number; dotsPerSecond: number } =
+      samples.length ? await runWorker({ task: 'estimate', folderId: fid ?? 0, root, files: [], keepDirs: [], samples }, {})
+        : { provider: '', loadMs: 0, sampled: 0, msPerPhoto: 0, facesPerPhoto: 0, dotsPerSecond: 1e6 };
+    const scanSeconds = todo.length ? (todo.length * t.msPerPhoto + t.loadMs) / 1000 : 0;
+    // Grouping compares every face with the groups so far (about 1 group for every 8 faces in real folders), then
+    // groups with each other and leftover faces with everyone.
+    const before = fid != null ? (d.prepare('SELECT COUNT(*) AS n FROM faces f JOIN images i ON i.id = f.image_id WHERE i.folder_id = ? AND f.usable = 1').get(fid) as { n: number }).n : 0;
+    const F = before + todo.length * t.facesPerPhoto;
+    const G = Math.max(10, F / 8);
+    const groupSeconds = F ? (F * G + (G * G) / 2 + 0.1 * F * F) / t.dotsPerSecond + F / 20_000 : 0;
+    result = {
+      files: files.length, toScan: todo.length, cloud: files.filter(f => f.cloud).length,
+      sampled: t.sampled, msPerPhoto: t.msPerPhoto, facesPerPhoto: t.facesPerPhoto, provider: t.provider,
+      scanSeconds, groupSeconds, seconds: scanSeconds + groupSeconds,
+    };
+    log('info', `Scan estimate for ${root}: ${JSON.stringify(result)}`);
+  }, cancelScan).done.then(() => result!);
+}
+
+// ---------- v2.8: combine people across sorted folders ----------
+
+/** Who is the same person in these sorted folders (by face). */
+export function matchAcross(fids: number[], ev: Pick<SortEvents, 'combine'>): Promise<CombineMatch> {
+  let result: CombineMatch | null = null;
+  return queue.add('combine', `Combine people: compare ${fids.length} folders`, async () => {
+    const r = await runWorker({ task: 'match', folderId: fids[0] ?? 0, root: '', files: [], keepDirs: [], folderIds: fids },
+      { scan: p => ev.combine({ phase: 'matching', done: p.done, total: p.total }) }) as { people: (Omit<CombineMatch['people'][number], 'faceUrls' | 'folder'> & { root: string })[]; groups: CombineMatch['groups']; ms: number };
+    const chips = getDb().prepare('SELECT chip FROM faces WHERE person_id = ? AND removed = 0 ORDER BY COALESCE(quality, 1) * sharpness * h DESC LIMIT 4');
+    result = {
+      people: r.people.map(({ root, ...p }) => ({ ...p, folder: root, faceUrls: (chips.all(p.id) as { chip: string | null }[]).map(c => faceUrl(c.chip)).filter(Boolean) })),
+      groups: r.groups, ms: r.ms,
+    };
+    log('info', `Combine: ${r.people.length} people in ${fids.length} folders, ${r.groups.length} found in more than one (${r.ms} ms)`);
+  }, cancelScan).done.then(() => result!);
+}
+
+export function combineEstimate(req: CombineRequest): Promise<CombineEstimate> {
+  return runWorker({ task: 'combine', dry: true, folderId: 0, root: req.dest, files: [], keepDirs: [], combine: req }, {});
+}
+
+/** Move the people into the destination. Labels and shortcuts follow afterwards (main process). */
+export function combine(req: CombineRequest, ev: Pick<SortEvents, 'combine'>): Promise<CombineResult & { moves: { from: string; to: string }[]; files: string[]; roots: string[] }> {
+  let result: any = null;
+  return queue.add('combine', `Combine people into ${path.basename(req.dest)}`, async () => {
+    result = await runWorker({ task: 'combine', folderId: 0, root: req.dest, files: [], keepDirs: [], combine: req }, ev);
+    syncGroupLinks(req.dest);
+    for (const r of result.roots as string[]) syncGroupLinks(r);
+    log('info', `Combined ${result.people} people into ${req.dest}: ${result.moved} files moved, ${result.renamed} renamed, ${result.skipped.length} skipped`);
+  }, () => { /* moving can't stop halfway safely */ }).done.then(() => result);
 }
 
 /** Privacy: delete every saved face fingerprint and thumbnail. Files on disk are not touched. */
