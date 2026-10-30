@@ -75,6 +75,49 @@ export class TagStore {
     // another app (or on another computer) is noticed and merged; plus one line per folder already read.
     if (!cols.includes('synced')) this.db.exec('ALTER TABLE media ADD COLUMN synced TEXT');
     this.db.exec(`CREATE TABLE IF NOT EXISTS dir_reads (dir TEXT PRIMARY KEY ${CI}, sig TEXT NOT NULL) WITHOUT ROWID`);
+    // v2.10 hidden items: folders and files hidden by path (they follow moves made in the app), labels hidden by a flag
+    // (their files are hidden too), and the password (salted scrypt hash) in a small key/value table.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS hidden (path TEXT PRIMARY KEY ${CI}, folder INTEGER NOT NULL) WITHOUT ROWID;
+      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID`);
+    const lcols = (this.db.prepare('PRAGMA table_info(labels)').all() as { name: string }[]).map(c => c.name);
+    if (!lcols.includes('hidden')) this.db.exec('ALTER TABLE labels ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
+  }
+
+  // ---------- v2.10 hidden items ----------
+
+  meta(key: string): string | null { return (this.db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined)?.value ?? null; }
+  setMeta(key: string, value: string | null): void {
+    if (value === null) this.db.prepare('DELETE FROM meta WHERE key = ?').run(key);
+    else this.db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+  }
+  hiddenItems(): { path: string; folder: boolean }[] {
+    return (this.db.prepare('SELECT path, folder FROM hidden').all() as { path: string; folder: number }[]).map(r => ({ path: r.path, folder: !!r.folder }));
+  }
+  setHidden(items: { path: string; folder: boolean }[], on: boolean): void {
+    this.tx(() => {
+      const add = this.db.prepare('INSERT OR REPLACE INTO hidden (path, folder) VALUES (?, ?)'), del = this.db.prepare('DELETE FROM hidden WHERE path = ?');
+      for (const it of items) { if (on) add.run(it.path, it.folder ? 1 : 0); else del.run(it.path); }
+    });
+  }
+  unhideAll(): void { this.tx(() => { this.db.exec('DELETE FROM hidden'); this.db.exec('UPDATE labels SET hidden = 0'); }); }
+  setLabelHidden(id: number, on: boolean): void { this.db.prepare('UPDATE labels SET hidden = ? WHERE id = ?').run(on ? 1 : 0, id); }
+  hiddenLabelIds(): number[] { return (this.db.prepare('SELECT id FROM labels WHERE hidden = 1').all() as { id: number }[]).map(r => r.id); }
+  /** Files carrying a hidden label. */
+  pathsWithHiddenLabels(): string[] {
+    return (this.db.prepare('SELECT DISTINCT m.path FROM media m JOIN media_labels ml ON ml.media_id = m.id JOIN labels l ON l.id = ml.label_id WHERE l.hidden = 1').all() as { path: string }[]).map(r => r.path);
+  }
+  /** A folder renamed or moved by the app: hidden things inside it follow. */
+  movedDir(from: string, to: string): void {
+    const rows = this.db.prepare('SELECT path, folder FROM hidden').all() as { path: string; folder: number }[];
+    const f = from.toLowerCase();
+    this.tx(() => {
+      for (const r of rows) {
+        const p = r.path.toLowerCase();
+        if (p !== f && !p.startsWith(f + path.sep.toLowerCase()) && !p.startsWith(f + '/')) continue;
+        this.db.prepare('DELETE FROM hidden WHERE path = ?').run(r.path);
+        this.db.prepare('INSERT OR REPLACE INTO hidden (path, folder) VALUES (?, ?)').run(to + r.path.slice(from.length), r.folder);
+      }
+    });
   }
 
   close(): void { this.db.close(); }
@@ -87,8 +130,9 @@ export class TagStore {
   // ---------- labels (TAG-01, TAG-02) ----------
 
   labels(): LabelInfo[] {
-    return this.db.prepare(`SELECT l.id, l.name, l.color, COUNT(ml.media_id) AS count FROM labels l
-      LEFT JOIN media_labels ml ON ml.label_id = l.id GROUP BY l.id ORDER BY l.name COLLATE NOCASE`).all() as unknown as LabelInfo[];
+    return (this.db.prepare(`SELECT l.id, l.name, l.color, l.hidden, COUNT(ml.media_id) AS count FROM labels l
+      LEFT JOIN media_labels ml ON ml.label_id = l.id GROUP BY l.id ORDER BY l.name COLLATE NOCASE`).all() as unknown as (Omit<LabelInfo, 'hidden'> & { hidden: number })[])
+      .map(l => ({ ...l, hidden: !!l.hidden }));
   }
 
   /** Id of the label with this name (any case), created if new. */
@@ -231,6 +275,7 @@ export class TagStore {
     this.tx(() => {
       this.db.prepare('UPDATE media SET path = ?, dir = ?, name = ?, updated = ? WHERE path = ?').run(to, path.dirname(to), path.basename(to), Date.now(), from);
       this.db.prepare('UPDATE OR REPLACE playback SET path = ? WHERE path = ?').run(to, from);
+      this.db.prepare('UPDATE OR REPLACE hidden SET path = ? WHERE path = ?').run(to, from);
     });
   }
 

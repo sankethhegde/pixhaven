@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState } from 'react';
 import type { DriveInfo } from '@shared/types';
 import { api, fmtBytes } from '../api';
 import { Icon } from './ui';
+import { usePrivacy } from './Privacy';
 
 interface Node { folders: string[] | null; denied?: boolean }
 
@@ -29,6 +30,16 @@ export function FolderTree({ drives, current, hasMedia, onHasMedia, onOpen }: Pr
     setNodes(n => ({ ...n, [dir]: { folders, denied: l.denied } }));
     if (folders.length) api.lib.hasMedia(folders).then(onHasMedia);
   }
+  // v2.10: hidden folders come and go with the lock: the open branches are read again.
+  const privacy = usePrivacy();
+  const lockKey = `${privacy.unlocked}|${privacy.items}|${privacy.labels}`;
+  const [seenKey, setSeenKey] = useState(lockKey);
+  useEffect(() => {
+    if (lockKey === seenKey) return;
+    setSeenKey(lockKey);
+    for (const d of Object.keys(nodes)) void load(d);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockKey]);
   const toggle = (dir: string) => {
     const next = !open[dir];
     setOpen(o => ({ ...o, [dir]: next }));

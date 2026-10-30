@@ -335,6 +335,7 @@ export interface MediaEntry {
   name: string; path: string; kind: 'folder' | MediaKind; size: number; mtime: number;
   taggedFrom?: string;        // v2.2: a group photo shown in this person's folder, kept in the folder of this name
   alsoIn?: string[];          // v2.5: a group photo kept here that these other people's folders show too
+  hidden?: boolean;           // v2.10: hidden, shown only while hidden items are unlocked
 }
 /** v2.5 Photos tab: a folder scanned or sorted before. */
 export interface KnownFolder { path: string; people: number; photos: number; lastScan: number | null; sorted: number | null; id?: number; personFolders?: number }
@@ -418,7 +419,14 @@ export interface SubtitleCue { start: number; end: number; text: string }
 export interface RecentVideo { path: string; position: number; duration: number; updated: number; size: number; mtime: number }
 
 // ---------------- Labels and stars (v2.0 Phase C) ----------------
-export interface LabelInfo { id: number; name: string; color: string | null; count: number }
+export interface LabelInfo { id: number; name: string; color: string | null; count: number; hidden?: boolean }
+// v2.10 Wallpaper recommended: photos that fit this computer's screen.
+export interface WallScreen { id: number; width: number; height: number; primary: boolean; label: string }
+export interface WallItem extends MediaEntry { width: number; height: number; crop: number; upscale: 1 | 2 | 4; sharp: number }
+export interface WallResult { screen: WallScreen; ready: WallItem[]; upscale: WallItem[]; checked: number; blurry: number; cancelled: boolean; seconds: number }
+export interface WallProgress { phase: 'listing' | 'checking' | 'done'; done: number; total: number; found?: number }
+/** v2.10 hidden items: folders, photos, videos and labels kept out of sight until unlocked with a password. */
+export interface PrivacyStatus { hasPassword: boolean; unlocked: boolean; items: number; labels: number }
 export interface MediaTags { stars: number; labels: number[] }
 export interface TagFilter { labels: number[]; mode: 'all' | 'any'; minStars: number }
 /** A photo or video from the library database (any folder or drive); offline = its drive is not connected. */

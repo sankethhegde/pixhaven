@@ -36,6 +36,8 @@ npm run setup:engine     # downloads the engine, models, face models, places, FF
 | `node tests/make-media.mjs <folder>` | Builds the mixed-format test folder (17 photo formats incl. HEIC and 7 RAW, 17 video formats) |
 | `npm run e2e:sort` | Same for Sort by person: scan → review → dry run → apply (no copies, people tagged, folders checked against the photos' real names) → re-scan → undo, on ~50 public test photos (`phase0/fetch-test-photos.mjs`, or set `CLEARUP_TESTPHOTOS`) |
 | `npm run e2e:combine` | Photos → Combine people on two sorted folders made by the test (the same person in both): match, name, estimate, combine, files/face data/names/shortcuts checked, destination opened; Move to / Rename; Merge into… (by hand and by face); then Sort → Estimate time |
+| `npm run e2e:privacy` | Hidden folders, photos, videos and labels (password, wrong password, unlock, lock, rename, change password); Library Copy / Paste, New folder, Copy to |
+| `npm run e2e:wallpaper` | Wallpaper recommended with photos made for this screen: ready, upscale first, blurry and wrong-shape ones left out, Set as wallpaper (faked, the desktop is not changed), Upscale, hidden photos left out |
 | `npm run e2e:scale` | Opens a made-up 70,000-photo, 2,500-person sorted folder in Photos (first time, again, after Explorer renames/moves) and fails if the app is held for over 1 s |
 | `npm run dist` | Type-check, build and make the Windows installer `dist/PixHaven-Setup-<version>.exe` |
 | `PixHaven.exe --selftest out.json` | Installed app: GPU check, one real upscale, a face scan, a video thumbnail, an on-the-fly video conversion, labels export/import, ExifTool writing and reading back (labels, stars, people) and the folder index; JSON report, then exits. Add `--cpu` to test CPU mode, `--with-download` to test the model download |
@@ -153,6 +155,22 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   shortcuts move to the destination, and the old folders' sort logs follow the files (their Undo still finds them).
   Every move is listed in `<destination>/.clearup/combine-log.jsonl`; there is no one-click undo. Choosing one of the
   sorted folders as the destination keeps its people where they are. 3,000 people in 40 folders compare in ~7 s.
+- **Hidden items (1.0):** folders, photos, videos (Library, Photos: Hide / Unhide; a person: Hide person) and labels
+  (Manage labels: Hide — the label and its files) stay out of every PixHaven screen until unlocked with a password: folder
+  listings and the folder tree, search, labels and filters, playlists, watched-folder views, recent videos, Photos'
+  folders, people and photo lists, and Wallpaper recommended. All of it passes `src/main/privacy.ts` in the main
+  process. Unlocked, hidden items show with a "Hidden" mark; PixHaven starts locked. The password (scrypt, salted) and
+  the hidden list live in library.db; hidden paths follow renames and moves made in the app (not ones made in
+  Explorer). Wrong passwords slow down after 5 tries. Removing the password shows everything again. Files are never
+  changed: File Explorer still shows them. Settings → Hidden items: set, change, remove, lock.
+- **Library clipboard (1.0):** Cut / Copy / Paste (Ctrl+X / C / V, also between folders), New folder (Ctrl+Shift+N) and
+  Copy to…, as in the Photos tab.
+- **Wallpaper recommended (1.0):** photos for this computer's screen (physical pixels; a choice when there are several):
+  big enough to fill it, at most 22% cropped to its shape, and sharp (Tidy up's blur threshold). Looks in the watched
+  folders (from the index) or any folder; each photo is measured once (header size, sharpness from a 512 px copy) and
+  remembered in userData/wallpaper-cache.json. "Ready" (best fit first) → Set as wallpaper (Windows Fill, through
+  PowerShell; other formats saved as a JPG copy first); "Upscale first" (needs 2× or 4×) → Upscale. Hidden photos are
+  left out.
 - **Merge into… (Photos, 1.0):** a person's view has "Merge into…". Each of their photos is compared with everyone else
   in the sorted folder (its 3 nearest faces there, at strictness − 0.04, and 0.05 ahead of the next best; never someone
   already in that photo). All alike one person → "Merge N photos into Person 4"; spread over several → one click sends

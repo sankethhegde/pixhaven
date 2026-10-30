@@ -5,6 +5,7 @@ import { api, errorText, fmtBytes } from '../api';
 import { Button, Icon, Notice, Segmented, Toggle } from '../components/ui';
 import { LabelsSettings } from '../components/LabelsSettings';
 import { ShortcutsSettings, WatchedSettings } from '../components/WatchedSettings';
+import { askPassword, toggleLock, usePrivacy } from '../components/Privacy';
 
 interface Props {
   settings: Settings;
@@ -196,6 +197,8 @@ export function SettingsPage({ settings, gpu, dedicated, version, onSettings, on
 
         <LabelsSettings />
 
+        <HiddenSettings />
+
         <ShortcutsSettings />
 
         <Card title="Appearance">
@@ -238,6 +241,25 @@ export function SettingsPage({ settings, gpu, dedicated, version, onSettings, on
         </Card>
       </div>
     </div>
+  );
+}
+
+/** v2.10 Hidden items: the password, and locking. Hiding is done on the items themselves (Library, Photos, labels). */
+function HiddenSettings() {
+  const p = usePrivacy();
+  return (
+    <Card title="Hidden items">
+      <Row label="Password" hint={p.hasPassword
+        ? <>Hidden: {p.items} folder{p.items === 1 ? '' : 's'} or file{p.items === 1 ? '' : 's'}, {p.labels} label{p.labels === 1 ? '' : 's'}. They stay out of every PixHaven screen until you unlock them, and lock again when PixHaven closes. The files are not changed: File Explorer still shows them.</>
+        : 'Select folders, photos or videos in the Library or Photos and press Hide, or hide a label in Manage labels. PixHaven asks for a password the first time.'}>
+        <div className="flex gap-2">
+          {!p.hasPassword && <Button onClick={() => void askPassword('create')}>Set password</Button>}
+          {p.hasPassword && <Button onClick={() => void toggleLock()}><Icon name={p.unlocked ? 'lock' : 'unlock'} size={15} />{p.unlocked ? 'Lock now' : 'Unlock'}</Button>}
+          {p.hasPassword && <Button onClick={() => void askPassword('change')}>Change</Button>}
+          {p.hasPassword && <Button variant="danger" onClick={() => void askPassword('remove')}>Remove</Button>}
+        </div>
+      </Row>
+    </Card>
   );
 }
 

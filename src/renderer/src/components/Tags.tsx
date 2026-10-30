@@ -7,6 +7,7 @@ import { LABEL_COLORS } from '@shared/types';
 import { errorText } from '../api';
 import * as T from '../tags';
 import { Button, Icon } from './ui';
+import { hideLabel } from './Privacy';
 
 // ---------- stars (TAG-03) ----------
 
@@ -220,8 +221,12 @@ export function ManageLabels({ onClose }: { onClose: () => void }) {
                 <input autoFocus value={name} onChange={e => setName(e.target.value)} aria-label="New name"
                   onKeyDown={e => { if (e.key === 'Enter') void save(l.id); if (e.key === 'Escape') { setEditing(null); e.stopPropagation(); } }}
                   className="flex-1 h-8 rounded-lg bg-panel-2 border border-accent px-2 text-sm outline-none" />
-              ) : <div className="flex-1 truncate text-sm">{l.name}</div>}
+              ) : <div className="flex-1 truncate text-sm">{l.name}{l.hidden && <span className="ml-2 text-xs text-muted">(hidden)</span>}</div>}
               <span className="text-xs text-muted w-16 text-right">{l.count} file{l.count === 1 ? '' : 's'}</span>
+              <Button className="!h-8" variant="ghost" onClick={() => void hideLabel(l.id, !l.hidden).catch(e => setError(errorText(e)))}
+                title={l.hidden ? 'Show this label and its files again' : 'Hide this label and every photo and video with it, until unlocked with the password'}>
+                <Icon name={l.hidden ? 'eye' : 'eyeOff'} size={15} />{l.hidden ? 'Unhide' : 'Hide'}
+              </Button>
               {editing === l.id ? <Button className="!h-8" variant="primary" onClick={() => void save(l.id)}>Save</Button>
                 : <Button className="!h-8" variant="ghost" onClick={() => { setEditing(l.id); setName(l.name); }}>Rename</Button>}
               {confirm === l.id ? (
@@ -231,7 +236,7 @@ export function ManageLabels({ onClose }: { onClose: () => void }) {
           ))}
         </div>
         {error && <div className="px-5 py-2 text-sm text-muted border-t border-line">{error}</div>}
-        <div className="px-5 py-3 border-t border-line text-xs text-muted">Renaming a label to the name of another one merges them. Deleting removes it from every photo and video.</div>
+        <div className="px-5 py-3 border-t border-line text-xs text-muted">Renaming a label to the name of another one merges them. Deleting removes it from every photo and video. Hiding a label hides it and its files until hidden items are unlocked.</div>
       </div>
     </div>
   );

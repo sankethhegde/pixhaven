@@ -238,6 +238,7 @@ const lower = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p
 async function followMoves(pairs: { from: string; to: string }[], dir?: { from: string; to: string }): Promise<void> {
   const s = tagStore();
   for (const m of pairs) { try { s.moved(m.from, m.to); } catch { /* not labelled */ } onMoved(m.from, m.to); }
+  if (dir) { try { s.movedDir(dir.from, dir.to); } catch (e) { log('warn', 'Hidden items did not follow the folder', e); } }
   const files = new Map(pairs.map(m => [lower(m.from), m.to]));
   const map = (p: string) => {
     const f = files.get(lower(p));

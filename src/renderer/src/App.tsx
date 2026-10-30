@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { GpuStatus, QueueItem, Settings } from '@shared/types';
 import { api, errorText } from './api';
+import { LockButton, PrivacyHost } from './components/Privacy';
 import { Home } from './pages/Home';
 import { Upscale } from './pages/Upscale';
 import { Sort } from './pages/Sort';
@@ -9,10 +10,11 @@ import { SettingsPage } from './pages/SettingsPage';
 import { Tidy, type TidyTab } from './pages/Tidy';
 import { Library } from './pages/Library';
 import { Photos } from './pages/Photos';
+import { Wallpaper } from './pages/Wallpaper';
 import { ImageGenerator } from './pages/ImageGenerator';
 import { Icon, Notice } from './components/ui';
 
-type Page = 'home' | 'library' | 'photos' | 'generator' | 'upscale' | 'sort' | 'tidy' | 'settings';
+type Page = 'home' | 'library' | 'photos' | 'wallpaper' | 'generator' | 'upscale' | 'sort' | 'tidy' | 'settings';
 
 export default function App() {
   const [page, setPage] = useState<Page>('home');
@@ -32,6 +34,7 @@ export default function App() {
   const [pendingPlay, setPendingPlay] = useState<string | null>(null);
   const [libVisited, setLibVisited] = useState(false);
   const [photosVisited, setPhotosVisited] = useState(false);
+  const [wallVisited, setWallVisited] = useState(false);
   const [genVisited, setGenVisited] = useState(false);
   const [describeReq, setDescribeReq] = useState<{ path: string; n: number } | null>(null);
   const [similarReq, setSimilarReq] = useState<{ path: string; n: number } | null>(null);
@@ -73,6 +76,7 @@ export default function App() {
     { id: 'home', label: 'Home', icon: 'home' },
     { id: 'library', label: 'Library', icon: 'library' },
     { id: 'photos', label: 'Photos', icon: 'image' },
+    { id: 'wallpaper', label: 'Wallpaper recommended', icon: 'grid' },
     { id: 'upscale', label: 'Upscale', icon: 'sparkle' },
     { id: 'generator', label: 'Image Generator', icon: 'wand' },
     { id: 'sort', label: 'Sort by person', icon: 'people' },
@@ -82,6 +86,7 @@ export default function App() {
   const running = queue.find(q => q.state === 'running');
   if (page === 'library' && !libVisited) setLibVisited(true);
   if (page === 'photos' && !photosVisited) setPhotosVisited(true);
+  if (page === 'wallpaper' && !wallVisited) setWallVisited(true);
   if (page === 'generator' && !genVisited) setGenVisited(true);
   const sortFolder = (f: string) => { setPendingSort(f); setPage('sort'); };
   const describePicture = (p: string) => { setDescribeReq({ path: p, n: Date.now() }); setPage('generator'); };
@@ -126,6 +131,7 @@ export default function App() {
               ))}
             </div>
           )}
+          <LockButton />
           <GpuBadge gpu={gpu} lowSpec={settings.lowSpec} cpu={cpuMode} onClick={() => setPage('settings')} />
         </div>
       </nav>
@@ -152,6 +158,11 @@ export default function App() {
               <ImageGenerator settings={settings} onSettings={setSettings} active={page === 'generator'} onUpscale={upscaleFiles} describeRequest={describeReq} similarRequest={similarReq} />
             </div>
           )}
+          {wallVisited && (
+            <div className={page === 'wallpaper' ? 'h-full' : 'hidden'}>
+              <Wallpaper active={page === 'wallpaper'} onUpscale={upscaleFiles} onSort={sortFolder} onDescribe={describePicture} onSimilar={similarPicture} />
+            </div>
+          )}
           {photosVisited && (
             <div className={page === 'photos' ? 'h-full' : 'hidden'}>
               <Photos active={page === 'photos'} onUpscale={upscaleFiles} onSort={sortFolder} onDescribe={describePicture} onSimilar={similarPicture} />
@@ -173,6 +184,7 @@ export default function App() {
           )}
         </div>
       </main>
+      <PrivacyHost />
     </div>
   );
 }

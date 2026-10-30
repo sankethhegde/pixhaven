@@ -187,6 +187,24 @@ const api = {
   onSortScanned: listen('sort:scanned'),
   onApplyProgress: listen('sort:apply-progress'),
   onCombineProgress: listen('photos:combine-progress'),
+  privacy: {
+    status: () => invoke('privacy:status'),
+    setPassword: (current: string | null, next: string) => invoke('privacy:setPassword', current, next),
+    removePassword: (current: string) => invoke('privacy:removePassword', current),
+    unlock: (password: string) => invoke('privacy:unlock', password),
+    lock: () => invoke('privacy:lock'),
+    hide: (items: unknown, on: boolean) => invoke('privacy:hide', items, on),
+    hideLabel: (id: number, on: boolean) => invoke('privacy:hideLabel', id, on),
+  },
+  onPrivacy: listen('privacy:changed'),
+  wall: {
+    screens: () => invoke('wall:screens'),
+    scan: (source: string, screenId: number | null) => invoke('wall:scan', source, screenId),
+    cancel: () => invoke('wall:cancel'),
+    set: (p: string) => invoke('wall:set', p),
+    chooseFolder: () => invoke('wall:chooseFolder'),
+  },
+  onWallProgress: listen('wall:progress'),
   onOpenSort: listen('open:sort'),
 };
 

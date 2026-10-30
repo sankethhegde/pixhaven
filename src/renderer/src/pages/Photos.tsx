@@ -11,6 +11,7 @@ import { Viewer } from '../components/Viewer';
 import { Combine } from '../components/Combine';
 import { MoveDialog } from '../components/MoveDialog';
 import { MergeDialog } from '../components/MergeDialog';
+import { hideItems, usePrivacy } from '../components/Privacy';
 import { Button, Icon, Notice, Segmented } from '../components/ui';
 import * as T from '../tags';
 
@@ -51,6 +52,23 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
   const [combining, setCombining] = useState(false);
   const [moveTo, setMoveTo] = useState<Clip | null>(null);
   const [merging, setMerging] = useState(false);
+  const privacy = usePrivacy();
+  // v2.10: hidden items locked or shown — the folder list, people and files are listed again.
+  const lockKey = `${privacy.unlocked}|${privacy.items}|${privacy.labels}`;
+  const firstLock = useRef(true);
+  useEffect(() => {
+    if (firstLock.current) { firstLock.current = false; return; }
+    if (!root) { loadKnown(); return; }
+    if (person?.dir && !privacy.unlocked) setPerson(null);
+    void refresh();
+  }, [lockKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hide = async (paths: { path: string; folder: boolean }[], on: boolean, what: string) => {
+    try {
+      if (!(await hideItems(paths, on))) return;
+      setSelected(new Set());
+      setNote(on ? `${what} hidden.${privacy.unlocked && privacy.hasPassword ? ' Shown (marked) until you lock hidden items.' : ''}` : `${what} no longer hidden.`);
+    } catch (e) { setError(errorText(e)); }
+  };
   const infos = useRef(new Map<string, MediaInfo>());
   const [, setTick] = useState(0);
 
@@ -272,6 +290,8 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
       <Button className="!h-8" variant="ghost" disabled={sel.length !== 1} onClick={() => setAsk({ kind: 'rename', path: sel[0], name: baseName(sel[0]) })} title="F2">Rename</Button>
       <Button className="!h-8" variant="ghost" disabled={!sel.length} onClick={() => sendTo('move')}>Move to…</Button>
       <Button className="!h-8" variant="ghost" disabled={!sel.length} onClick={() => sendTo('copy')}>Copy to…</Button>
+      {items.some(e => selected.has(e.path) && !e.hidden) && <Button className="!h-8" variant="ghost" onClick={() => void hide(items.filter(e => selected.has(e.path)).map(e => ({ path: e.path, folder: e.kind === 'folder' })), true, plural(sel.length, 'item'))} title="Hide from PixHaven until unlocked with the password"><Icon name="eyeOff" size={15} />Hide</Button>}
+      {items.some(e => selected.has(e.path) && e.hidden) && <Button className="!h-8" variant="ghost" onClick={() => void hide(items.filter(e => selected.has(e.path) && e.hidden).map(e => ({ path: e.path, folder: e.kind === 'folder' })), false, plural(sel.length, 'item'))}><Icon name="eye" size={15} />Unhide</Button>}
     </div>
   );
 
@@ -330,6 +350,7 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
             <span className="text-sm text-muted">{plural(personItems.length, 'photo')}{person.dir ? ` · folder “${baseName(person.dir)}”` : ''}</span>
             {person.dir && <Button className="!h-8" variant="ghost" onClick={() => setAsk({ kind: 'rename', path: person.dir!, name: baseName(person.dir!) })} title="Rename this person's folder (the name inside their photos follows)">Rename person</Button>}
             {people.length > 1 && <Button className="!h-8" variant="ghost" onClick={() => setMerging(true)} title="This person is really someone else (or several people): their photos go to that person"><Icon name="people" size={15} />Merge into…</Button>}
+            {person.dir && <Button className="!h-8" variant="ghost" onClick={() => { const d = person.dir!; const label = person.label; setPerson(null); void hide([{ path: d, folder: true }], true, label); }} title="Hide this person and their folder until unlocked with the password"><Icon name="eyeOff" size={15} />Hide person</Button>}
           </>}>
             <MediaGrid items={items} infos={infos.current} view="grid" size="m" selected={selected} onVisible={onVisible}
               onClick={onItemClick} onOpen={onItemOpen} resetKey={`p${person.id}`} />

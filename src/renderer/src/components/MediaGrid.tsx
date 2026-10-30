@@ -110,6 +110,8 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
               title={`Group photo: kept in “${e.taggedFrom}”, shown here too.`}>Kept in · {e.taggedFrom}</span>}
             {e.alsoIn?.length ? <span className="absolute left-1 bottom-1 max-w-[85%] truncate rounded bg-accent/85 text-accent-fg text-[10px] px-1.5 py-0.5" data-testid="alsoin-badge"
               title={`Group photo kept here, also shown in ${alsoText(e.alsoIn)}.`}>Also in · {e.alsoIn.length === 1 ? e.alsoIn[0] : `${e.alsoIn.length} folders`}</span> : null}
+            {e.hidden && <span className="absolute right-1 top-1 rounded bg-black/65 text-white text-[10px] px-1.5 py-0.5 flex items-center gap-1" data-testid="hidden-badge"
+              title="Hidden: shown only while hidden items are unlocked"><Icon name="eyeOff" size={11} />Hidden</span>}
           </div>
           <div className="mt-1 text-xs leading-tight line-clamp-1 break-all text-center px-0.5">{e.name}</div>
           <div className="mt-1 flex justify-center overflow-hidden">{tagRow(e, size === 's' ? 0 : size === 'm' ? 1 : 2, true)}</div>

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, powerMonitor, protocol, shell } from 'electron';
-import type { JobItem, JobUpdate, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery, GenRequest, CombineRequest } from '@shared/types';
+import type { JobItem, JobUpdate, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery, GenRequest, CombineRequest, LabelInfo, MediaTags } from '@shared/types';
 import { IMAGE_EXTENSIONS } from '@shared/types';
 import { getSettings, updateSettings, writeTurnedOn } from './settings';
 import { detectGpu, hasDedicatedGpu } from './gpu-detect';
@@ -21,6 +21,8 @@ import * as generator from './generator-service';
 import * as describer from './describe-service';
 import * as tags from './tags-service';
 import * as watch from './watch-service';
+import * as privacy from './privacy';
+import * as wallpaper from './wallpaper-service';
 import { SEARCH_LIMIT } from './library/browse';
 import { mediaKind } from '@shared/types';
 import { moveAppData } from './app-data-move';
@@ -232,6 +234,7 @@ app.whenReady().then(async () => {
   tags.setOnMoved((from, to) => watch.moved(from, to));
   tags.setWriteHooks(p => player.isOpen(p), s => send('tags:writeStatus', s));
   tags.setOnFromFiles(paths => send('tags:fromFiles', paths));
+  privacy.setOnChange(s => send('privacy:changed', s));
   tags.setAfterImport(() => void tags.relinkFromIndex(s => watch.bySize(s)).then(n => { if (n) send('watch:changed', { dirs: [], added: 0, removed: 0, relinked: n }); }));
   watch.init(s => send('watch:status', s), c => send('watch:changed', c));
   // Labels changed just before PixHaven was last closed reach their files now.
@@ -485,8 +488,12 @@ handle('sort:scan', async (root: string) => {
 handle('sort:pause', (paused: boolean) => sort.pauseScan(paused));
 handle('sort:cancel', () => sort.cancelScan());
 handle('sort:regroup', (fid: number) => sort.regroup(fid, { scan: p => send('sort:progress', p) }));
-handle('sort:review', (fid: number) => sort.review(fid));
-handle('sort:person', (pid: number) => sort.personPhotos(pid));
+handle('sort:review', (fid: number) => {
+  const r = sort.review(fid);
+  const p = (x: { path: string }) => x.path;
+  return { ...r, people: privacy.paths(r.people, x => x.dir), cantRecognise: privacy.paths(r.cantRecognise, p), noFaces: privacy.paths(r.noFaces, p), lowRes: privacy.paths(r.lowRes, p) };
+});
+handle('sort:person', (pid: number) => privacy.paths(sort.personPhotos(pid), r => r.path));
 handle('sort:merge', (from: number, into: number) => sort.mergePeople(from, into));
 handle('sort:removeFace', (faceId: number) => sort.removeFace(faceId));
 handle('sort:split', (pid: number, faceIds: number[]) => sort.splitPerson(pid, faceIds));
@@ -522,12 +529,17 @@ handle('tidy:trash', (fid: number, ids: number[]) => tidy.trashPhotos(fid, ids))
 
 // ---- media library (v2.0 Phase A) ----
 handle('lib:drives', () => library.drives());
-handle('lib:list', (dir: string) => library.list(dir));
+// v2.10: everything listed for the window passes privacy (hidden folders, photos, videos and labels).
+handle('lib:list', async (dir: string) => {
+  if (!privacy.isVisible(dir)) return { dir, parent: path.dirname(dir) === dir ? null : path.dirname(dir), entries: [], hiddenFiles: 0, error: 'This folder is hidden. Unlock hidden items to see it.' };
+  const l = await library.list(dir);
+  return { ...l, entries: privacy.entries(l.entries) };
+});
 handle('lib:hasMedia', (dirs: string[]) => library.hasMedia(dirs));
 handle('lib:thumbs', (files: { path: string; size: number; mtime: number }[]) => library.thumbs(files));
 handle('lib:pauseThumbs', (p: boolean) => library.pauseThumbs(p));
 handle('lib:preview', (p: string) => library.preview(p));
-handle('lib:search', (root: string, q: string) => library.search(root, q, u => send('lib:search', u),
+handle('lib:search', (root: string, q: string) => library.search(root, q, u => send('lib:search', { ...u, items: privacy.entries(u.items) }),
   (r, text) => (watch.indexedFor(r) ? watch.searchIndex(r, text, SEARCH_LIMIT) : null)));
 handle('lib:cancelSearch', () => library.cancelSearch());
 handle('lib:cacheSize', () => library.cacheSize());
@@ -547,23 +559,45 @@ handle('player:loadSubtitle', async (id: string) => {
 handle('player:frame', (p: string, t: number) => player.frame(p, t));
 handle('player:position', (p: string, t: number, d: number) => player.savePosition(p, t, d));
 handle('player:playing', (b: boolean) => { player.playing(b); watch.pause('player', b); });
-handle('player:recent', () => player.recent());
+handle('player:recent', () => privacy.paths(player.recent(), r => r.path));
 
 // ---- labels and stars (v2.0 Phase C) ----
 type Ref = { path: string; size: number; mtime: number };
-handle('tags:labels', () => tags.labels());
-handle('tags:forFiles', (files: Ref[]) => tags.forFiles(files));
-handle('tags:setStars', (files: Ref[], stars: number) => tags.setStars(files, stars));
-handle('tags:addLabel', (files: Ref[], name: string, color: string | null) => tags.addLabel(files, name, color));
-handle('tags:removeLabel', (paths: string[], id: number) => tags.removeLabel(paths, id));
-handle('tags:renameLabel', (id: number, name: string) => tags.renameLabel(id, name));
-handle('tags:setColor', (id: number, color: string | null) => tags.setColor(id, color));
-handle('tags:deleteLabel', (id: number) => tags.deleteLabel(id));
-handle('tags:query', (filter: TagFilter, text: string) => tags.query(filter, text));
+const seen = <T extends { tags: Record<string, MediaTags>; labels: LabelInfo[] }>(r: T): T => ({ ...r, tags: privacy.tags(r.tags), labels: privacy.labels(r.labels) });
+handle('tags:labels', () => privacy.labels(tags.labels()));
+handle('tags:forFiles', async (files: Ref[]) => { const r = await tags.forFiles(files); return { ...r, tags: privacy.tags(r.tags) }; });
+handle('tags:setStars', async (files: Ref[], stars: number) => seen(await tags.setStars(files, stars)));
+handle('tags:addLabel', async (files: Ref[], name: string, color: string | null) => seen(await tags.addLabel(files, name, color)));
+handle('tags:removeLabel', (paths: string[], id: number) => seen(tags.removeLabel(paths, id)));
+handle('tags:renameLabel', (id: number, name: string) => { const r = tags.renameLabel(id, name); return { ...r, labels: privacy.labels(r.labels) }; });
+handle('tags:setColor', (id: number, color: string | null) => privacy.labels(tags.setColor(id, color)));
+handle('tags:deleteLabel', (id: number) => privacy.labels(tags.deleteLabel(id)));
+handle('tags:query', async (filter: TagFilter, text: string) => {
+  if (!privacy.filterAllowed(filter.labels)) return [];
+  const hid = privacy.isUnlocked() ? new Set<number>() : new Set(tags.tagStore().hiddenLabelIds());
+  return privacy.entries(await tags.query(filter, text)).map(m => (hid.size ? { ...m, labels: m.labels.filter(l => !hid.has(l)) } : m));
+});
+// v2.10 Wallpaper recommended
+handle('wall:screens', () => wallpaper.screens());
+handle('wall:scan', (source: string, screenId: number | null) => wallpaper.scan(source, screenId, p => send('wall:progress', p)));
+handle('wall:cancel', () => wallpaper.cancel());
+handle('wall:set', (p: string) => wallpaper.setWallpaper(p));
+handle('wall:chooseFolder', async () => {
+  const r = await dialog.showOpenDialog(win!, { title: 'Look for wallpapers in…', properties: ['openDirectory'] });
+  return r.canceled ? null : r.filePaths[0];
+});
+// v2.10 hidden items
+handle('privacy:status', () => privacy.status());
+handle('privacy:setPassword', (current: string | null, next: string) => privacy.setPassword(current, next));
+handle('privacy:removePassword', (current: string) => privacy.removePassword(current));
+handle('privacy:unlock', (password: string) => privacy.unlock(password));
+handle('privacy:lock', () => privacy.lock());
+handle('privacy:hide', (items: { path: string; folder: boolean }[], on: boolean) => privacy.hide(items, on));
+handle('privacy:hideLabel', (id: number, on: boolean) => privacy.hideLabel(id, on));
 handle('tags:renameFile', (p: string, name: string) => tags.renameFile(p, name));
 // v2.5 Photos tab
-handle('photos:folders', () => sort.knownFolders());
-handle('photos:person', (pid: number) => sort.personItems(pid));
+handle('photos:folders', () => privacy.paths(sort.knownFolders(), k => k.path));
+handle('photos:person', (pid: number) => { const r = sort.personItems(pid); return r.dir && !privacy.isVisible(r.dir) ? { dir: null, items: [] } : { ...r, items: privacy.entries(r.items) }; });
 // v2.9 merge a person into the people they really are
 handle('photos:mergeSuggest', (pid: number) => sort.mergeSuggest(pid));
 handle('photos:merge', async (pid: number, moves: { imageId: number; to: number }[] | null, all: number | null) => {
@@ -618,9 +652,9 @@ handle('tags:chooseLocation', async () => {
   return r.canceled ? null : { dir: r.filePaths[0], taken: tags.locationTaken(r.filePaths[0]) };
 });
 handle('tags:setLocation', (dir: string, mode: 'move' | 'use') => tags.setLocation(dir, mode));
-handle('tags:playlists', () => tags.playlists());
-handle('tags:savePlaylist', (name: string, filter: TagFilter, id?: number) => tags.savePlaylist(name, filter, id));
-handle('tags:deletePlaylist', (id: number) => tags.deletePlaylist(id));
+handle('tags:playlists', () => privacy.playlists(tags.playlists()));
+handle('tags:savePlaylist', (name: string, filter: TagFilter, id?: number) => privacy.playlists(tags.savePlaylist(name, filter, id)));
+handle('tags:deletePlaylist', (id: number) => privacy.playlists(tags.deletePlaylist(id)));
 handle('tags:writeStatus', () => tags.writeStatus());
 handle('tags:setWriteToFiles', (on: boolean) => tags.setWriteToFiles(on));
 handle('tags:peopleIn', (p: string) => tags.peopleIn(p));
@@ -634,7 +668,12 @@ handle('watch:choose', async () => {
 handle('watch:add', (dir: string) => watch.add(dir));
 handle('watch:remove', (dir: string) => watch.remove(dir));
 handle('watch:reindex', (dir: string) => watch.reindex(dir));
-handle('watch:query', (q: WatchQuery) => watch.query(q));
+handle('watch:query', (q: WatchQuery) => {
+  if (!privacy.filterAllowed(q.filter.labels)) return { items: [], total: 0, truncated: false, tags: {} };
+  const r = watch.query(q);
+  const items = privacy.entries(r.items);
+  return { ...r, items, total: r.total - (r.items.length - items.length), tags: privacy.tags(r.tags) };
+});
 
 // Test hooks (dev only): export/import without the file dialogs.
 if (!app.isPackaged) {

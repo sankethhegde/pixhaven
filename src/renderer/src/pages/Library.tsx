@@ -14,6 +14,7 @@ import { Player } from '../components/Player';
 import { FilterBar, ManageLabels, NO_FILTER, TagEditor, filterActive, noun } from '../components/Tags';
 import { ShortcutsDialog } from '../components/Shortcuts';
 import { MoveDialog } from '../components/MoveDialog';
+import { hideItems, usePrivacy } from '../components/Privacy';
 import { Button, Icon, Notice, Segmented } from '../components/ui';
 import * as T from '../tags';
 
@@ -87,7 +88,11 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
   const [tagPanel, setTagPanel] = useState(false);
   const [manage, setManage] = useState(false);
   const [rename, setRename] = useState<{ path: string; name: string; error?: string } | null>(null);
-  const [moveTo, setMoveTo] = useState<string[] | null>(null);
+  const [moveTo, setMoveTo] = useState<{ mode: 'move' | 'copy'; paths: string[] } | null>(null);
+  // v2.10: in-app clipboard (Cut / Copy, then Paste in another folder), a new folder, and hidden items.
+  const [clip, setClip] = useState<{ mode: 'move' | 'copy'; paths: string[] } | null>(null);
+  const [newFolder, setNewFolder] = useState<{ name: string; error?: string } | null>(null);
+  const privacy = usePrivacy();
   const [note, setNote] = useState<string | null>(null);
   const [allLabels, setAllLabels] = useState(false);
   // v2.1
@@ -343,20 +348,62 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
       setRename(null);
     } catch (e) { setRename({ ...rename, error: errorText(e) }); }
   };
-  /** Move to…: files and folders, through PixHaven's own folder chooser (components/MoveDialog.tsx). */
-  const doMove = () => {
-    const paths = [...selected].filter(p => items.some(e => e.path === p && !offline(e)));
-    if (paths.length) setMoveTo(paths);
+  /** Move to… / Copy to…: files and folders, through PixHaven's own folder chooser (components/MoveDialog.tsx). */
+  const usable = () => [...selected].filter(p => items.some(e => e.path === p && !offline(e)));
+  const doMove = (how: 'move' | 'copy' = 'move') => {
+    const paths = usable();
+    if (paths.length) setMoveTo({ mode: how, paths });
+  };
+  const report = (how: 'move' | 'copy', r: FileOpResult) => {
+    setNote(`${how === 'copy' ? 'Copied' : 'Moved'} ${r.done.length} item${r.done.length === 1 ? '' : 's'}${r.failed.length ? `; ${r.failed.length} could not be: ${baseName(r.failed[0].path)} (${r.failed[0].reason})` : ''}.`);
   };
   const moved = (r: FileOpResult) => {
+    const how = moveTo?.mode ?? 'move';
     setMoveTo(null);
-    for (const m of r.done) {
+    if (how === 'move') for (const m of r.done) {
       T.movedLocally(m.from, m.to);
       replaceEntry(m.from, mode === 'folder' ? null : m.to);   // gone from this folder; still listed in the other views
     }
     setSelected(new Set());
-    setNote(`Moved ${r.done.length} item${r.done.length === 1 ? '' : 's'}${r.failed.length ? `; ${r.failed.length} could not be moved: ${baseName(r.failed[0].path)} (${r.failed[0].reason})` : ''}.`);
+    report(how, r);
+    if (how === 'copy' && mode === 'folder') refresh();
   };
+  // ---- v2.10: Cut / Copy / Paste and New folder (like the Photos tab) ----
+  const cutCopy = (how: 'move' | 'copy') => {
+    const paths = usable();
+    if (!paths.length) return;
+    setClip({ mode: how, paths });
+    setNote(`${paths.length} item${paths.length === 1 ? '' : 's'} ${how === 'copy' ? 'copied' : 'cut'}. Open a folder and press Paste (Ctrl+V).`);
+  };
+  const paste = async () => {
+    if (!clip || mode !== 'folder' || !dir) return;
+    try {
+      const r = await api.files.paste(clip.paths, dir, clip.mode);
+      if (clip.mode === 'move') { for (const m of r.done) T.movedLocally(m.from, m.to); setClip(null); }
+      report(clip.mode, r);
+      refresh();
+      setSelected(new Set(r.done.map(d => d.to)));
+    } catch (e) { setNote(errorText(e)); }
+  };
+  const makeFolder = async () => {
+    if (!newFolder || !dir) return;
+    try { const made = await api.files.newFolder(dir, newFolder.name); setNewFolder(null); refresh(); setSelected(new Set([made])); }
+    catch (e) { setNewFolder({ ...newFolder, error: errorText(e) }); }
+  };
+  // ---- v2.10: hide / unhide (shown again only with the password) ----
+  const hide = async (on: boolean) => {
+    const list = selectedEntries.filter(e => !offline(e)).map(e => ({ path: e.path, folder: e.kind === 'folder' }));
+    if (!list.length) return;
+    try {
+      if (!(await hideItems(list, on))) return;
+      setSelected(new Set());
+      setNote(on ? `${list.length} item${list.length === 1 ? '' : 's'} hidden.${privacy.unlocked && privacy.hasPassword ? ' They show (marked) until you lock hidden items.' : ''}` : `${list.length} item${list.length === 1 ? '' : 's'} no longer hidden.`);
+    } catch (e) { setNote(errorText(e)); }
+  };
+  // Hidden items locked or shown: what is listed changes.
+  const lockKey = `${privacy.unlocked}|${privacy.items}|${privacy.labels}`;
+  const firstLock = useRef(true);
+  useEffect(() => { if (firstLock.current) { firstLock.current = false; return; } refresh(); }, [lockKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedEntries = items.filter(e => selected.has(e.path));
   const selectedPhotos = [...selected].filter(p => IMAGE_EXTENSIONS.includes(ext(p)));
@@ -366,7 +413,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
   useEffect(() => {
     if (!active) return;
     const k = (e: KeyboardEvent) => {
-      if (viewer !== null || playing || rename || manage || help || savePl) return;
+      if (viewer !== null || playing || rename || manage || help || savePl || moveTo || newFolder) return;
       const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName);
       if ((e.key.toLowerCase() === 'f' && (e.ctrlKey || e.metaKey)) || (e.key === '/' && !typing)) { searchBox.current?.focus(); searchBox.current?.select(); e.preventDefault(); return; }
       if (typing) return;
@@ -389,7 +436,10 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
       };
       const targets = selectedTaggable.length ? selectedTaggable : cur >= 0 && items[cur]?.kind !== 'folder' && !offline(items[cur]) ? [items[cur]] : [];
       const key = e.key;
-      if (key === 'a' && (e.ctrlKey || e.metaKey)) setSelected(new Set(items.filter(x => x.kind !== 'folder').map(x => x.path)));   // every photo and video shown
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (key === 'x' || key === 'c')) { if (!selected.size) return; cutCopy(key === 'x' ? 'move' : 'copy'); }
+      else if ((e.ctrlKey || e.metaKey) && key === 'v') { if (!clip || mode !== 'folder') return; void paste(); }
+      else if ((e.ctrlKey || e.metaKey) && e.shiftKey && key.toLowerCase() === 'n') { if (mode !== 'folder' || !dir) return; setNewFolder({ name: 'New folder' }); }
+      else if (key === 'a' && (e.ctrlKey || e.metaKey)) setSelected(new Set(items.filter(x => x.kind !== 'folder').map(x => x.path)));   // every photo and video shown
       else if (e.altKey && key === 'ArrowLeft') goBack();
       else if (e.altKey && key === 'ArrowRight') goFwd();
       else if (e.altKey && key === 'ArrowUp') goUp();
@@ -652,7 +702,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
           </div>
         )}
 
-        <footer className="flex items-center gap-3 px-4 h-11 border-t border-line text-xs text-muted shrink-0">
+        <footer className="flex items-center gap-x-3 gap-y-1 px-4 py-1.5 min-h-11 flex-wrap border-t border-line text-xs text-muted shrink-0 min-w-0">
           <span data-testid="lib-counts">
             {[counts.folders && `${counts.folders} folder${counts.folders > 1 ? 's' : ''}`, (mode === 'folder' || counts.images > 0) && `${counts.images} photo${counts.images === 1 ? '' : 's'}`, `${counts.videos} video${counts.videos === 1 ? '' : 's'}`, counts.offline && `${counts.offline} offline`].filter(Boolean).join(' · ')}
             {mode === 'folder' && !search && listing?.hiddenFiles ? ` · ${listing.hiddenFiles} other file${listing.hiddenFiles > 1 ? 's' : ''} hidden` : ''}
@@ -660,7 +710,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
           </span>
           {openMs !== null && mode === 'folder' && !search && <span className="opacity-60" data-testid="lib-open-ms">opened in {openMs} ms</span>}
           {selected.size > 0 && (
-            <div className="ml-auto flex items-center gap-2 text-fg">
+            <div className="ml-auto flex items-center gap-1 flex-wrap justify-end min-w-0 text-fg">
               <span>{selected.size} selected</span>
               {selectedTaggable.length > 0 && (
                 <Button className="!h-8" variant={tagPanel ? 'primary' : 'secondary'} onClick={() => setTagPanel(!tagPanel)} title="Labels & stars (L)">
@@ -670,7 +720,12 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
               {selected.size === 1 && selectedEntries[0] && !offline(selectedEntries[0]) && (
                 <Button className="!h-8" variant="ghost" onClick={() => setRename({ path: selectedEntries[0].path, name: selectedEntries[0].name })} title="Rename (F2)">Rename</Button>
               )}
-              <Button className="!h-8" variant="ghost" onClick={doMove} disabled={!selectedEntries.some(e => !offline(e))}>Move to…</Button>
+              <Button className="!h-8" variant="ghost" onClick={() => cutCopy('move')} title="Ctrl+X">Cut</Button>
+              <Button className="!h-8" variant="ghost" onClick={() => cutCopy('copy')} title="Ctrl+C"><Icon name="copy" size={15} />Copy</Button>
+              <Button className="!h-8" variant="ghost" onClick={() => doMove('move')} disabled={!selectedEntries.some(e => !offline(e))}>Move to…</Button>
+              <Button className="!h-8" variant="ghost" onClick={() => doMove('copy')} disabled={!selectedEntries.some(e => !offline(e))}>Copy to…</Button>
+              {selectedEntries.some(e => !e.hidden) && <Button className="!h-8" variant="ghost" onClick={() => void hide(true)} title="Hide from PixHaven until unlocked with the password"><Icon name="eyeOff" size={15} />Hide</Button>}
+              {selectedEntries.some(e => e.hidden) && <Button className="!h-8" variant="ghost" onClick={() => void hide(false)}><Icon name="eye" size={15} />Unhide</Button>}
               {mode === 'folder' && (
                 <Button className="!h-8" variant="ghost" disabled={!selectedPhotos.length} onClick={() => onUpscale(selectedPhotos)}
                   title={selectedPhotos.length ? undefined : 'Upscale works with JPG, PNG, WEBP, BMP and TIFF'}>
@@ -682,6 +737,8 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
           )}
           {selected.size === 0 && mode === 'folder' && dir && !search && !listing?.denied && (
             <div className="ml-auto flex items-center gap-4">
+              {clip && <Button className="!h-8" variant="primary" onClick={() => void paste()} title="Ctrl+V">Paste {clip.paths.length}</Button>}
+              <button className="text-accent hover:underline" onClick={() => setNewFolder({ name: 'New folder' })} title="Ctrl+Shift+N">New folder</button>
               {watchedHere ? <span title={watchedHere.path}>Watched folder</span>
                 : <button className="text-accent hover:underline" onClick={() => void api.watch.add(dir).then(setWatched).catch(e => setNote(errorText(e)))}>Watch this folder</button>}
               <button className="text-accent hover:underline" onClick={() => onSort(dir)}>Sort this folder by person…</button>
@@ -718,7 +775,22 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
         </Dialog>
       )}
       {moveTo && (
-        <MoveDialog mode="move" paths={moveTo} start={mode === 'folder' && listing?.dir ? listing.dir : (moveTo[0].replace(/[\\/][^\\/]*$/, '') || moveTo[0])} onDone={moved} onClose={() => setMoveTo(null)} />
+        <MoveDialog mode={moveTo.mode} paths={moveTo.paths} start={mode === 'folder' && listing?.dir ? listing.dir : (moveTo.paths[0].replace(/[\\/][^\\/]*$/, '') || moveTo.paths[0])} onDone={moved} onClose={() => setMoveTo(null)} />
+      )}
+      {newFolder && (
+        <Dialog label="New folder" onClose={() => setNewFolder(null)}>
+          <div className="font-semibold">New folder</div>
+          <input autoFocus value={newFolder.name} aria-label="Folder name" onFocus={e => e.target.select()}
+            onChange={e => setNewFolder({ name: e.target.value })}
+            onKeyDown={e => { if (e.key === 'Enter') void makeFolder(); if (e.key === 'Escape') setNewFolder(null); e.stopPropagation(); }}
+            className="w-full h-9 rounded-lg bg-panel-2 border border-line px-3 text-sm outline-none focus:border-accent" />
+          {newFolder.error && <div className="text-sm text-danger" role="alert">{newFolder.error}</div>}
+          <div className="text-xs text-muted">In “{dir ? baseName(dir) : ''}”.</div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setNewFolder(null)}>Cancel</Button>
+            <Button variant="primary" disabled={!newFolder.name.trim()} onClick={() => void makeFolder()}>Create</Button>
+          </div>
+        </Dialog>
       )}
       {rename && (
         <Dialog label="Rename" onClose={() => setRename(null)}>

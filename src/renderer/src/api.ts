@@ -3,7 +3,7 @@ import type {
   ApplyProgress, ApplyResult, FolderStatus, GpuStatus, ImageInfo, JobItem, JobUpdate, ModelDownload, ModelId, PhotoRef,
   PowerStatus, QueueItem, ReviewData, SaveResult, ScanProgress, Settings, SortHistory, SortPlan, TidyResults, UpdateStatus, UpscaleOptions,
   FileWriteStatus, Playlist, WatchChange, WatchedFolder, WatchQuery, WatchResult,
-  FileOpResult, KnownFolder, MediaEntry, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, ScanEstimate, MergePlan, MergeResult, DescribeResult, DescribeStatus, GenImage, GenProgress, GenRequest, GenStatus,
+  FileOpResult, KnownFolder, MediaEntry, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, ScanEstimate, MergePlan, MergeResult, PrivacyStatus, WallProgress, WallResult, WallScreen, DescribeResult, DescribeStatus, GenImage, GenProgress, GenRequest, GenStatus,
   DriveInfo, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
 } from '@shared/types';
 
@@ -187,6 +187,24 @@ interface Api {
   onSortScanned(cb: (r: { folderId: number; cancelled?: boolean }) => void): Off;
   onApplyProgress(cb: (p: ApplyProgress) => void): Off;
   onCombineProgress(cb: (p: CombineProgress) => void): Off;
+  privacy: {
+    status(): Promise<PrivacyStatus>;
+    setPassword(current: string | null, next: string): Promise<PrivacyStatus>;
+    removePassword(current: string): Promise<PrivacyStatus>;
+    unlock(password: string): Promise<PrivacyStatus>;
+    lock(): Promise<PrivacyStatus>;
+    hide(items: { path: string; folder: boolean }[], on: boolean): Promise<PrivacyStatus>;
+    hideLabel(id: number, on: boolean): Promise<PrivacyStatus>;
+  };
+  onPrivacy(cb: (s: PrivacyStatus) => void): Off;
+  wall: {
+    screens(): Promise<WallScreen[]>;
+    scan(source: string, screenId: number | null): Promise<WallResult>;
+    cancel(): Promise<void>;
+    set(p: string): Promise<void>;
+    chooseFolder(): Promise<string | null>;
+  };
+  onWallProgress(cb: (p: WallProgress) => void): Off;
   onOpenSort(cb: (folder: string) => void): Off;
   detectGpu(): Promise<{ gpu: GpuStatus; dedicated: boolean }>;
   getSettings(): Promise<Settings>;
