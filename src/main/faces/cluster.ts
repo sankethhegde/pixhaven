@@ -44,7 +44,7 @@ const add = (s: Float32Array, v: Float32Array) => { for (let i = 0; i < s.length
 
 /** Mean similarity of a face to its k nearest faces in a group (kept in a small sorted list, no allocations). */
 const topBuf = new Float64Array(KNN);
-function nearestK(e: Float32Array, g: FaceSet, k: number): number {
+export function nearestK(e: Float32Array, g: FaceSet, k: number): number {
   let n = 0;
   for (const m of g.members) {
     const s = dot(e, m);

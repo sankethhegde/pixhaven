@@ -195,7 +195,7 @@ export async function renameFile(from: string, newName: string): Promise<string>
   await moveSidecar(from, to);
   onMoved(from, to);
   try { manifestMoved(from, to); } catch (e) { log('warn', 'Could not update the people list', e); }
-  syncGroupLinksFor([from, to]);
+  void syncGroupLinksFor([from, to]);
   log('info', `Renamed ${from} → ${name}`);
   return to;
 }
@@ -225,7 +225,7 @@ export async function moveFiles(paths: string[], dest: string): Promise<{ moved:
     } catch (e) { failed.push({ path: from, reason: (e as Error).message }); }
   }
   log('info', `Moved ${moved.length} file(s) to ${dest}, ${failed.length} failed`);
-  syncGroupLinksFor([...moved.map(m => m.from), ...moved.map(m => m.to)]);
+  void syncGroupLinksFor([...moved.map(m => m.from), ...moved.map(m => m.to)]);
   return { moved, failed };
 }
 
@@ -249,7 +249,7 @@ async function followMoves(pairs: { from: string; to: string }[], dir?: { from: 
   const roots = new Map<string, string>();
   for (const p of ends) { const r = manifestRootOf(p); if (r) roots.set(lower(r), r); }
   for (const r of roots.values()) { try { remapManifest(r, map); } catch (e) { log('warn', 'Could not update the people list', e); } }
-  syncGroupLinksFor(ends);
+  void syncGroupLinksFor(ends);
 }
 
 export async function pasteItems(paths: string[], dest: string, mode: 'copy' | 'move'): Promise<fileOps.OpResult> {

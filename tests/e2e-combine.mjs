@@ -70,6 +70,35 @@ async function makeFolders(dbFile) {
   return { trip, family, group };
 }
 
+/** v2.9: a sorted folder where "Person 9" is really two people (2 photos of Mom, 1 of Ravi), and "Person 10" is Ravi. */
+async function makeSplit(dbFile) {
+  const db = new DatabaseSync(dbFile);
+  db.exec('PRAGMA busy_timeout = 5000;');
+  const id = { mom: identity(), ravi: identity() };
+  const root = path.join(BASE, 'Split');
+  const fid = Number(db.prepare('INSERT INTO folders (path, created, last_scan) VALUES (?, ?, ?)').run(root, Date.now(), Date.now()).lastInsertRowid);
+  db.prepare("INSERT INTO sorts (folder_id, created, state, kind, summary) VALUES (?, ?, 'done', 'people', '{}')").run(fid, Date.now());
+  const face = db.prepare('INSERT INTO faces (image_id, x, y, w, h, score, sharpness, usable, emb, model, quality, person_id) VALUES (?, 0, 0, 40, 40, 0.9, 50, 1, ?, ?, 0.9, ?)');
+  const img = db.prepare("INSERT INTO images (folder_id, path, size, mtime, status, faces) VALUES (?, ?, ?, ?, 'done', 1)");
+  const out = { root };
+  let n = 0;
+  for (const [name, num, who] of [['Mom', 1, ['mom', 'mom', 'mom', 'mom']], ['Ravi', 2, ['ravi', 'ravi', 'ravi']], ['Person 9', 9, ['mom', 'mom', 'ravi']], ['Person 10', 10, ['ravi', 'ravi']]]) {
+    const dir = path.join(root, name);
+    const pid = Number(db.prepare('INSERT INTO people (folder_id, num, keep, dir) VALUES (?, ?, 1, ?)').run(fid, num, dir).lastInsertRowid);
+    db.prepare('INSERT INTO sort_dirs (folder_id, dir) VALUES (?, ?)').run(fid, dir);
+    out[name] = { pid, dir, files: [] };
+    for (const w of who) {
+      const file = path.join(dir, `${name.replace(' ', '')}-${w}-${n++}.jpg`);
+      await photo(file, 300 + n);
+      const st = fs.statSync(file);
+      face.run(Number(img.run(fid, file, st.size, Math.round(st.mtimeMs)).lastInsertRowid), blob(faceOf(id[w])), FACE_MODEL, pid);
+      out[name].files.push(file);
+    }
+  }
+  db.close();
+  return out;
+}
+
 export default async function run(win, app) {
   const js = code => win.webContents.executeJavaScript(code);
   const text = () => js('document.body.innerText');
@@ -207,6 +236,47 @@ export default async function run(win, app) {
     await sleep(1200);
     check('Library: a folder can be moved into another', fs.existsSync(path.join(dest, 'Amma', 'Mom best', 'mom-0.jpg')) && !fs.existsSync(path.join(dest, 'Mom best')));
     await shot('09-library');
+
+    // ---- v2.9: Merge into… (by face: each photo to its person; or everything into one person) ----
+    const split = await makeSplit(dbFile);
+    await js(`window.__clearupPage('photos')`);
+    await sleep(500);
+    for (let i = 0; i < 20 && !(await js(`!!document.querySelector('[data-known]')`)); i++) { await js(`[...document.querySelectorAll('main button')].find(b => b.innerText.includes('All folders'))?.click()`); await sleep(300); }
+    await js(`[...document.querySelectorAll('[data-known]')].find(b => b.dataset.known === ${JSON.stringify(split.root)}).click()`);
+    await waitFor('People (4)', 20000);
+    // Person 10 is Ravi: "Merge all into one person", picked by hand (like paste).
+    await js(`document.querySelector('[data-photos-person="Person 10"]').click()`);
+    await waitFor('Merge into…');
+    await sleep(500);
+    await click('Merge into…');
+    for (let i = 0; i < 100 && !(await js(`!!document.querySelector('[data-merge-person]')`)); i++) await sleep(300);
+    await js(`(() => { const i = document.querySelector('[aria-label="Find a person"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'rav'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await sleep(300);
+    const shown = await js(`[...document.querySelectorAll('[data-merge-person]')].map(r => r.dataset.mergePerson)`);
+    check('Merge: the person list can be searched', JSON.stringify(shown) === JSON.stringify(['Ravi']), shown.join(', '));
+    await js(`document.querySelector('[data-merge-person="Ravi"] button').click()`);
+    await waitFor('Merged 2 photos of Person 10 into Ravi', 30000);
+    check('Merge all into one person: moved, person gone', fs.readdirSync(split.Ravi.dir).filter(x => x.endsWith('.jpg')).length === 5 && !fs.existsSync(split['Person 10'].dir));
+    await js(`[...document.querySelectorAll('main button')].find(b => b.innerText.trim() === 'People')?.click()`);
+    await sleep(500);
+
+    // Person 9 is two people: by face, each photo to its person.
+    await js(`document.querySelector('[data-photos-person="Person 9"]').click()`);
+    await waitFor('Merge into…');
+    await sleep(500);
+    await click('Merge into…');
+    for (let i = 0; i < 100 && !(await js(`!!document.querySelector('[data-merge-target]')`)); i++) await sleep(300);
+    const targets = await js(`[...document.querySelectorAll('[data-merge-target]')].map(t => t.dataset.mergeTarget + ': ' + t.innerText.match(/(\\d+) photo/)?.[1])`);
+    check('Merge: Person 9\'s photos are matched to Mom (2) and Ravi (1)', targets.includes('Mom: 2') && targets.includes('Ravi: 1') && targets.length === 2, targets.join(', '));
+    await shot('10-merge');
+    await dialogClick('Merge 3 photos into 2 people');
+    await waitFor('Merged 3 photos of Person 9', 30000);
+    const momFilesNow = fs.readdirSync(split.Mom.dir).filter(x => x.endsWith('.jpg'));
+    check('Merge: one click sends each photo to its person', momFilesNow.length === 6 && fs.readdirSync(split.Ravi.dir).filter(x => x.endsWith('.jpg')).length === 6, `Mom ${momFilesNow.length}, Ravi ${fs.readdirSync(split.Ravi.dir).length}`);
+    check('Merge: the emptied person is gone (folder and card)', !fs.existsSync(split['Person 9'].dir) && (await text()).includes('People (2)'));
+    const names9 = await js(`window.clearup.tags.peopleIn(${JSON.stringify(path.join(split.Mom.dir, path.basename(split['Person 9'].files[0])))})`).catch(() => null);
+    if (names9) check('Merge: the name inside the photo follows', names9.includes('Mom') && !names9.includes('Person 9'), names9.join(', '));
+    await shot('11-merged');
 
     // ---- Sort → Estimate time ----
     const scanDir = path.join(BASE, 'To scan');

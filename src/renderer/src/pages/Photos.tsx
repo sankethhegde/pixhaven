@@ -10,6 +10,7 @@ import { MediaGrid } from '../components/MediaGrid';
 import { Viewer } from '../components/Viewer';
 import { Combine } from '../components/Combine';
 import { MoveDialog } from '../components/MoveDialog';
+import { MergeDialog } from '../components/MergeDialog';
 import { Button, Icon, Notice, Segmented } from '../components/ui';
 import * as T from '../tags';
 
@@ -49,6 +50,7 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
   const [busy, setBusy] = useState(false);
   const [combining, setCombining] = useState(false);
   const [moveTo, setMoveTo] = useState<Clip | null>(null);
+  const [merging, setMerging] = useState(false);
   const infos = useRef(new Map<string, MediaInfo>());
   const [, setTick] = useState(0);
 
@@ -81,7 +83,8 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
   }, []);
 
   const openRoot = async (r: string) => {
-    setError(null); setNote(null); setBusy(true); setPerson(null); setSelected(new Set()); setViewer(null);
+    // The last folder's people and files go first, so they are never shown under this folder's name.
+    setError(null); setNote(null); setBusy(true); setPerson(null); setSelected(new Set()); setViewer(null); setPeople([]); setStatus(null); setListing(null);
     try {
       if ((await api.pathKind(r)) !== 'folder') throw new Error('Please choose a folder.');
       setRoot(r); setDir(r);
@@ -307,9 +310,10 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
             <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))' }}>
               {people.map(p => (
                 <button key={p.id} onClick={() => void openPerson(p)} data-photos-person={p.label}
+                  style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 250px' }}
                   className="text-left rounded-2xl border border-line bg-panel p-3 hover:bg-panel-2">
                   <div className="grid grid-cols-2 gap-1 aspect-square rounded-xl overflow-hidden bg-panel-2">
-                    {p.faceUrls.slice(0, 4).map(u => <img key={u} src={u} alt="" className="w-full h-full object-cover" />)}
+                    {p.faceUrls.slice(0, 4).map(u => <img key={u} src={u} alt="" loading="lazy" decoding="async" onError={e => { e.currentTarget.style.visibility = 'hidden'; }} className="w-full h-full object-cover" />)}
                   </div>
                   <div className="mt-2 font-medium truncate">{p.label}</div>
                   <div className="text-xs text-muted">{plural(p.photos, 'photo')}{p.dir ? '' : ' · not sorted into a folder yet'}</div>
@@ -325,6 +329,7 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
             <span className="font-semibold">{person.label}</span>
             <span className="text-sm text-muted">{plural(personItems.length, 'photo')}{person.dir ? ` · folder “${baseName(person.dir)}”` : ''}</span>
             {person.dir && <Button className="!h-8" variant="ghost" onClick={() => setAsk({ kind: 'rename', path: person.dir!, name: baseName(person.dir!) })} title="Rename this person's folder (the name inside their photos follows)">Rename person</Button>}
+            {people.length > 1 && <Button className="!h-8" variant="ghost" onClick={() => setMerging(true)} title="This person is really someone else (or several people): their photos go to that person"><Icon name="people" size={15} />Merge into…</Button>}
           </>}>
             <MediaGrid items={items} infos={infos.current} view="grid" size="m" selected={selected} onVisible={onVisible}
               onClick={onItemClick} onOpen={onItemOpen} resetKey={`p${person.id}`} />
@@ -354,6 +359,14 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
 
       {viewer !== null && photos[viewer] && (
         <Viewer items={photos} index={viewer} infos={infos.current} onIndex={setViewer} onClose={() => setViewer(null)} onUpscale={onUpscale} onSort={onSort} onDescribe={p => { setViewer(null); onDescribe(p); }} onSimilar={p => { setViewer(null); onSimilar(p); }} />
+      )}
+      {merging && person && (
+        <MergeDialog person={person} people={people} onClose={() => setMerging(false)} onDone={(r, what) => {
+          setMerging(false);
+          setNote(`Merged ${plural(r.merged, 'photo')} of ${person.label} ${what}${r.left ? `; ${plural(r.left, 'photo')} stay with ${person.label}` : ''}${r.skipped.length ? `; ${r.skipped.length} could not be: ${baseName(r.skipped[0].path)} (${r.skipped[0].reason})` : ''}.`);
+          if (r.removed) { setPerson(null); setSelected(new Set()); }
+          void refresh();
+        }} />
       )}
       {moveTo && root && (
         <MoveDialog mode={moveTo.mode} paths={moveTo.paths} start={view === 'folders' && dir ? dir : root} onDone={r => void sent(r)} onClose={() => setMoveTo(null)} />

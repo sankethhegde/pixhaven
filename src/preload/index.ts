@@ -92,6 +92,8 @@ const api = {
     match: (folderIds: number[]) => invoke('photos:match', folderIds),
     combineEstimate: (req: unknown) => invoke('photos:combineEstimate', req),
     combine: (req: unknown) => invoke('photos:combine', req),
+    mergeSuggest: (pid: number) => invoke('photos:mergeSuggest', pid),
+    merge: (pid: number, moves: unknown, all: number | null) => invoke('photos:merge', pid, moves, all),
   },
   files: {
     paste: (paths: string[], dest: string, mode: string) => invoke('files:paste', paths, dest, mode),

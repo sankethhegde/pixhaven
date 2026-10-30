@@ -112,9 +112,9 @@ async function selfTest(outFile: string): Promise<void> {
     fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir);
     await sharp({ create: { width: 320, height: 240, channels: 3, background: '#89a' } }).jpeg().toFile(path.join(dir, 'test.jpg'));
     const t = Date.now();
-    const scan = sort.scanFolder(dir, { scan: () => {} });
+    const scan = await sort.scanFolder(dir, { scan: () => {} });
     const r = await scan.done;
-    const st = sort.folderStatus(dir);
+    const st = await sort.folderStatus(dir);
     report.faceScan = { ok: st.scannedImages === 1, scanned: st.scannedImages, seconds: (Date.now() - t) / 1000, folderId: r.folderId };
     // Media library: the bundled FFmpeg makes a short video, and the thumbnail cache reads it back.
     library.init(() => {});
@@ -280,7 +280,15 @@ const notifyDone = (title: string, body: string) => {
 // ---------- IPC ----------
 const handle = (channel: string, fn: (...args: any[]) => unknown) =>
   ipcMain.handle(channel, async (_e, ...args) => {
-    try { return await fn(...args); } catch (e) { log('error', `${channel} failed`, e); throw new Error(friendlyError(e)); }
+    // v2.9: a handler that holds the main process for long makes Windows call PixHaven "Not Responding": noted in the log.
+    const t = performance.now();
+    let sync = 0;
+    try {
+      const r = fn(...args);
+      sync = performance.now() - t;
+      return await r;
+    } catch (e) { log('error', `${channel} failed`, e); throw new Error(friendlyError(e)); }
+    finally { if (sync > 300) log('warn', `${channel} held the app for ${Math.round(sync)} ms`); }
   });
 
 handle('app:info', async () => {
@@ -466,8 +474,8 @@ handle('update:install', () => installUpdate());
 
 // ---- sort by person ----
 handle('sort:status', (root: string) => sort.folderStatus(root));
-handle('sort:scan', (root: string) => {
-  const { queueId, done } = sort.scanFolder(root, { scan: p => send('sort:progress', p) });
+handle('sort:scan', async (root: string) => {
+  const { queueId, done } = await sort.scanFolder(root, { scan: p => send('sort:progress', p) });
   done.then(r => {
     send('sort:scanned', r);
     if (!r.cancelled) notifyDone('PixHaven: scan finished', `${path.basename(root)} is ready to review.`);
@@ -556,6 +564,13 @@ handle('tags:renameFile', (p: string, name: string) => tags.renameFile(p, name))
 // v2.5 Photos tab
 handle('photos:folders', () => sort.knownFolders());
 handle('photos:person', (pid: number) => sort.personItems(pid));
+// v2.9 merge a person into the people they really are
+handle('photos:mergeSuggest', (pid: number) => sort.mergeSuggest(pid));
+handle('photos:merge', async (pid: number, moves: { imageId: number; to: number }[] | null, all: number | null) => {
+  const { moves: moved, files, ...r } = await sort.mergePerson(pid, moves, all);
+  await tags.afterSort(moved, files).catch(e => log('warn', 'Updating labels after merging failed', e));
+  return { merged: r.merged, moved: r.moved, renamed: r.renamed, left: r.left, removed: r.removed, skipped: r.skipped };
+});
 // v2.8 combine people across sorted folders
 handle('photos:match', (fids: number[]) => sort.matchAcross(fids, { combine: p => send('photos:combine-progress', p) }));
 handle('photos:combineEstimate', (req: CombineRequest) => sort.combineEstimate(req));

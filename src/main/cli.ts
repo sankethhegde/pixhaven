@@ -103,9 +103,9 @@ async function upscale(pos: string[], opt: Record<string, string | true>): Promi
 async function sortCmd(pos: string[], opt: Record<string, string | true>): Promise<number> {
   const root = folderArg(pos);
   if (opt.subfolders) overrideSettings({ sort: { ...getSettings().sort, includeSubfolders: true } });
-  const st = sort.folderStatus(root);
+  const st = await sort.folderStatus(root);
   if (st.interrupted) throw new Error('An earlier sort of this folder did not finish. Open PixHaven to finish or undo it, or run "pixhaven undo".');
-  const { done } = sort.scanFolder(root, { scan: p => { if (p.phase === 'scanning') progress('Scanning', p.done, p.total); else if (p.phase !== 'done') err(p.phase === 'grouping' ? 'Grouping faces…' : ''); } });
+  const { done } = await sort.scanFolder(root, { scan: p => { if (p.phase === 'scanning') progress('Scanning', p.done, p.total); else if (p.phase !== 'done') err(p.phase === 'grouping' ? 'Grouping faces…' : ''); } });
   const r = await done;
   const rev = sort.review(r.folderId);
   out(`People in ${root}:`);

@@ -56,6 +56,10 @@ CREATE INDEX IF NOT EXISTS faces_image ON faces(image_id);
 CREATE INDEX IF NOT EXISTS faces_person ON faces(person_id);
 CREATE INDEX IF NOT EXISTS images_folder ON images(folder_id);
 CREATE INDEX IF NOT EXISTS people_folder ON people(folder_id);
+-- v2.9: faces rows carry a 2 KB fingerprint, so lists over a big folder read ~140 MB without these (the people list
+-- of a 70,000-photo folder held the app for 0.8 s; with them, 0.1 s).
+CREATE INDEX IF NOT EXISTS faces_person_cover ON faces(person_id, removed, image_id, sharpness, h, chip);
+CREATE INDEX IF NOT EXISTS faces_image_cover ON faces(image_id, person_id, removed);
 `;
 
 export type Db = DatabaseSync;

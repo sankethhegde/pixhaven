@@ -8,7 +8,7 @@ import { app } from 'electron';
 import sharp from 'sharp';
 import workerPath from './faces/sort-worker?modulePath';
 import type {
-  ApplyProgress, ApplyResult, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, FolderStatus, KnownFolder, MediaEntry,
+  ApplyProgress, ApplyResult, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, FolderStatus, KnownFolder, MediaEntry, MergePhoto, MergePlan, MergeResult,
   PersonSummary, PhotoRef, ReviewData, ScanEstimate, ScanProgress, SortHistory, SortPlan,
 } from '@shared/types';
 import { openDb, folderId, nextPersonNum, tx, type Db } from './db';
@@ -73,7 +73,7 @@ export async function listImages(root: string, recurse: boolean, excludeDirs: st
 // ---------- worker plumbing ----------
 let current: { worker: Worker; root: string } | null = null;
 
-export function runWorker(input: Omit<WorkerInput, 'dbPath' | 'modelsDir' | 'thumbsDir' | 'settings' | 'preferGpu'> & Partial<WorkerInput>, ev: Partial<SortEvents>): Promise<any> {
+export function runWorker(input: Omit<WorkerInput, 'dbPath' | 'modelsDir' | 'thumbsDir' | 'settings' | 'preferGpu'> & Partial<WorkerInput>, ev: Partial<SortEvents>, track = true): Promise<any> {
   const s = getSettings();
   const full: WorkerInput = {
     dbPath: dbPath(), modelsDir: path.join(resourcesDir(), 'models'), thumbsDir: path.join(dataDir(), String(input.folderId)),
@@ -81,7 +81,8 @@ export function runWorker(input: Omit<WorkerInput, 'dbPath' | 'modelsDir' | 'thu
   } as WorkerInput;
   return new Promise((resolve, reject) => {
     const worker = new Worker(workerPath, { workerData: full });
-    current = { worker, root: full.root };
+    // Quick lookups (track = false) run beside a scan and must not take over its pause / cancel.
+    if (track) current = { worker, root: full.root };
     let result: unknown = null;
     worker.on('message', (m: any) => {
       if (m.type === 'progress') ev.scan?.(m.progress);
@@ -93,7 +94,7 @@ export function runWorker(input: Omit<WorkerInput, 'dbPath' | 'modelsDir' | 'thu
       else if (m.type === 'error') { log('error', 'sort-worker', m.message); reject(new Error(m.message.split('\n')[0])); }
     });
     worker.on('error', e => { log('error', 'sort-worker crashed', e); reject(e); });
-    worker.on('exit', code => { current = null; if (result !== null || code === 0) resolve(result); else reject(new Error(`Worker stopped (${code})`)); });
+    worker.on('exit', code => { if (track && current?.worker === worker) current = null; if (result !== null || code === 0) resolve(result); else reject(new Error(`Worker stopped (${code})`)); });
   });
 }
 
@@ -106,22 +107,34 @@ export const sortDirs = (fid: number) => (getDb().prepare('SELECT dir FROM sort_
 /**
  * v2.4: a folder sorted before is matched again even when it, its person folders or its photos were renamed or moved
  * in Explorer, so it opens as it was and a scan doesn't see those photos as new. Not while a sort job is running.
+ * v2.9: the folder is listed without blocking the window; two requests for one folder share one run.
  */
-function reconcile(root: string): FolderStatus['reconciled'] {
+const reconciling = new Map<string, Promise<FolderStatus['reconciled']>>();
+function reconcile(root: string): Promise<FolderStatus['reconciled']> {
+  const k = root.toLowerCase();
+  const had = reconciling.get(k);
+  if (had) return had;
+  const run = reconcileNow(root).finally(() => reconciling.delete(k));
+  reconciling.set(k, run);
+  return run;
+}
+async function reconcileNow(root: string): Promise<FolderStatus['reconciled']> {
   if (current) return null;
   try {
     const d = getDb();
-    const relocated = relocateFolder(d, root);
+    const t = Date.now();
+    const relocated = await relocateFolder(d, root);
     const movedFrom = relocated?.from ?? null;
     const fid = folderId(d, root, false);
     // Sorted on another computer (no face data here): its group photos still get their Explorer shortcuts.
-    if (fid == null) { syncGroupLinks(root); return null; }
-    const { moved, ...r } = reconcileFolder(d, fid, root);
+    if (fid == null) { void syncGroupLinks(root); return null; }
+    const { moved, ...r } = await reconcileFolder(d, fid, root);
+    if (Date.now() - t > 1000) log('info', `Matched ${root} with earlier sorts in ${Date.now() - t} ms`);
     // Labels and stars follow the photos too.
     const all = [...(relocated?.moved ?? []), ...moved];
     if (all.length) tagsAfterSort(all, []).catch(e => log('warn', 'Labels did not follow moved photos', e));
     renamePeopleLater(fid, root);
-    syncGroupLinks(root);
+    void syncGroupLinks(root);
     if (movedFrom || r.photos || r.folders.length) {
       log('info', `Found again in ${root}: ${movedFrom ? `folder moved from ${movedFrom}, ` : ''}${r.folders.length} person folder(s) renamed, ${r.photos} photo(s) moved`);
       return { movedFrom, ...r };
@@ -144,9 +157,9 @@ function renamePeopleLater(fid: number, root: string): void {
     .finally(() => { renaming = false; });
 }
 
-export function folderStatus(root: string): FolderStatus {
+export async function folderStatus(root: string): Promise<FolderStatus> {
   const d = getDb();
-  const reconciled = reconcile(root);
+  const reconciled = await reconcile(root);
   const fid = folderId(d, root, false);
   if (fid == null) return { folderId: null, scannedImages: 0, people: 0, lastScan: null, sorts: [], interrupted: null };
   const sorts = d.prepare("SELECT id, kind, created, state, summary FROM sorts WHERE folder_id = ? AND kind = 'people' ORDER BY id DESC LIMIT 10").all(fid) as unknown as SortHistory[];
@@ -160,14 +173,14 @@ export function folderStatus(root: string): FolderStatus {
 }
 
 /** Scan (or re-scan) a folder through the job queue. Resolves when grouping is done. */
-export function scanFolder(root: string, ev: Pick<SortEvents, 'scan'>): { queueId: string; done: Promise<{ folderId: number; cancelled?: boolean }> } {
-  reconcile(root);   // before the folder gets a new record: it may be a known one, renamed
+export async function scanFolder(root: string, ev: Pick<SortEvents, 'scan'>): Promise<{ queueId: string; done: Promise<{ folderId: number; cancelled?: boolean }> }> {
+  await reconcile(root);   // before the folder gets a new record: it may be a known one, renamed
   const fid = folderId(getDb(), root)!;
   let cancelled = false;
   const job = queue.add('scan', `Sort by person: scan ${path.basename(root)}`, async () => {
     if (cancelled) return;
     ev.scan({ folder: root, phase: 'listing', done: 0, total: 0, faces: 0, people: 0 });
-    reconcile(root);
+    await reconcile(root);
     // Folders sorted before — on this computer, or (from the folder's own list) on another one — are left alone.
     const files = await listImages(root, getSettings().sort.includeSubfolders, [...sortDirs(fid), ...sortedFolders(root)]);
     log('info', `Scan ${root}: ${files.length} images (${files.filter(f => f.cloud).length} online-only)`);
@@ -194,10 +207,16 @@ export function review(fid: number): ReviewData {
     SELECT p.id, p.num, p.dir, COUNT(DISTINCT f.image_id) AS photos
     FROM people p LEFT JOIN faces f ON f.person_id = p.id AND f.removed = 0
     WHERE p.folder_id = ? GROUP BY p.id ORDER BY p.num`).all(fid) as { id: number; num: number; dir: string | null; photos: number }[];
-  const chips = d.prepare('SELECT chip FROM faces WHERE person_id = ? AND removed = 0 ORDER BY sharpness * h DESC LIMIT 4');
+  // v2.9: everyone's 4 best face thumbnails in one query, without checking each file (2,500 people froze the app;
+  // a thumbnail that is gone just does not show).
+  const chips = new Map<number, string[]>();
+  for (const c of d.prepare(`SELECT person_id, chip FROM (SELECT f.person_id, f.chip, ROW_NUMBER() OVER (PARTITION BY f.person_id ORDER BY f.sharpness * f.h DESC) AS k
+      FROM faces f JOIN people p ON p.id = f.person_id WHERE p.folder_id = ? AND f.removed = 0 AND f.chip IS NOT NULL) WHERE k <= 4`).iterate(fid) as Iterable<{ person_id: number; chip: string }>) {
+    chips.set(c.person_id, [...(chips.get(c.person_id) ?? []), fileUrl(c.chip)]);
+  }
   const summaries: PersonSummary[] = people.filter(p => p.photos > 0 || (p.dir && fs.existsSync(p.dir))).map(p => ({
     id: p.id, num: p.num, label: personLabel(p), photos: p.photos, dir: p.dir,
-    faceUrls: (chips.all(p.id) as { chip: string | null }[]).map(c => faceUrl(c.chip)).filter(Boolean),
+    faceUrls: chips.get(p.id) ?? [],
     unsorted: p.photos < s.minPhotos && !p.dir,
   }));
   const ref = (r: { id: number; path: string; thumb: string | null }): PhotoRef => ({ imageId: r.id, name: path.basename(r.path), path: r.path, thumbUrl: r.thumb ? fileUrl(r.thumb) : '' });
@@ -304,7 +323,7 @@ export function applySort(fid: number, ev: Pick<SortEvents, 'apply'>): Promise<A
   let result: ApplyResult | null = null;
   return queue.add('apply', `Sort by person: apply ${path.basename(plan.root)}`, async () => {
     result = await runWorker({ task: 'apply', folderId: fid, root: plan.root, files: [], keepDirs: [], sortId, plan }, ev);
-    syncGroupLinks(plan.root);
+    await syncGroupLinks(plan.root);
   }, () => { /* apply can't be cancelled halfway: Undo afterwards instead */ }).done.then(() => result!);
 }
 
@@ -315,7 +334,7 @@ export function finishSort(sortId: number, ev: Pick<SortEvents, 'apply'>): Promi
   let result: ApplyResult | null = null;
   return queue.add('apply', `Sort by person: finish ${path.basename(plan.root)}`, async () => {
     result = await runWorker({ task: 'finish', folderId: row.folder_id, root: plan.root, files: [], keepDirs: [], sortId, plan }, ev);
-    syncGroupLinks(plan.root);
+    await syncGroupLinks(plan.root);
   }, () => {}).done.then(() => result!);
 }
 
@@ -323,9 +342,9 @@ export function undoSortJob(sortId: number, ev: Pick<SortEvents, 'apply'>): Prom
   const row = getDb().prepare('SELECT s.folder_id, f.path FROM sorts s JOIN folders f ON f.id = s.folder_id WHERE s.id = ?').get(sortId) as { folder_id: number; path: string };
   let result: any = null;
   return queue.add('undo', `Sort by person: undo ${path.basename(row.path)}`, async () => {
-    syncGroupLinks(row.path, true);    // shortcuts out first, so the folders a sort made can be removed
+    await syncGroupLinks(row.path, true);    // shortcuts out first, so the folders a sort made can be removed
     result = await runWorker({ task: 'undo', folderId: row.folder_id, root: row.path, files: [], keepDirs: [], sortId }, ev);
-    syncGroupLinks(row.path);          // back for any other sort still in place
+    await syncGroupLinks(row.path);          // back for any other sort still in place
   }, () => {}).done.then(() => result);
 }
 
@@ -404,6 +423,35 @@ export function estimateScan(root: string): Promise<ScanEstimate> {
   }, cancelScan).done.then(() => result!);
 }
 
+// ---------- v2.9: merge a person into the people they really are ----------
+
+/** Where each photo of this person belongs, by face (worker: big folders load many fingerprints). */
+export async function mergeSuggest(pid: number): Promise<MergePlan> {
+  const plan = await runWorker({ task: 'mergeSuggest', folderId: 0, root: '', files: [], keepDirs: [], personId: pid }, {}, false) as MergePlan;
+  const chip = getDb().prepare('SELECT chip FROM faces WHERE person_id = ? AND removed = 0 ORDER BY COALESCE(quality, 1) * sharpness * h DESC LIMIT 1');
+  const url = (p: MergePhoto) => ({ ...p, thumbUrl: p.thumb && fs.existsSync(p.thumb) ? fileUrl(p.thumb) : '' });
+  return {
+    ...plan,
+    targets: plan.targets.map(t => ({ ...t, photos: t.photos.map(url), faceUrl: faceUrl((chip.get(t.personId) as { chip: string | null } | undefined)?.chip ?? null) })),
+    unmatched: plan.unmatched.map(url),
+  };
+}
+
+/** Merge: chosen photos to their people, or every photo into one person. Shortcuts follow; an emptied folder goes. */
+export function mergePerson(pid: number, moves: { imageId: number; to: number }[] | null, all: number | null):
+  Promise<MergeResult & { moves: { from: string; to: string }[]; files: string[] }> {
+  let result: any = null;
+  return queue.add('apply', 'Photos: merge a person', async () => {
+    result = await runWorker({ task: 'merge', folderId: 0, root: '', files: [], keepDirs: [], personId: pid, mergeMoves: moves ?? undefined, mergeAll: all ?? undefined }, {});
+    await syncGroupLinks(result.root);
+    if (result.removed && result.dir) {
+      // Only shortcuts PixHaven made could be left; with those gone the folder is empty and goes too.
+      try { fs.rmdirSync(result.dir); } catch { /* something else is in it: the folder stays */ }
+    }
+    log('info', `Merged ${result.merged} photo(s) of person ${pid}: ${result.moved} moved, ${result.renamed} renamed, ${result.left} left, ${result.skipped.length} skipped`);
+  }, () => {}).done.then(() => result);
+}
+
 // ---------- v2.8: combine people across sorted folders ----------
 
 /** Who is the same person in these sorted folders (by face). */
@@ -422,7 +470,7 @@ export function matchAcross(fids: number[], ev: Pick<SortEvents, 'combine'>): Pr
 }
 
 export function combineEstimate(req: CombineRequest): Promise<CombineEstimate> {
-  return runWorker({ task: 'combine', dry: true, folderId: 0, root: req.dest, files: [], keepDirs: [], combine: req }, {});
+  return runWorker({ task: 'combine', dry: true, folderId: 0, root: req.dest, files: [], keepDirs: [], combine: req }, {}, false);
 }
 
 /** Move the people into the destination. Labels and shortcuts follow afterwards (main process). */
@@ -430,8 +478,8 @@ export function combine(req: CombineRequest, ev: Pick<SortEvents, 'combine'>): P
   let result: any = null;
   return queue.add('combine', `Combine people into ${path.basename(req.dest)}`, async () => {
     result = await runWorker({ task: 'combine', folderId: 0, root: req.dest, files: [], keepDirs: [], combine: req }, ev);
-    syncGroupLinks(req.dest);
-    for (const r of result.roots as string[]) syncGroupLinks(r);
+    await syncGroupLinks(req.dest);
+    for (const r of result.roots as string[]) await syncGroupLinks(r);
     log('info', `Combined ${result.people} people into ${req.dest}: ${result.moved} files moved, ${result.renamed} renamed, ${result.skipped.length} skipped`);
   }, () => { /* moving can't stop halfway safely */ }).done.then(() => result);
 }

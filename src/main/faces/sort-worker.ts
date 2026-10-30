@@ -10,11 +10,12 @@ import { FaceEngine } from './detect';
 import { syncImages, scanImage, groupFolder, trialScan, type ListedFile } from './pipeline';
 import { dot } from './cluster';
 import { combineFolders, estimateCombine, matchPeople, peopleOf } from '../sorter/combine';
+import { allPhotos, mergePerson, suggestMerge } from '../sorter/merge-person';
 import { applyPlan, undoSort } from '../sorter/apply';
 import { syncPhotoInfo, inspectRow } from '../tidy/inspect';
 
 export interface WorkerInput {
-  task: 'scan' | 'regroup' | 'apply' | 'finish' | 'undo' | 'inspect' | 'estimate' | 'match' | 'combine';
+  task: 'scan' | 'regroup' | 'apply' | 'finish' | 'undo' | 'inspect' | 'estimate' | 'match' | 'combine' | 'mergeSuggest' | 'merge';
   sortId?: number;
   plan?: SortPlan;
   dbPath: string;
@@ -31,6 +32,9 @@ export interface WorkerInput {
   combine?: CombineRequest;      // combine (dry: only the estimate)
   dry?: boolean;
   samples?: string[];            // estimate
+  personId?: number;             // mergeSuggest, merge
+  mergeMoves?: { imageId: number; to: number }[];   // merge: photo → person…
+  mergeAll?: number;             // …or every photo → this person
 }
 
 const input = workerData as WorkerInput;
@@ -112,6 +116,18 @@ async function main(): Promise<void> {
     parentPort!.postMessage({ type: 'result', result: {
       people: people.map(({ set, ...p }) => ({ ...p, matchable: !!set })), groups, ms: Date.now() - t,
     } });
+    db.close();
+    return;
+  }
+  if (input.task === 'mergeSuggest') {
+    parentPort!.postMessage({ type: 'result', result: suggestMerge(db, input.personId!, s.strictness) });
+    db.close();
+    return;
+  }
+  if (input.task === 'merge') {
+    const moves = input.mergeAll != null ? allPhotos(db, input.personId!).map(imageId => ({ imageId, to: input.mergeAll! })) : input.mergeMoves ?? [];
+    const res = await mergePerson(db, input.personId!, moves, input.exiftool, (done, total) => post({ phase: 'grouping', done, total }));
+    parentPort!.postMessage({ type: 'result', result: res });
     db.close();
     return;
   }

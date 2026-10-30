@@ -87,30 +87,34 @@ test('group photos: the folder keeping one knows which folders show it; folder r
   assert.deepEqual(alsoShownFrom(path.join(root, 'Person 1')).get(k), ['Mom', 'Person 3']);
 });
 
-test('Explorer shortcuts follow people.json: made, kept, retargeted, removed; others\' shortcuts untouched', () => {
+test('Explorer shortcuts follow people.json: made, kept, retargeted, removed; others\' shortcuts untouched', async () => {
   const root = tmp();
   const beach = put(path.join(root, 'Person 1', 'beach.jpg'));
   put(path.join(root, 'Person 2', 'beach.jpg'), 'a different photo with the same name');
   put(path.join(root, 'Person 2', 'mine.lnk'), 'someone else\'s shortcut');
-  // A fake shortcut writer/reader: the .lnk holds JSON.
+  // A fake shortcut writer/reader: the .lnk holds JSON. Reads are counted (v2.9: unchanged shortcuts are not read again).
+  let reads = 0;
   const links = {
     write: (lnk, target, description) => { fs.writeFileSync(lnk, JSON.stringify({ target, description })); return true; },
-    read: lnk => { try { return JSON.parse(fs.readFileSync(lnk, 'utf8')); } catch { return null; } },
+    read: lnk => { reads++; try { return JSON.parse(fs.readFileSync(lnk, 'utf8')); } catch { return null; } },
   };
   addShown(root, 7, [{ dir: path.join(root, 'Person 2'), file: beach }]);
-  assert.deepEqual(syncShortcuts(root, links), { made: 1, removed: 0 });
+  assert.deepEqual(await syncShortcuts(root, links), { made: 1, removed: 0 });
+  reads = 0;
+  assert.deepEqual(await syncShortcuts(root, links), { made: 0, removed: 0 });
+  assert.equal(reads, 0, 'shortcuts that did not change are not read again');
   const lnk = path.join(root, 'Person 2', 'beach (2).jpg.lnk');
   assert.deepEqual(links.read(lnk), { target: beach, description: LINK_MARK });
-  assert.deepEqual(syncShortcuts(root, links), { made: 0, removed: 0 }, 'nothing to do the second time');
+  assert.deepEqual(await syncShortcuts(root, links), { made: 0, removed: 0 }, 'nothing to do the second time');
 
   // The photo is renamed in the app: the shortcut is remade to point at it.
   const renamed = path.join(root, 'Person 1', 'beach day.jpg');
   fs.renameSync(beach, renamed);
   remapManifest(root, p => (p.toLowerCase() === beach.toLowerCase() ? renamed : p));
-  assert.deepEqual(syncShortcuts(root, links), { made: 1, removed: 1 });
+  assert.deepEqual(await syncShortcuts(root, links), { made: 1, removed: 1 });
   assert.equal(links.read(path.join(root, 'Person 2', 'beach day.jpg.lnk')).target, renamed);
 
   // Undo: all of PixHaven's shortcuts go, the user's own stays.
-  assert.deepEqual(syncShortcuts(root, links, true), { made: 0, removed: 1 });
+  assert.deepEqual(await syncShortcuts(root, links, true), { made: 0, removed: 1 });
   assert.deepEqual(tree(path.join(root, 'Person 2')), ['beach.jpg', 'mine.lnk']);
 });

@@ -273,7 +273,7 @@ function PersonTile({ p, checked, onChange }: { p: CombinePerson; checked?: bool
   return (
     <label className={`w-40 rounded-xl border border-line p-2 ${onChange ? 'cursor-pointer hover:bg-panel-2' : ''}`} data-combine-person={p.id}>
       <div className="relative grid grid-cols-2 gap-0.5 aspect-square rounded-lg overflow-hidden bg-panel-2">
-        {p.faceUrls.slice(0, 4).map(u => <img key={u} src={u} alt="" className="w-full h-full object-cover" />)}
+        {p.faceUrls.slice(0, 4).map(u => <img key={u} src={u} alt="" loading="lazy" decoding="async" onError={e => { e.currentTarget.style.visibility = 'hidden'; }} className="w-full h-full object-cover" />)}
         {onChange && <input type="checkbox" className="absolute top-1.5 left-1.5" checked={!!checked} onChange={e => onChange(e.target.checked)} aria-label={`Include ${p.label} from ${baseName(p.folder)}`} />}
       </div>
       <div className="mt-1.5 text-sm font-medium truncate">{p.label}</div>

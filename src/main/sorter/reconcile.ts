@@ -21,19 +21,37 @@ const win = process.platform === 'win32';
 const key = (p: string) => (win ? p.toLowerCase() : p);
 const under = (p: string, dir: string) => key(p).startsWith(key(dir) + path.sep);
 
-/** Image files below root (folders starting with "." skipped), with their sizes. */
-function listFiles(root: string): { path: string; size: number }[] {
-  const out: { path: string; size: number }[] = [];
-  const walk = (dir: string) => {
-    let entries: fs.Dirent[];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) { if (!e.name.startsWith('.')) walk(p); }
-      else if (e.isFile() && isImageFile(p)) { try { out.push({ path: p, size: fs.statSync(p).size }); } catch { /* vanished */ } }
+/**
+ * Image files and folders below root (folders starting with "." skipped). v2.9: listed without blocking and without
+ * reading each file's size (70,000 photos in 2,500 folders froze the app); sizes are read only where needed (sizesOf).
+ */
+async function listTree(root: string): Promise<{ files: string[]; dirs: Set<string> }> {
+  const files: string[] = [];
+  const dirs = new Set<string>([key(root)]);
+  const pending = [root];
+  while (pending.length) {
+    const batch = pending.splice(0, 32);
+    const listed = await Promise.all(batch.map(d => fs.promises.readdir(d, { withFileTypes: true }).then(e => ({ d, e })).catch(() => null)));
+    for (const l of listed) {
+      if (!l) continue;
+      for (const e of l.e) {
+        const p = path.join(l.d, e.name);
+        if (e.isDirectory()) { if (!e.name.startsWith('.')) { dirs.add(key(p)); pending.push(p); } }
+        else if (e.isFile() && isImageFile(p)) files.push(p);
+      }
     }
-  };
-  walk(root);
+  }
+  return { files, dirs };
+}
+
+/** Sizes of these files (missing ones left out), read in batches without blocking. */
+async function sizesOf(paths: string[]): Promise<{ path: string; size: number }[]> {
+  const out: { path: string; size: number }[] = [];
+  for (let i = 0; i < paths.length; i += 128) {
+    const part = paths.slice(i, i + 128);
+    const st = await Promise.all(part.map(p => fs.promises.stat(p).then(x => x.size).catch(() => null)));
+    part.forEach((p, k) => { if (st[k] != null) out.push({ path: p, size: st[k]! }); });
+  }
   return out;
 }
 
@@ -111,15 +129,18 @@ export function remapLog(root: string, map: (p: string) => string): void {
  * A folder chosen for the first time may be a sorted folder that was renamed or moved: it is matched with a known
  * folder that no longer exists by the photos inside (name and size). Returns the old path when it was one.
  */
-export function relocateFolder(db: Db, root: string): { from: string; moved: Moved } | null {
+export async function relocateFolder(db: Db, root: string): Promise<{ from: string; moved: Moved } | null> {
   if (db.prepare('SELECT 1 FROM folders WHERE path = ?').get(root)) return null;
   if (!fs.existsSync(path.join(root, '.clearup'))) return null;   // only folders PixHaven sorted
   const gone = (db.prepare('SELECT id, path FROM folders').all() as { id: number; path: string }[]).filter(f => !fs.existsSync(f.path));
   if (!gone.length) return null;
-  const here = new Set(listFiles(root).map(f => `${key(path.basename(f.path))}|${f.size}`));
+  const samples = gone.map(f => ({ f, sample: db.prepare("SELECT path, size FROM images WHERE folder_id = ? AND status = 'done' ORDER BY RANDOM() LIMIT 200").all(f.id) as { path: string; size: number }[] }));
+  // Only files named like a sampled photo need their size read.
+  const names = new Set(samples.flatMap(x => x.sample.map(s => key(path.basename(s.path)))));
+  const { files } = await listTree(root);
+  const here = new Set((await sizesOf(files.filter(p => names.has(key(path.basename(p)))))).map(f => `${key(path.basename(f.path))}|${f.size}`));
   let best: { id: number; path: string; score: number } | null = null;
-  for (const f of gone) {
-    const sample = db.prepare("SELECT path, size FROM images WHERE folder_id = ? AND status = 'done' ORDER BY RANDOM() LIMIT 200").all(f.id) as { path: string; size: number }[];
+  for (const { f, sample } of samples) {
     if (sample.length < 3) continue;
     const score = sample.filter(s => here.has(`${key(path.basename(s.path))}|${s.size}`)).length / sample.length;
     if (score >= 0.6 && (!best || score > best.score)) best = { ...f, score };
@@ -131,14 +152,16 @@ export function relocateFolder(db: Db, root: string): { from: string; moved: Mov
 }
 
 /** Photos and person folders of a known folder renamed or moved inside it: found again, every stored path follows. */
-export function reconcileFolder(db: Db, fid: number, root: string): Omit<Reconciled, 'movedFrom'> & { moved: Moved } {
+export async function reconcileFolder(db: Db, fid: number, root: string): Promise<Omit<Reconciled, 'movedFrom'> & { moved: Moved }> {
   const rows = db.prepare('SELECT id, path, size FROM images WHERE folder_id = ?').all(fid) as { id: number; path: string; size: number | null }[];
-  const missing = rows.filter(r => !fs.existsSync(r.path));
+  const tree = await listTree(root);
+  const onDisk = new Set(tree.files.map(key));
+  const missing = rows.filter(r => (under(r.path, root) ? !onDisk.has(key(r.path)) : !fs.existsSync(r.path)));
   if (!missing.length) return { folders: [], photos: 0, moved: [] };
   const known = new Set(rows.map(r => key(r.path)));
+  const wanted = new Set(missing.map(m => key(path.basename(m.path))));
   const bySize = new Map<string, string[]>(), byName = new Map<string, string[]>();
-  for (const f of listFiles(root)) {
-    if (known.has(key(f.path))) continue;
+  for (const f of await sizesOf(tree.files.filter(p => !known.has(key(p)) && wanted.has(key(path.basename(p)))))) {
     const n = key(path.basename(f.path));
     bySize.set(`${n}|${f.size}`, [...(bySize.get(`${n}|${f.size}`) ?? []), f.path]);
     byName.set(n, [...(byName.get(n) ?? []), f.path]);
@@ -162,7 +185,7 @@ export function reconcileFolder(db: Db, fid: number, root: string): Omit<Reconci
   const lost = [
     ...(db.prepare('SELECT dir FROM sort_dirs WHERE folder_id = ?').all(fid) as { dir: string }[]).map(r => r.dir),
     ...(db.prepare('SELECT dir FROM people WHERE folder_id = ? AND dir IS NOT NULL').all(fid) as { dir: string }[]).map(r => r.dir),
-  ].filter((d, i, a) => !fs.existsSync(d) && a.findIndex(x => key(x) === key(d)) === i);
+  ].filter((d, i, a) => (under(d, root) ? !tree.dirs.has(key(d)) : !fs.existsSync(d)) && a.findIndex(x => key(x) === key(d)) === i);
   const folders: { from: string; to: string }[] = [];
   for (const d of lost) {
     const votes = new Map<string, { dir: string; n: number }>();
@@ -199,10 +222,14 @@ export async function renamePeople(db: Db, fid: number, root: string, exiftool: 
   const reader = new TagReader(exiftool);
   try {
     for (const r of todo) {
-      // That person's photos, wherever they are kept.
-      const files = (db.prepare(`SELECT DISTINCT i.id, i.path FROM people p JOIN faces f ON f.person_id = p.id AND f.removed = 0
-        JOIN images i ON i.id = f.image_id WHERE p.folder_id = ? AND p.dir IS NOT NULL`).all(fid) as { id: number; path: string }[])
-        .filter(x => fs.existsSync(x.path));
+      // That person's photos (the person now named after the renamed folder), wherever they are kept. v2.9: this took
+      // every photo of the sorted folder before — 70,000 checked one by one and read by ExifTool for one rename.
+      const pids = (db.prepare('SELECT id, dir FROM people WHERE folder_id = ? AND dir IS NOT NULL').all(fid) as { id: number; dir: string }[])
+        .filter(p => path.basename(p.dir) === r.new).map(p => p.id);
+      const rows = pids.length ? db.prepare(`SELECT DISTINCT i.id, i.path FROM faces f JOIN images i ON i.id = f.image_id
+        WHERE f.removed = 0 AND f.person_id IN (${pids.map(() => '?').join(',')})`).all(...pids) as { id: number; path: string }[] : [];
+      const there = await Promise.all(rows.map(x => fs.promises.access(x.path).then(() => true, () => false)));
+      const files = rows.filter((_, k) => there[k]);
       const named: { id: number; path: string }[] = [];
       for (let i = 0; i < files.length; i += 200) {
         const part = files.slice(i, i + 200);

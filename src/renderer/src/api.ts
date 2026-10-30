@@ -3,7 +3,7 @@ import type {
   ApplyProgress, ApplyResult, FolderStatus, GpuStatus, ImageInfo, JobItem, JobUpdate, ModelDownload, ModelId, PhotoRef,
   PowerStatus, QueueItem, ReviewData, SaveResult, ScanProgress, Settings, SortHistory, SortPlan, TidyResults, UpdateStatus, UpscaleOptions,
   FileWriteStatus, Playlist, WatchChange, WatchedFolder, WatchQuery, WatchResult,
-  FileOpResult, KnownFolder, MediaEntry, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, ScanEstimate, DescribeResult, DescribeStatus, GenImage, GenProgress, GenRequest, GenStatus,
+  FileOpResult, KnownFolder, MediaEntry, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, ScanEstimate, MergePlan, MergeResult, DescribeResult, DescribeStatus, GenImage, GenProgress, GenRequest, GenStatus,
   DriveInfo, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
 } from '@shared/types';
 
@@ -136,6 +136,8 @@ interface PhotosApi {
   match(folderIds: number[]): Promise<CombineMatch>;
   combineEstimate(req: CombineRequest): Promise<CombineEstimate>;
   combine(req: CombineRequest): Promise<CombineResult>;
+  mergeSuggest(pid: number): Promise<MergePlan>;
+  merge(pid: number, moves: { imageId: number; to: number }[] | null, all: number | null): Promise<MergeResult>;
 }
 interface FilesApi {
   paste(paths: string[], dest: string, mode: 'copy' | 'move'): Promise<FileOpResult>;

@@ -358,6 +358,15 @@ export interface CombineEstimate {
 export interface CombineProgress { phase: 'matching' | 'moving' | 'naming' | 'finishing' | 'done' | 'error'; done: number; total: number; current?: string; error?: string }
 export interface CombineResult { dest: string; people: number; moved: number; renamed: number; skipped: { path: string; reason: string }[] }
 
+// v2.9 Photos → Merge into…: where each photo of a person belongs (by face), and the merge itself.
+export interface MergePhoto { imageId: number; path: string; thumb: string | null; thumbUrl?: string }
+export interface MergePlan {
+  personId: number; label: string; photos: number;
+  targets: { personId: number; label: string; photos: MergePhoto[]; score: number; faceUrl?: string }[];
+  unmatched: MergePhoto[];
+}
+export interface MergeResult { merged: number; moved: number; renamed: number; left: number; removed: boolean; skipped: { path: string; reason: string }[] }
+
 // v2.8: how long a scan will take, measured on a few of the folder's photos before it starts.
 export interface ScanEstimate {
   files: number; toScan: number; cloud: number;

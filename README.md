@@ -35,7 +35,8 @@ npm run setup:engine     # downloads the engine, models, face models, places, FF
 | `npm run e2e:library` | v2.0 Phase A: drives, media-only browsing, a thumbnail for every format, list view, search, viewer, no-permission folder, a drive appearing (subst), a 5,000-file folder |
 | `node tests/make-media.mjs <folder>` | Builds the mixed-format test folder (17 photo formats incl. HEIC and 7 RAW, 17 video formats) |
 | `npm run e2e:sort` | Same for Sort by person: scan → review → dry run → apply (no copies, people tagged, folders checked against the photos' real names) → re-scan → undo, on ~50 public test photos (`phase0/fetch-test-photos.mjs`, or set `CLEARUP_TESTPHOTOS`) |
-| `npm run e2e:combine` | Photos → Combine people on two sorted folders made by the test (the same person in both): match, name, estimate, combine, files/face data/names/shortcuts checked, destination opened; then Sort → Estimate time |
+| `npm run e2e:combine` | Photos → Combine people on two sorted folders made by the test (the same person in both): match, name, estimate, combine, files/face data/names/shortcuts checked, destination opened; Move to / Rename; Merge into… (by hand and by face); then Sort → Estimate time |
+| `npm run e2e:scale` | Opens a made-up 70,000-photo, 2,500-person sorted folder in Photos (first time, again, after Explorer renames/moves) and fails if the app is held for over 1 s |
 | `npm run dist` | Type-check, build and make the Windows installer `dist/PixHaven-Setup-<version>.exe` |
 | `PixHaven.exe --selftest out.json` | Installed app: GPU check, one real upscale, a face scan, a video thumbnail, an on-the-fly video conversion, labels export/import, ExifTool writing and reading back (labels, stars, people) and the folder index; JSON report, then exits. Add `--cpu` to test CPU mode, `--with-download` to test the model download |
 
@@ -152,6 +153,21 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   shortcuts move to the destination, and the old folders' sort logs follow the files (their Undo still finds them).
   Every move is listed in `<destination>/.clearup/combine-log.jsonl`; there is no one-click undo. Choosing one of the
   sorted folders as the destination keeps its people where they are. 3,000 people in 40 folders compare in ~7 s.
+- **Merge into… (Photos, 1.0):** a person's view has "Merge into…". Each of their photos is compared with everyone else
+  in the sorted folder (its 3 nearest faces there, at strictness − 0.04, and 0.05 ahead of the next best; never someone
+  already in that photo). All alike one person → "Merge N photos into Person 4"; spread over several → one click sends
+  each photo to its person; unclear ones stay. Or "Merge all here" on any person (searchable list). Files kept in the
+  person's folder move into the new person's folder (group photos kept elsewhere stay), the face, the name inside the
+  photo, labels, the group photo list and shortcuts follow, the old sort log too; an emptied person and folder go.
+  Moves are listed in `<folder>/.clearup/merge-log.jsonl`. Runs in the sort worker.
+- **Big folders (1.0):** opening a 70,000-photo folder with 2,500 people and 6,000 group photo shortcuts held the app
+  for 52–134 s ("Not Responding"). Now: folders are listed without blocking and file sizes read only for photos that
+  moved; what each shortcut points at is remembered in `.clearup/shortcuts.json` (unchanged ones are not read through
+  Windows again), shortcuts are matched through a lookup table and made in the background in 40 ms slices; covering
+  indexes on `faces` keep the people list from reading every 2 KB fingerprint; a renamed person folder renames the name
+  inside that person's photos only (it read every photo of the folder before); person cards load their thumbnails
+  lazily. People show in ~1.5 s and the app is never held for more than ~0.4 s (`npm run e2e:scale`). IPC handlers
+  that hold the app over 300 ms are noted in the log.
 - **Move to / Rename (0.9.3):** "Move to…" and "Copy to…" (Photos and Library) open PixHaven's own folder chooser:
   browse folders (the one the items are in is marked "(here)" and not offered), "New folder and move" in one step, or
   "Other folder…" for the Windows picker. Windows' picker returned the folder it showed when a new folder was not

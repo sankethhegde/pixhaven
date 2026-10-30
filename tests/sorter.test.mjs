@@ -171,17 +171,17 @@ test('a sorted folder renamed in Explorer (and its person folders) is found agai
   const sortId = Number(db.prepare("INSERT INTO sorts (folder_id, created, state, plan) VALUES (?, ?, 'applying', ?)").run(fid, Date.now(), JSON.stringify(plan)).lastInsertRowid);
   await applyPlan(db, sortId, plan, () => {}, false, EXIFTOOL);
   // Nothing renamed: nothing changes.
-  assert.deepEqual(reconcileFolder(db, fid, root), { folders: [], photos: 0, moved: [] });
+  assert.deepEqual(await reconcileFolder(db, fid, root), { folders: [], photos: 0, moved: [] });
 
   // The user renames the person folders and the sorted folder itself.
   fs.renameSync(path.join(root, 'Person 1'), path.join(root, 'Ravi'));
   fs.renameSync(path.join(root, 'Person 2'), path.join(root, 'Mom'));
   const moved = root + '-renamed';
   fs.renameSync(root, moved);
-  assert.equal(relocateFolder(db, root), null, 'a folder that is not there is not matched');
-  assert.equal(relocateFolder(db, moved)?.from, root);
+  assert.equal(await relocateFolder(db, root), null, 'a folder that is not there is not matched');
+  assert.equal((await relocateFolder(db, moved))?.from, root);
   assert.equal(folderId(db, moved, false), fid);
-  const r = reconcileFolder(db, fid, moved);
+  const r = await reconcileFolder(db, fid, moved);
   assert.equal(r.photos, 3);
   assert.deepEqual(r.folders.map(f => [path.basename(f.from), path.basename(f.to)]).sort(), [['Person 1', 'Ravi'], ['Person 2', 'Mom']]);
   const paths = db.prepare('SELECT path FROM images WHERE folder_id = ?').all(fid).map(x => x.path);
