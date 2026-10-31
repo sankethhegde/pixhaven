@@ -205,6 +205,19 @@ const api = {
     chooseFolder: () => invoke('wall:chooseFolder'),
   },
   onWallProgress: listen('wall:progress'),
+  conv: {
+    caps: () => invoke('conv:caps'),
+    inspect: (paths: string[]) => invoke('conv:inspect', paths),
+    start: (files: string[], o: unknown) => invoke('conv:start', files, o),
+    cancel: () => invoke('conv:cancel'),
+    pickFiles: () => invoke('conv:pickFiles'),
+    edit: (file: string, spec: unknown) => invoke('conv:edit', file, spec),
+    join: (files: string[], o: unknown) => invoke('conv:join', files, o),
+    frames: (file: string, at: number | null, every: number | null, format: string) => invoke('conv:frames', file, at, every, format),
+    pickMusic: () => invoke('conv:pickMusic'),
+  },
+  onConvProgress: listen('conv:progress'),
+  onConvDone: listen('conv:done'),
   onOpenSort: listen('open:sort'),
 };
 

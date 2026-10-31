@@ -38,6 +38,7 @@ npm run setup:engine     # downloads the engine, models, face models, places, FF
 | `npm run e2e:combine` | Photos → Combine people on two sorted folders made by the test (the same person in both): match, name, estimate, combine, files/face data/names/shortcuts checked, destination opened; Move to / Rename; Merge into… (by hand and by face); then Sort → Estimate time |
 | `npm run e2e:privacy` | Hidden folders, photos, videos and labels (password, wrong password, unlock, lock, rename, change password); Library Copy / Paste, New folder, Copy to |
 | `npm run e2e:wallpaper` | Wallpaper recommended with photos made for this screen: ready, upscale first, blurry and wrong-shape ones left out, Set as wallpaper (faked, the desktop is not changed), Upscale, hidden photos left out |
+| `npm run e2e:editor` | Video editor on real files made with the bundled FFmpeg: Convert (→ H.264, copy, fit under 1 MB, MP3, GIF, HEIC → JPG, Stop), Edit (lossless trim, split, cut out + 9:16 + 2× + mute + text + fade, save a frame), Join; player ← / X, full screen without Labels |
 | `npm run e2e:scale` | Opens a made-up 70,000-photo, 2,500-person sorted folder in Photos (first time, again, after Explorer renames/moves) and fails if the app is held for over 1 s |
 | `npm run dist` | Type-check, build and make the Windows installer `dist/PixHaven-Setup-<version>.exe` |
 | `PixHaven.exe --selftest out.json` | Installed app: GPU check, one real upscale, a face scan, a video thumbnail, an on-the-fly video conversion, labels export/import, ExifTool writing and reading back (labels, stars, people) and the folder index; JSON report, then exits. Add `--cpu` to test CPU mode, `--with-download` to test the model download |
@@ -155,6 +156,30 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   shortcuts move to the destination, and the old folders' sort logs follow the files (their Undo still finds them).
   Every move is listed in `<destination>/.clearup/combine-log.jsonl`; there is no one-click undo. Choosing one of the
   sorted folders as the destination keeps its people where they are. 3,000 people in 40 folders compare in ~7 s.
+- **Video editor, phase 1 — Convert (1.0.1):** a new tab (also "Convert…" on a Library selection of videos or
+  HEIC photos; files can be dropped in). Targets: MP4 H.264 / HEVC / AV1, WebM VP9, MOV ProRes, MP3, M4A, GIF, and
+  JPG / PNG for photos (HEIC through FFmpeg, EXIF copied with ExifTool). The bundled FFmpeg is an LGPL build, so
+  encoders are tested once per run and the best one used: Quick Sync / NVENC / AMF / Media Foundation, else
+  OpenH264, Kvazaar (HEVC), SVT-AV1, libvpx, prores_ks. Quality Small / Balanced / Best, resolution (only made
+  smaller), "Fit under N MB" (bitrate from the length, sound 128k), keep or drop the sound, save next to originals or
+  in a folder. Same codec and nothing to change → the video is copied (seconds, lossless). Never overwrites
+  ("(converted)"), keeps the original's date, writes to a ".part" file first; Stop removes it. Runs in the job queue
+  with progress, speed and time left. Logic in `src/main/convert/plan.ts`. On the test laptop an 8 s 720p HEVC → H.264
+  took 2 s (Quick Sync).
+- **Video editor, phase 2 — Edit and Join (1.0.1):** Edit opens one video: a preview (the file itself when Chromium plays
+  it, still frames otherwise) over a timeline of 10 thumbnails — Start here / End here (trim), "Cut out from here… …to
+  here", Split here (each piece its own file) — and cards for rotate / mirror / flip, crop (9:16, 1:1, 4:5, 4:3, 16:9,
+  with a position slider), speed (0.25–4×, sound kept in tune with chained atempo), sound (volume 0–200%; music mixed
+  under it or instead of it, looped and faded out), look (brightness / colour through hue, contrast through curves —
+  the LGPL FFmpeg has no "eq"), steadying (deshake), text (drawtext from a temp file with expansion off, so any
+  characters work; Segoe UI), fades in/out, and frames (this one as JPG / PNG, or one every N s into "<name> frames").
+  Rotate, look, crop box, text and speed show live on the preview (CSS, approximately). A plain trim / split is saved
+  without converting (-c copy) unless a cut would land more than 1 s before its keyframe — then it is cut exactly.
+  Outputs: "<name> (edited).mp4", "(part N)", never overwriting; in the job queue with progress. Join puts ticked videos
+  one after another (↑ ↓ to order), each made the first one's size (letterboxed), silent ones given silence. Planner:
+  `src/main/convert/edit.ts`; shared timeline maths: `src/shared/edit-math.ts`.
+- **Player (1.0.1):** ← in the top left goes back (in full screen it leaves full screen first), X in the top right
+  closes; in full screen the Labels & stars button and panel are hidden.
 - **Hidden items (1.0):** folders, photos, videos (Library, Photos: Hide / Unhide; a person: Hide person) and labels
   (Manage labels: Hide — the label and its files) stay out of every PixHaven screen until unlocked with a password: folder
   listings and the folder tree, search, labels and filters, playlists, watched-folder views, recent videos, Photos'

@@ -3,7 +3,7 @@ import type {
   ApplyProgress, ApplyResult, FolderStatus, GpuStatus, ImageInfo, JobItem, JobUpdate, ModelDownload, ModelId, PhotoRef,
   PowerStatus, QueueItem, ReviewData, SaveResult, ScanProgress, Settings, SortHistory, SortPlan, TidyResults, UpdateStatus, UpscaleOptions,
   FileWriteStatus, Playlist, WatchChange, WatchedFolder, WatchQuery, WatchResult,
-  FileOpResult, KnownFolder, MediaEntry, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, ScanEstimate, MergePlan, MergeResult, PrivacyStatus, WallProgress, WallResult, WallScreen, DescribeResult, DescribeStatus, GenImage, GenProgress, GenRequest, GenStatus,
+  FileOpResult, KnownFolder, MediaEntry, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, ScanEstimate, MergePlan, MergeResult, PrivacyStatus, WallProgress, WallResult, WallScreen, ConvertCaps, ConvertFile, ConvertOptions, ConvertProgress, ConvertResult, EditSpec, DescribeResult, DescribeStatus, GenImage, GenProgress, GenRequest, GenStatus,
   DriveInfo, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
 } from '@shared/types';
 
@@ -205,6 +205,19 @@ interface Api {
     chooseFolder(): Promise<string | null>;
   };
   onWallProgress(cb: (p: WallProgress) => void): Off;
+  conv: {
+    caps(): Promise<ConvertCaps>;
+    inspect(paths: string[]): Promise<ConvertFile[]>;
+    start(files: string[], o: ConvertOptions): Promise<string>;
+    cancel(): Promise<void>;
+    pickFiles(): Promise<string[]>;
+    edit(file: string, spec: EditSpec): Promise<string>;
+    join(files: string[], o: Pick<EditSpec, 'output' | 'outDir'>): Promise<string>;
+    frames(file: string, at: number | null, every: number | null, format: 'jpg' | 'png'): Promise<{ files: string[]; dir: string }>;
+    pickMusic(): Promise<string | null>;
+  };
+  onConvProgress(cb: (p: ConvertProgress) => void): Off;
+  onConvDone(cb: (r: ConvertResult & { jobId: string }) => void): Off;
   onOpenSort(cb: (folder: string) => void): Off;
   detectGpu(): Promise<{ gpu: GpuStatus; dedicated: boolean }>;
   getSettings(): Promise<Settings>;

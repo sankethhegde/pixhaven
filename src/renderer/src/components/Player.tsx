@@ -278,7 +278,9 @@ export function Player({ items, index, infos, onIndex, onClose, playlist }: Prop
       role="dialog" aria-label={`Player: ${item.name}`} onMouseMove={wake}>
       {/* top bar */}
       <div className={`absolute top-0 inset-x-0 z-10 flex items-center gap-3 px-4 h-14 bg-gradient-to-b from-black/80 to-transparent transition-opacity ${idle ? 'opacity-0' : ''}`}>
-        <button onClick={onClose} className={btn} aria-label="Close player"><Icon name="x" /></button>
+        {/* v2.11: back arrow on the left (leaves full screen first), close on the right */}
+        <button onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); else onClose(); }} className={btn}
+          aria-label="Back to the list" title={full ? 'Leave full screen' : 'Back to the list'}><Icon name="back" /></button>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 min-w-0"><span className="font-medium truncate" data-testid="player-name">{item.name}</span>
             {(T.tagsOf(item.path)?.stars ?? 0) > 0 && <Stars value={T.tagsOf(item.path)!.stars} size={13} />}</div>
@@ -287,6 +289,7 @@ export function Player({ items, index, infos, onIndex, onClose, playlist }: Prop
             {info ? [info.width ? `${info.width}×${info.height}` : '', info.videoCodec.toUpperCase(), stream?.reason, stream?.encoder ? `(${stream.encoder.replace('h264_', '').replace('qsv', 'Quick Sync').replace('mf', 'Media Foundation')})` : ''].filter(Boolean).join(' · ') : 'Opening…'}
           </div>
         </div>
+        <button onClick={onClose} className={btn} aria-label="Close player" title="Close"><Icon name="x" /></button>
       </div>
 
       {/* picture */}
@@ -323,7 +326,8 @@ export function Player({ items, index, infos, onIndex, onClose, playlist }: Prop
         )}
       </div>
 
-      {tagsOpen && (
+      {/* v2.11: labels and stars stay out of the way in full screen */}
+      {tagsOpen && !full && (
         <div className="absolute z-20 top-16 right-3 w-80 max-h-[calc(100%-11rem)] overflow-y-auto rounded-2xl bg-black/80 backdrop-blur border border-white/10 p-4 space-y-4"
           onClick={e => e.stopPropagation()} aria-label="Labels and stars panel">
           <div className="flex items-center text-sm font-medium">Labels & stars
@@ -392,9 +396,11 @@ export function Player({ items, index, infos, onIndex, onClose, playlist }: Prop
             ))}
             <MenuItem onClick={() => void loadSubFile()}>Load subtitle file…</MenuItem>
           </Menu>
-          <button className={`${btn} ${tagsOpen ? 'bg-white/15' : ''}`} onClick={() => setTagsOpen(!tagsOpen)} aria-label="Labels and stars" aria-expanded={tagsOpen} title="Labels and stars (S); 1–5 sets stars">
-            <span className="text-[#f5b301]">★</span>Labels
-          </button>
+          {!full && (
+            <button className={`${btn} ${tagsOpen ? 'bg-white/15' : ''}`} onClick={() => setTagsOpen(!tagsOpen)} aria-label="Labels and stars" aria-expanded={tagsOpen} title="Labels and stars (S); 1–5 sets stars">
+              <span className="text-[#f5b301]">★</span>Labels
+            </button>
+          )}
           <button className={btn} onClick={toggleFull} aria-label={full ? 'Exit full screen' : 'Full screen'} title="Full screen (F)"><Icon name="fit" /></button>
         </div>
       </div>

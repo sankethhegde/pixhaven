@@ -11,10 +11,11 @@ import { Tidy, type TidyTab } from './pages/Tidy';
 import { Library } from './pages/Library';
 import { Photos } from './pages/Photos';
 import { Wallpaper } from './pages/Wallpaper';
+import { VideoEditor } from './pages/VideoEditor';
 import { ImageGenerator } from './pages/ImageGenerator';
 import { Icon, Notice } from './components/ui';
 
-type Page = 'home' | 'library' | 'photos' | 'wallpaper' | 'generator' | 'upscale' | 'sort' | 'tidy' | 'settings';
+type Page = 'home' | 'library' | 'photos' | 'wallpaper' | 'editor' | 'generator' | 'upscale' | 'sort' | 'tidy' | 'settings';
 
 export default function App() {
   const [page, setPage] = useState<Page>('home');
@@ -35,6 +36,8 @@ export default function App() {
   const [libVisited, setLibVisited] = useState(false);
   const [photosVisited, setPhotosVisited] = useState(false);
   const [wallVisited, setWallVisited] = useState(false);
+  const [editorVisited, setEditorVisited] = useState(false);
+  const [pendingConvert, setPendingConvert] = useState<string[] | null>(null);
   const [genVisited, setGenVisited] = useState(false);
   const [describeReq, setDescribeReq] = useState<{ path: string; n: number } | null>(null);
   const [similarReq, setSimilarReq] = useState<{ path: string; n: number } | null>(null);
@@ -63,6 +66,7 @@ export default function App() {
     w.__clearupOpen = paths => { setPending(paths); setPage('upscale'); };
     w.__clearupSort = f => { setPendingSort(f); setPage('sort'); };
     (w as { __clearupPage?: (p: Page) => void }).__clearupPage = p => setPage(p);
+    (w as { __clearupConvert?: (p: string[]) => void }).__clearupConvert = p => { setPendingConvert(p); setPage('editor'); };
     (w as { __clearupDescribe?: (p: string) => void }).__clearupDescribe = p => { setDescribeReq({ path: p, n: Date.now() }); setPage('generator'); };
     (w as { __clearupSimilar?: (p: string) => void }).__clearupSimilar = p => { setSimilarReq({ path: p, n: Date.now() }); setPage('generator'); };
   }, []);
@@ -77,6 +81,7 @@ export default function App() {
     { id: 'library', label: 'Library', icon: 'library' },
     { id: 'photos', label: 'Photos', icon: 'image' },
     { id: 'wallpaper', label: 'Wallpaper recommended', icon: 'grid' },
+    { id: 'editor', label: 'Video editor', icon: 'video' },
     { id: 'upscale', label: 'Upscale', icon: 'sparkle' },
     { id: 'generator', label: 'Image Generator', icon: 'wand' },
     { id: 'sort', label: 'Sort by person', icon: 'people' },
@@ -87,6 +92,8 @@ export default function App() {
   if (page === 'library' && !libVisited) setLibVisited(true);
   if (page === 'photos' && !photosVisited) setPhotosVisited(true);
   if (page === 'wallpaper' && !wallVisited) setWallVisited(true);
+  if (page === 'editor' && !editorVisited) setEditorVisited(true);
+  const convertFiles = (paths: string[]) => { setPendingConvert(paths); setPage('editor'); };
   if (page === 'generator' && !genVisited) setGenVisited(true);
   const sortFolder = (f: string) => { setPendingSort(f); setPage('sort'); };
   const describePicture = (p: string) => { setDescribeReq({ path: p, n: Date.now() }); setPage('generator'); };
@@ -150,12 +157,17 @@ export default function App() {
             <div className={page === 'library' ? 'h-full' : 'hidden'}>
               <Library settings={settings} onSettings={setSettings} active={page === 'library'} initialDir={pendingLib} onConsumedInitial={() => setPendingLib(null)}
                 initialPlay={pendingPlay} onPlayed={() => setPendingPlay(null)}
-                onUpscale={upscaleFiles} onSort={sortFolder} onDescribe={describePicture} onSimilar={similarPicture} />
+                onUpscale={upscaleFiles} onSort={sortFolder} onDescribe={describePicture} onSimilar={similarPicture} onConvert={convertFiles} />
             </div>
           )}
           {genVisited && (
             <div className={page === 'generator' ? 'h-full' : 'hidden'}>
               <ImageGenerator settings={settings} onSettings={setSettings} active={page === 'generator'} onUpscale={upscaleFiles} describeRequest={describeReq} similarRequest={similarReq} />
+            </div>
+          )}
+          {editorVisited && (
+            <div className={page === 'editor' ? 'h-full' : 'hidden'}>
+              <VideoEditor active={page === 'editor'} incoming={pendingConvert} onConsumed={() => setPendingConvert(null)} />
             </div>
           )}
           {wallVisited && (

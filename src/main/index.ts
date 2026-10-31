@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, powerMonitor, protocol, shell } from 'electron';
-import type { JobItem, JobUpdate, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery, GenRequest, CombineRequest, LabelInfo, MediaTags } from '@shared/types';
+import type { JobItem, JobUpdate, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery, GenRequest, CombineRequest, LabelInfo, MediaTags, ConvertOptions, ConvertResult, EditSpec } from '@shared/types';
 import { IMAGE_EXTENSIONS } from '@shared/types';
 import { getSettings, updateSettings, writeTurnedOn } from './settings';
 import { detectGpu, hasDedicatedGpu } from './gpu-detect';
@@ -23,6 +23,7 @@ import * as tags from './tags-service';
 import * as watch from './watch-service';
 import * as privacy from './privacy';
 import * as wallpaper from './wallpaper-service';
+import * as convert from './convert-service';
 import { SEARCH_LIMIT } from './library/browse';
 import { mediaKind } from '@shared/types';
 import { moveAppData } from './app-data-move';
@@ -576,6 +577,38 @@ handle('tags:query', async (filter: TagFilter, text: string) => {
   if (!privacy.filterAllowed(filter.labels)) return [];
   const hid = privacy.isUnlocked() ? new Set<number>() : new Set(tags.tagStore().hiddenLabelIds());
   return privacy.entries(await tags.query(filter, text)).map(m => (hid.size ? { ...m, labels: m.labels.filter(l => !hid.has(l)) } : m));
+});
+// v2.11 Video editor: converting
+handle('conv:caps', () => convert.capabilities());
+handle('conv:inspect', (paths: string[]) => convert.inspect(paths));
+handle('conv:start', (files: string[], o: ConvertOptions) => {
+  const { jobId, done } = convert.start(files, o, p => send('conv:progress', p));
+  done.then(r => {
+    send('conv:done', { jobId, ...r });
+    if (r.done.length) notifyDone('PixHaven: converted', `${r.done.length} file${r.done.length === 1 ? '' : 's'} ready${r.failed.length ? `, ${r.failed.length} failed` : ''}.`);
+  }).catch(e => send('conv:done', { jobId, done: [], failed: files.map(f => ({ path: f, reason: friendlyError(e) })), skipped: [], cancelled: false }));
+  return jobId;
+});
+handle('conv:cancel', () => convert.cancel());
+// v2.11 phase 2: edit, join, frames
+const convDone = (jobId: string, done: Promise<ConvertResult>, what: string) => {
+  done.then(r => {
+    send('conv:done', { jobId, ...r });
+    if (r.done.length) notifyDone(`PixHaven: ${what}`, `${r.done.length} file${r.done.length === 1 ? '' : 's'} ready.`);
+  }).catch(e => send('conv:done', { jobId, done: [], failed: [{ path: what, reason: friendlyError(e) }], skipped: [], cancelled: false }));
+  return jobId;
+};
+handle('conv:edit', (file: string, spec: EditSpec) => { const { jobId, done } = convert.startEdit(file, spec, p => send('conv:progress', p)); return convDone(jobId, done, 'video edited'); });
+handle('conv:join', (files: string[], o: Pick<EditSpec, 'output' | 'outDir'>) => { const { jobId, done } = convert.startJoin(files, o, p => send('conv:progress', p)); return convDone(jobId, done, 'videos joined'); });
+handle('conv:frames', (file: string, at: number | null, every: number | null, format: 'jpg' | 'png') => convert.saveFrames(file, at, every, format));
+handle('conv:pickMusic', async () => {
+  const r = await dialog.showOpenDialog(win!, { title: 'Choose music', properties: ['openFile'], filters: [{ name: 'Sound', extensions: ['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus', 'wma'] }] });
+  return r.canceled ? null : r.filePaths[0];
+});
+handle('conv:pickFiles', async () => {
+  const r = await dialog.showOpenDialog(win!, { title: 'Choose videos or photos to convert', properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Videos, sound and photos', extensions: ['mp4', 'mov', 'm4v', 'mkv', 'avi', 'wmv', 'webm', 'mts', 'm2ts', 'ts', '3gp', 'flv', 'mpg', 'mpeg', 'hevc', 'mp3', 'm4a', 'wav', 'flac', 'heic', 'heif', 'avif', 'jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff'] }, { name: 'All files', extensions: ['*'] }] });
+  return r.canceled ? [] : r.filePaths;
 });
 // v2.10 Wallpaper recommended
 handle('wall:screens', () => wallpaper.screens());

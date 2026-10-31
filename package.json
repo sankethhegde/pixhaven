@@ -23,6 +23,7 @@
     "e2e:watch": "electron-vite build && node scripts/run-e2e-watch.mjs",
     "e2e:privacy": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-privacy.mjs e2e-output/privacy",
     "e2e:wallpaper": "electron-vite build && node scripts/run-e2e-wallpaper.mjs",
+    "e2e:editor": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-editor.mjs e2e-output/editor",
     "e2e:scale": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-scale.mjs e2e-output/scale",
     "e2e:combine": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-combine.mjs e2e-output/combine",
     "e2e:generator": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-generator.mjs e2e-output/generator",

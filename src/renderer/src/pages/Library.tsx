@@ -30,6 +30,7 @@ interface Props {
   onSort: (folder: string) => void;
   onDescribe: (path: string) => void;
   onSimilar: (path: string) => void;
+  onConvert: (paths: string[]) => void;   // v2.11: to the Video editor
 }
 
 interface Search { id: number; root: string; query: string; items: MediaEntry[]; scanned: number; done: boolean; truncated?: boolean; indexed?: boolean }
@@ -61,7 +62,7 @@ function shuffle<X>(list: X[]): X[] {
   return a;
 }
 
-export function Library({ settings, onSettings, active, initialDir, onConsumedInitial, initialPlay, onPlayed, onUpscale, onSort, onDescribe, onSimilar }: Props) {
+export function Library({ settings, onSettings, active, initialDir, onConsumedInitial, initialPlay, onPlayed, onUpscale, onSort, onDescribe, onSimilar, onConvert }: Props) {
   const lib = settings.library;
   const { labels, playlists, version } = T.useTags();
   const [drives, setDrives] = useState<DriveInfo[]>([]);
@@ -726,6 +727,9 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
               <Button className="!h-8" variant="ghost" onClick={() => doMove('copy')} disabled={!selectedEntries.some(e => !offline(e))}>Copy to…</Button>
               {selectedEntries.some(e => !e.hidden) && <Button className="!h-8" variant="ghost" onClick={() => void hide(true)} title="Hide from PixHaven until unlocked with the password"><Icon name="eyeOff" size={15} />Hide</Button>}
               {selectedEntries.some(e => e.hidden) && <Button className="!h-8" variant="ghost" onClick={() => void hide(false)}><Icon name="eye" size={15} />Unhide</Button>}
+              {selectedEntries.some(e => e.kind === 'video' || /.(heic|heif|hif|avif)$/i.test(e.name)) && (
+                <Button className="!h-8" variant="ghost" onClick={() => onConvert(selectedEntries.filter(e => e.kind !== 'folder' && !offline(e)).map(e => e.path))} title="Convert to another format in the Video editor"><Icon name="video" size={15} />Convert…</Button>
+              )}
               {mode === 'folder' && (
                 <Button className="!h-8" variant="ghost" disabled={!selectedPhotos.length} onClick={() => onUpscale(selectedPhotos)}
                   title={selectedPhotos.length ? undefined : 'Upscale works with JPG, PNG, WEBP, BMP and TIFF'}>

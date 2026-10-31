@@ -257,7 +257,7 @@ export interface FolderStatus {
 // ---------------- Job queue (GEN-01) ----------------
 export interface QueueItem {
   id: string;
-  kind: 'upscale' | 'scan' | 'regroup' | 'apply' | 'undo' | 'download' | 'generate' | 'combine';
+  kind: 'upscale' | 'scan' | 'regroup' | 'apply' | 'undo' | 'download' | 'generate' | 'combine' | 'convert';
   label: string;
   state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
   added: number;
@@ -420,6 +420,50 @@ export interface RecentVideo { path: string; position: number; duration: number;
 
 // ---------------- Labels and stars (v2.0 Phase C) ----------------
 export interface LabelInfo { id: number; name: string; color: string | null; count: number; hidden?: boolean }
+// v2.11 Video editor, phase 1: converting videos (and phone photos) to other formats — no upscaling.
+export type ConvertTarget = 'mp4-h264' | 'mp4-hevc' | 'mp4-av1' | 'webm-vp9' | 'mov-prores' | 'mp3' | 'm4a' | 'gif' | 'jpg' | 'png';
+export interface ConvertOptions {
+  target: ConvertTarget;
+  quality: 'small' | 'balanced' | 'best';
+  resolution: 'keep' | 2160 | 1080 | 720 | 480;   // short side; only ever made smaller
+  maxMB: number | null;                            // fit under this size (video)
+  sound: boolean;                                   // keep the sound (video)
+  outDir: string | null;                            // null: next to each original
+  forceEncode?: boolean;                            // convert even when the video could just be copied
+}
+export interface ConvertFile {
+  path: string; name: string; size: number; kind: 'video' | 'image' | 'audio' | 'other';
+  duration?: number; width?: number; height?: number; codec?: string; audio?: string; error?: string;
+}
+export interface ConvertCaps { targets: Record<ConvertTarget, { ok: boolean; encoder: string | null; why?: string }> }
+export interface ConvertProgress {
+  jobId: string; index: number; total: number; file: string; percent: number;
+  state: 'running' | 'done' | 'failed' | 'skipped' | 'cancelled' | 'finished';
+  out?: string; outSize?: number; error?: string; speed?: number; etaSeconds?: number | null; note?: string;
+}
+export interface ConvertResult { done: { from: string; to: string; size: number; note?: string }[]; failed: { path: string; reason: string }[]; skipped: { path: string; reason: string }[]; cancelled: boolean }
+
+// v2.11 Video editor, phase 2: quick edits of one video, and joining several.
+export interface Range { start: number; end: number }
+export interface EditSpec {
+  trim: Range;                                  // seconds of the original kept (start/end)
+  cuts: Range[];                                // parts taken out of the middle
+  splits: number[];                             // split points: each piece becomes its own file
+  exact: boolean;                               // cut exactly at the chosen frames (converts) instead of at keyframes
+  rotate: 0 | 90 | 180 | 270; flipH: boolean; flipV: boolean;
+  crop: { aspect: '9:16' | '1:1' | '4:5' | '16:9' | '4:3'; x: number; y: number } | null;   // x, y: 0–1 position of the box
+  speed: number;                                // 0.25–4
+  volume: number;                               // 0 (no sound) – 2
+  music: { path: string; volume: number; mix: boolean } | null;   // mix: under the video's sound; else in its place
+  brightness: number; contrast: number; saturation: number;       // −1…1, −1…1, 0…2 (1 = as is)
+  stabilize: boolean;
+  text: { value: string; position: 'top' | 'center' | 'bottom'; size: 's' | 'm' | 'l' } | null;
+  fadeIn: number; fadeOut: number;              // seconds
+  resolution: ConvertOptions['resolution'];
+  output: { target: 'mp4-h264' | 'mp4-hevc' | 'mp4-av1' | 'webm-vp9' | 'mov-prores'; quality: ConvertOptions['quality'] };
+  outDir: string | null;
+}
+
 // v2.10 Wallpaper recommended: photos that fit this computer's screen.
 export interface WallScreen { id: number; width: number; height: number; primary: boolean; label: string }
 export interface WallItem extends MediaEntry { width: number; height: number; crop: number; upscale: 1 | 2 | 4; sharp: number }
