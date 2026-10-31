@@ -1,9 +1,10 @@
 // Review people before anything moves (FACE-08/09): merge (drag a card onto another), remove, split.
 // v2.2: people are "Person 1", "Person 2"… — names are no longer guessed or typed, and folders keep these names.
-import { useEffect, useState, type DragEvent } from 'react';
+import { useEffect, useMemo, useState, type DragEvent } from 'react';
 import type { JobUpdate, PersonSummary, PhotoRef, ReviewData } from '@shared/types';
 import { api, errorText } from '../api';
 import { Button, Icon, Notice } from './ui';
+import { PeopleFilter, useFoundPeople, usePeopleFilter } from './PeopleFilter';
 
 interface Props {
   data: ReviewData;
@@ -16,6 +17,8 @@ export function Review({ data, onChanged, onUpscale }: Props) {
   const [open, setOpen] = useState<PersonSummary | null>(null);
   const [dragging, setDragging] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<{ text: string; ok: string; run: () => Promise<void> } | null>(null);
+  const filter = usePeopleFilter();
+  const { query, searching } = filter;
 
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
@@ -27,18 +30,22 @@ export function Review({ data, onChanged, onUpscale }: Props) {
     setConfirm({ text: `Put all ${a.photos} photo${a.photos === 1 ? '' : 's'} of ${a.label} into ${b.label}?`, ok: 'Merge', run: () => act(() => api.sort.merge(from, into)) });
   };
 
-  const people = data.people.filter(p => !p.unsorted);
-  const unsorted = data.people.filter(p => p.unsorted);
+  const allPeople = useMemo(() => data.people.filter(p => !p.unsorted), [data.people]);
+  const allUnsorted = useMemo(() => data.people.filter(p => p.unsorted), [data.people]);
+  const people = useFoundPeople(allPeople, filter);
+  const unsorted = useFoundPeople(allUnsorted, filter);
 
   return (
     <div className="space-y-6">
       {error && <Notice tone="danger">{error}</Notice>}
 
       <section>
-        <div className="flex items-baseline justify-between mb-3">
-          <h2 className="font-semibold">People <span className="text-muted font-normal">({people.length})</span></h2>
-          <span className="text-xs text-muted">Drag one card onto another if they are the same person. Click the photos to fix mistakes.</span>
+        <div className="flex items-center gap-3 mb-3 flex-wrap">
+          <h2 className="font-semibold">People <span className="text-muted font-normal" data-testid="people-count">({searching ? `${people.length} of ${allPeople.length}` : allPeople.length})</span></h2>
+          <PeopleFilter f={filter} />
+          <span className="text-xs text-muted ml-auto">Drag one card onto another if they are the same person. Click the photos to fix mistakes.</span>
         </div>
+        {searching && !people.length && <div className="text-sm text-muted py-4">No one matches “{query.trim()}”{unsorted.length ? ', except in Unsorted below' : ''}.</div>}
         <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
           {people.map(p => (
             <PersonCard key={p.id} p={p} dragging={dragging}
@@ -50,7 +57,7 @@ export function Review({ data, onChanged, onUpscale }: Props) {
       </section>
 
       {unsorted.length > 0 && (
-        <Group title={`Unsorted (${unsorted.length} people with too few photos)`} hint="They go to an “Unsorted” folder. Change the minimum in Settings.">
+        <Group title={`Unsorted (${searching ? `${unsorted.length} of ${allUnsorted.length}` : unsorted.length} people with too few photos)`} open={searching} hint="They go to an “Unsorted” folder. Change the minimum in Settings.">
           <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
             {unsorted.map(p => (
               <PersonCard key={p.id} p={p} dragging={dragging}
@@ -172,16 +179,17 @@ function PersonPhotos({ person, others, onClose, onChanged, onUpscale, onError }
   );
 }
 
-function Group({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+function Group({ title, hint, children, open }: { title: string; hint?: string; children: React.ReactNode; open?: boolean }) {
   const [openG, setOpenG] = useState(false);
+  const shown = openG || !!open;
   return (
     <section className="rounded-xl border border-line bg-panel">
       <button onClick={() => setOpenG(!openG)} className="w-full flex items-center gap-2 px-4 h-11 text-left">
-        <Icon name="chevron" size={15} className={`text-muted transition ${openG ? 'rotate-90' : ''}`} />
+        <Icon name="chevron" size={15} className={`text-muted transition ${shown ? 'rotate-90' : ''}`} />
         <span className="font-medium">{title}</span>
         {hint && <span className="text-xs text-muted ml-2 truncate">{hint}</span>}
       </button>
-      {openG && <div className="px-4 pb-4">{children}</div>}
+      {shown && <div className="px-4 pb-4">{children}</div>}
     </section>
   );
 }

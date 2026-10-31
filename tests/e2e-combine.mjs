@@ -119,6 +119,23 @@ export default async function run(win, app) {
     fs.writeFileSync(path.join(OUT, `${name}.png`), (await win.webContents.capturePage()).toPNG());
   }
   const check = (name, pass, detail = '') => { results.push({ name, pass, detail }); console.log(`${pass ? 'PASS' : 'FAIL'} ${name} ${detail}`); };
+  /** v2.12: search and sort the people (Mom 4 photos #1, Ravi 3 #2, Person 9 3 #9, Person 10 2 #10). */
+  async function searchAndSort(where, sel) {
+    const cards = () => js(`[...document.querySelectorAll('${sel}')].map(c => c.getAttribute('${sel.slice(1, -1)}'))`);
+    const sortBy = async v => { await js(`(() => { const s = document.querySelector('[aria-label="Sort people"]'); const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; set.call(s, '${v}'); s.dispatchEvent(new Event('change', { bubbles: true })); })()`); await sleep(300); return (await cards()).join(', '); };
+    const search = async q => { await js(`(() => { const i = document.querySelector('[aria-label="Search people"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, '${q}'); i.dispatchEvent(new Event('input', { bubbles: true })); })()`); await sleep(300); return (await cards()).join(', '); };
+    let got;
+    check(`${where}: sort by most photos`, (got = await sortBy('most')) === 'Mom, Ravi, Person 9, Person 10', got);
+    check(`${where}: sort by fewest photos`, (got = await sortBy('fewest')) === 'Person 10, Ravi, Person 9, Mom', got);
+    check(`${where}: sort by person number`, (got = await sortBy('number')) === 'Mom, Ravi, Person 9, Person 10', got);
+    check(`${where}: sort by name`, (got = await sortBy('name')) === 'Mom, Person 9, Person 10, Ravi', got);
+    check(`${where}: search by name`, (got = await search('rav')) === 'Ravi', got);
+    check(`${where}: search by number, exact match first`, (got = await search('1')) === 'Mom, Person 10', got);
+    check(`${where}: no match says so`, (got = await search('zzz')) === '' && (await text()).includes('No one matches'), got);
+    await shot(`12-search-${where.toLowerCase()}`);
+    check(`${where}: clearing shows everyone`, (got = await search('')) === 'Mom, Person 9, Person 10, Ravi', got);
+    await sortBy('most');
+  }
 
   try {
     while (!win.isVisible()) await sleep(100);
@@ -239,11 +256,17 @@ export default async function run(win, app) {
 
     // ---- v2.9: Merge into… (by face: each photo to its person; or everything into one person) ----
     const split = await makeSplit(dbFile);
+    await js(`window.__clearupSort(${JSON.stringify(split.root)})`);
+    await waitFor('People in Split', 20000);
+    await sleep(500);
+    await searchAndSort('Sort review', '[data-person]');
     await js(`window.__clearupPage('photos')`);
     await sleep(500);
     for (let i = 0; i < 20 && !(await js(`!!document.querySelector('[data-known]')`)); i++) { await js(`[...document.querySelectorAll('main button')].find(b => b.innerText.includes('All folders'))?.click()`); await sleep(300); }
     await js(`[...document.querySelectorAll('[data-known]')].find(b => b.dataset.known === ${JSON.stringify(split.root)}).click()`);
     await waitFor('People (4)', 20000);
+    await sleep(500);
+    await searchAndSort('Photos', '[data-photos-person]');
     // Person 10 is Ravi: "Merge all into one person", picked by hand (like paste).
     await js(`document.querySelector('[data-photos-person="Person 10"]').click()`);
     await waitFor('Merge into…');

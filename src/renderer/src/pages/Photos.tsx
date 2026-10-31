@@ -13,6 +13,7 @@ import { MoveDialog } from '../components/MoveDialog';
 import { MergeDialog } from '../components/MergeDialog';
 import { hideItems, usePrivacy } from '../components/Privacy';
 import { Button, Icon, Notice, Segmented } from '../components/ui';
+import { PeopleFilter, useFoundPeople, usePeopleFilter } from '../components/PeopleFilter';
 import * as T from '../tags';
 
 interface Props {
@@ -52,6 +53,8 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
   const [combining, setCombining] = useState(false);
   const [moveTo, setMoveTo] = useState<Clip | null>(null);
   const [merging, setMerging] = useState(false);
+  const filter = usePeopleFilter();
+  const shownPeople = useFoundPeople(people, filter);
   const privacy = usePrivacy();
   // v2.10: hidden items locked or shown — the folder list, people and files are listed again.
   const lockKey = `${privacy.unlocked}|${privacy.items}|${privacy.labels}`;
@@ -327,8 +330,13 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
 
         {view === 'people' && !person && (
           <div className="flex-1 min-h-0 overflow-auto px-6 py-4">
+            <div className="flex items-center gap-3 mb-4 flex-wrap">
+              <PeopleFilter f={filter} />
+              {filter.searching && <span className="text-sm text-muted" data-testid="people-count">{shownPeople.length} of {people.length}</span>}
+            </div>
+            {filter.searching && !shownPeople.length && <div className="text-sm text-muted py-4">No one matches “{filter.query.trim()}”.</div>}
             <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))' }}>
-              {people.map(p => (
+              {shownPeople.map(p => (
                 <button key={p.id} onClick={() => void openPerson(p)} data-photos-person={p.label}
                   style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 250px' }}
                   className="text-left rounded-2xl border border-line bg-panel p-3 hover:bg-panel-2">
