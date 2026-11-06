@@ -214,6 +214,11 @@ export default async function run(win, app) {
     await sleep(800);
     const one = path.join(momDir, 'mom-0.jpg');
     await pick(one);
+    // 1.0.4: the details card on the right shows the selected photo.
+    await waitFor(async () => (await js(`document.querySelector('[data-testid=details-card] [data-detail=resolution]')?.innerText ?? ''`)).includes('×'), 10000).catch(() => {});
+    const detailsText = await js(`document.querySelector('[data-testid=details-card]')?.innerText ?? ''`);
+    check('Photos: the details card shows the selected photo', detailsText.includes('mom-0.jpg') && /Resolution\s+\d+ × \d+/.test(detailsText) && detailsText.includes('Show in Explorer'), detailsText.replace(/\n/g, ' | ').slice(0, 220));
+    await shot('06b-photos-details');
     await click('Move to…');
     await waitFor('Move 1 item to…');
     const rows = await js(`[...document.querySelectorAll('[data-move-folder]')].map(r => r.innerText.replace(/\\n/g, ' '))`);

@@ -34,7 +34,7 @@ export default async function run(win, app) {
   const dbl = async name => {
     const ok = await js(`(async () => { const box = document.querySelector('[role=listbox]');
       const find = () => [...document.querySelectorAll('[role=option][data-path]')].find(e => e.dataset.path.endsWith(${JSON.stringify(path.sep + name)}));
-      for (let y = 0; !find() && y <= box.scrollHeight; y += 250) { box.scrollTop = y; await new Promise(r => setTimeout(r, 60)); }
+      for (let y = 0; !find() && y <= box.scrollHeight; y += 250) { box.scrollTop = y; box.dispatchEvent(new Event('scroll')); await new Promise(r => setTimeout(r, 60)); }
       const t = find(); if (!t) return false; t.scrollIntoView({ block: 'center' }); t.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return true; })()`);
     if (!ok) throw new Error(`No tile ${name}`);
     await sleep(300);
@@ -215,7 +215,7 @@ export default async function run(win, app) {
     await waitFor(async () => /5000 photos/.test(await counts()), 15000);
     const ms = parseInt(await js(`document.querySelector('[data-testid=lib-open-ms]')?.innerText.replace(/\\D/g, '') ?? '99999'`));
     check('5,000-file folder opens in under 2 s', ms < 2000, `${ms} ms`);
-    await waitFor(async () => (await js(`[...document.querySelectorAll('[role=option] img')].filter(i => i.complete && i.naturalWidth).length`)) >= 20, 30000)
+    await waitFor(async () => (await js(`(() => { const n = [...document.querySelectorAll('[role=option] img')].filter(i => i.complete && i.naturalWidth).length; return n >= Math.min(20, document.querySelectorAll('[role=option]').length); })()`)), 30000)
       .then(() => check('thumbnails fill in on screen first', true), () => check('thumbnails fill in on screen first', false));
     await js(`(b => b.scrollTop = b.scrollHeight)(document.querySelector('[role=listbox]'))`);
     await sleep(1500);

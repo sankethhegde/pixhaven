@@ -1,7 +1,7 @@
 // Thumbnail grid and detail list for the media library (LIB-05). Only the rows on screen are drawn,
 // so a folder of thousands of files scrolls smoothly; it reports what is visible so thumbnails come in that order.
 // v2.1: stars and labels on photos too, and a keyboard focus (arrow keys) that is kept in view.
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import type { MediaEntry, MediaInfo } from '@shared/types';
 import { RAW_EXTENSIONS } from '@shared/types';
 import { fmtBytes, fmtClock } from '../api';
@@ -25,6 +25,7 @@ interface Props {
   focused?: number | null;                     // keyboard focus (arrow keys)
   onCols?: (cols: number) => void;             // tiles per row, for Up/Down
   resetKey?: string;                           // back to the top when this changes (a new folder or view), not on every edit
+  onDragItem?: (index: number, e: DragEvent) => void;   // v1.0.4: drag to a Library tab
 }
 
 const ext = (n: string) => n.slice(n.lastIndexOf('.') + 1).toLowerCase();
@@ -35,11 +36,13 @@ export const alsoText = (names: string[]) => {
 };
 const fmtDate = (ms: number) => ms ? new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
 
-export function MediaGrid({ items, infos, view, size, selected, showFolder, onVisible, onClick, onOpen, focused = null, onCols, resetKey }: Props) {
+export function MediaGrid({ items, infos, view, size, selected, showFolder, onVisible, onClick, onOpen, focused = null, onCols, resetKey, onDragItem }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
   const [height, setHeight] = useState(600);
   const [top, setTop] = useState(0);
+  const scrolled = useRef(0);
+  const hidden = useRef(false);
   const { label } = T.useTags();
   /** Stars and up to `max` label chips of a photo or video (TAG-03: rate straight from the grid or list). */
   const tagRow = (e: MediaEntry, max: number, small: boolean) => {
@@ -57,12 +60,21 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
 
   useLayoutEffect(() => {
     const el = box.current!;
-    const ro = new ResizeObserver(() => { setWidth(el.clientWidth); setHeight(el.clientHeight); });
+    // Hidden (another page or Library tab, display: none) the box has no size and loses its scroll position: keep the
+    // layout as it was, and when shown again put the scroll position back (the tiles drawn follow it).
+    const ro = new ResizeObserver(() => {
+      if (!el.clientWidth || !el.clientHeight) { hidden.current = true; return; }
+      setWidth(el.clientWidth); setHeight(el.clientHeight);
+      if (!hidden.current) return;
+      hidden.current = false;
+      if (Math.abs(el.scrollTop - scrolled.current) > 1) el.scrollTop = scrolled.current;
+      setTop(el.scrollTop);
+    });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
   // New folder or search: back to the top.
-  useEffect(() => { if (box.current) box.current.scrollTop = 0; setTop(0); }, [resetKey ?? items]);
+  useEffect(() => { if (box.current) box.current.scrollTop = 0; scrolled.current = 0; setTop(0); }, [resetKey ?? items]);
 
   const tile = TILE[size];
   const cols = view === 'grid' ? Math.max(1, Math.floor((width - 16 + GAP) / (tile + GAP))) : 1;
@@ -98,6 +110,7 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
     const common = {
       'data-path': e.path, role: 'option', 'aria-selected': sel, 'data-focused': foc || undefined, title: showFolder ? `${e.name}\n${showFolder(e)}` : e.name,
       onClick: (ev: MouseEvent) => onClick(i, ev), onDoubleClick: () => onOpen(i),
+      ...(onDragItem ? { draggable: true, onDragStart: (ev: DragEvent) => onDragItem(i, ev) } : {}),
     };
     if (view === 'grid') {
       const r = Math.floor(i / cols), c = i % cols;
@@ -145,7 +158,7 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
         </div>
       )}
       <div ref={box} className="flex-1 min-h-0 overflow-y-auto relative" role="listbox" aria-multiselectable="true" aria-label="Photos and videos"
-        onScroll={e => setTop((e.target as HTMLDivElement).scrollTop)}>
+        onScroll={e => { const el = e.target as HTMLDivElement; if (!el.clientHeight) return; scrolled.current = el.scrollTop; setTop(el.scrollTop); }}>
         <div style={{ height: rows * rowH + 16 }} className="relative">{cells}</div>
       </div>
     </div>

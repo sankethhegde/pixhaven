@@ -3,7 +3,7 @@
 // (all of / any of, minimum stars), a view of everything labelled across drives, and rename / move in the app.
 // v2.1: labels and stars on photos too, playlists (saved filters, "Play all"), watched folders (indexed in the
 // background: instant search and filters without browsing, live updates) and keyboard shortcuts.
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import type { DriveInfo, FileOpResult, FolderListing, LibrarySettings, MediaEntry, MediaInfo, Playlist, SearchUpdate, Settings, TaggedMedia, TagFilter, WatchedFolder } from '@shared/types';
 import { IMAGE_EXTENSIONS } from '@shared/types';
 import { api, errorText } from '../api';
@@ -16,6 +16,7 @@ import { ShortcutsDialog } from '../components/Shortcuts';
 import { MoveDialog } from '../components/MoveDialog';
 import { hideItems, usePrivacy } from '../components/Privacy';
 import { Button, Icon, Notice, Segmented } from '../components/ui';
+import { DetailsCard, useDetailsOpen } from '../components/DetailsCard';
 import * as T from '../tags';
 
 interface Props {
@@ -31,7 +32,17 @@ interface Props {
   onDescribe: (path: string) => void;
   onSimilar: (path: string) => void;
   onConvert: (paths: string[]) => void;   // v2.11: to the Video editor
+  // v1.0.4: Library tabs (pages/LibraryTabs.tsx). Every tab is one Library; Cut / Copy is shared, so Paste works in another tab.
+  clip: Clip | null;
+  onClip: (c: Clip | null) => void;
+  startDir?: string | null;          // where this tab opens (a new tab, or one restored after a restart)
+  onState?: (s: { dir: string | null; title: string }) => void;   // for the tab's name
+  epoch?: number;                    // another tab changed files: show this folder again
+  onChanged?: () => void;            // this tab moved, copied, renamed or made something
 }
+export type Clip = { mode: 'move' | 'copy'; paths: string[] };
+/** dataTransfer type of photos and videos dragged out of a Library grid (onto a tab). */
+export const DRAG_TYPE = 'application/x-pixhaven-paths';
 
 interface Search { id: number; root: string; query: string; items: MediaEntry[]; scanned: number; done: boolean; truncated?: boolean; indexed?: boolean }
 type Mode = 'folder' | 'tagged' | 'watched';
@@ -44,6 +55,14 @@ const same = (a: string, b: string) => (WIN ? a.toLowerCase() === b.toLowerCase(
 const inside = (p: string, dir: string) => { const d = dir.replace(/[\\/]+$/, ''); return same(p, d) || (WIN ? p.toLowerCase() : p).startsWith((WIN ? d.toLowerCase() : d) + sep(d)); };
 const offline = (e: MediaEntry) => !!(e as TaggedMedia).offline;
 const store = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
+
+// 1.0.4: the left column (labels, playlists, watched folders, quick access) can be hidden; one setting for every tab.
+const sidebarSubs = new Set<(open: boolean) => void>();
+function useSidebar(): [boolean, (open: boolean) => void] {
+  const [open, setOpen] = useState(() => store.get('lib.sidebar') !== '0');
+  useEffect(() => { sidebarSubs.add(setOpen); return () => { sidebarSubs.delete(setOpen); }; }, []);
+  return [open, (o: boolean) => { store.set('lib.sidebar', o ? '1' : '0'); for (const fn of sidebarSubs) fn(o); }];
+}
 
 /** Does this entry pass the label / star filter? (TAG-05) */
 function matches(e: MediaEntry, f: TagFilter): boolean {
@@ -62,7 +81,7 @@ function shuffle<X>(list: X[]): X[] {
   return a;
 }
 
-export function Library({ settings, onSettings, active, initialDir, onConsumedInitial, initialPlay, onPlayed, onUpscale, onSort, onDescribe, onSimilar, onConvert }: Props) {
+export function Library({ settings, onSettings, active, initialDir, onConsumedInitial, initialPlay, onPlayed, onUpscale, onSort, onDescribe, onSimilar, onConvert, clip, onClip: setClip, startDir, onState, epoch = 0, onChanged }: Props) {
   const lib = settings.library;
   const { labels, playlists, version } = T.useTags();
   const [drives, setDrives] = useState<DriveInfo[]>([]);
@@ -91,7 +110,6 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
   const [rename, setRename] = useState<{ path: string; name: string; error?: string } | null>(null);
   const [moveTo, setMoveTo] = useState<{ mode: 'move' | 'copy'; paths: string[] } | null>(null);
   // v2.10: in-app clipboard (Cut / Copy, then Paste in another folder), a new folder, and hidden items.
-  const [clip, setClip] = useState<{ mode: 'move' | 'copy'; paths: string[] } | null>(null);
   const [newFolder, setNewFolder] = useState<{ name: string; error?: string } | null>(null);
   const privacy = usePrivacy();
   const [note, setNote] = useState<string | null>(null);
@@ -110,6 +128,9 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
   const searchBox = useRef<HTMLInputElement>(null);
   const modeRef = useRef(mode); modeRef.current = mode;
   const dirRef = useRef(dir); dirRef.current = dir;
+  const activeRef = useRef(active); activeRef.current = active;
+  const [details, setDetails] = useDetailsOpen();
+  const [sidebar, setSidebar] = useSidebar();
 
   const setLib = useCallback(async (patch: Partial<LibrarySettings>) => {
     onSettings(await api.setSettings({ library: { ...settings.library, ...patch } }));
@@ -126,12 +147,14 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
     let frame = 0;
     const off = api.onLibThumb(i => {
       infos.current.set(i.path, i);
-      if (!frame) frame = requestAnimationFrame(() => { frame = 0; setTick(t => t + 1); });
+      if (!frame && activeRef.current) frame = requestAnimationFrame(() => { frame = 0; setTick(t => t + 1); });   // a tab in the back redraws when shown
     });
     const offSearch = api.onLibSearch((u: SearchUpdate) => setSearch(s => s && s.id === u.id
       ? { ...s, items: s.items.concat(u.items), scanned: u.scanned, done: u.done, truncated: u.truncated, indexed: u.indexed } : s));
     return () => { off(); offSearch(); };
   }, []);
+
+  useEffect(() => { if (active) setTick(t => t + 1); }, [active]);
 
   // LIB-01: drive list, refreshed every few seconds while the page is open (a USB stick plugged in shows up).
   useEffect(() => {
@@ -162,14 +185,19 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
     const l = await api.lib.list(d).catch(() => null);
     if (!l || dirRef.current !== d || modeRef.current !== 'folder') return;
     setListing(l);
+    // Moved away (from another tab, or outside PixHaven): no longer selected.
+    const here = new Set(l.entries.map(e => e.path));
+    setSelected(s => ([...s].every(p => here.has(p)) ? s : new Set([...s].filter(p => here.has(p)))));
     void T.loadFor(l.entries.filter(e => e.kind !== 'folder').map(T.ref));
   };
 
+  const searchId = useRef<number | null>(null);
   const resetView = () => { setSelected(new Set()); anchor.current = null; setTagPanel(false); setFocus(null); };
 
   const open = useCallback(async (target: string, how: 'push' | 'back' | 'fwd' | 'refresh' = 'push') => {
     setLoading(true); setError(null); setSearch(null); setQuery(''); resetView();
-    void api.lib.cancelSearch();
+    if (searchId.current !== null) void api.lib.cancelSearch(searchId.current);
+    searchId.current = null;
     const t0 = performance.now();
     try {
       const l = await api.lib.list(target);
@@ -228,10 +256,10 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
   // First visit: the folder from Home / a test, else the last one, else Pictures.
   const started = useRef(false);
   useEffect(() => {
-    if (initialDir) { void open(initialDir); onConsumedInitial(); started.current = true; return; }
+    if (initialDir && active) { void open(initialDir); onConsumedInitial(); started.current = true; return; }
     if (!active || started.current || !drives.length) return;
     started.current = true;
-    const start = lib.lastDir ?? drives.find(d => d.name === 'Pictures')?.path;
+    const start = startDir ?? lib.lastDir ?? drives.find(d => d.name === 'Pictures')?.path;
     if (start) void open(start);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialDir, active, drives.length]);
@@ -307,9 +335,10 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
   const startSearch = async () => {
     if (!dir || !query.trim() || mode !== 'folder') return;
     const id = await api.lib.search(dir, query.trim());
+    searchId.current = id;
     setSearch({ id, root: dir, query: query.trim(), items: [], scanned: 0, done: false });
   };
-  const endSearch = () => { void api.lib.cancelSearch(); setSearch(null); };
+  const endSearch = () => { if (searchId.current !== null) void api.lib.cancelSearch(searchId.current); searchId.current = null; setSearch(null); };
 
   // ---- PLAY-08: play the videos of a playlist or the labelled view, in order or shuffled ----
   const playableVideos = useMemo(() => items.filter(e => e.kind === 'video' && !offline(e)), [items]);
@@ -347,6 +376,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
       replaceEntry(rename.path, to);
       setSelected(new Set([to]));
       setRename(null);
+      onChanged?.();
     } catch (e) { setRename({ ...rename, error: errorText(e) }); }
   };
   /** Move to… / Copy to…: files and folders, through PixHaven's own folder chooser (components/MoveDialog.tsx). */
@@ -356,6 +386,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
     if (paths.length) setMoveTo({ mode: how, paths });
   };
   const report = (how: 'move' | 'copy', r: FileOpResult) => {
+    if (r.done.length) onChanged?.();
     setNote(`${how === 'copy' ? 'Copied' : 'Moved'} ${r.done.length} item${r.done.length === 1 ? '' : 's'}${r.failed.length ? `; ${r.failed.length} could not be: ${baseName(r.failed[0].path)} (${r.failed[0].reason})` : ''}.`);
   };
   const moved = (r: FileOpResult) => {
@@ -388,7 +419,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
   };
   const makeFolder = async () => {
     if (!newFolder || !dir) return;
-    try { const made = await api.files.newFolder(dir, newFolder.name); setNewFolder(null); refresh(); setSelected(new Set([made])); }
+    try { const made = await api.files.newFolder(dir, newFolder.name); setNewFolder(null); refresh(); setSelected(new Set([made])); onChanged?.(); }
     catch (e) { setNewFolder({ ...newFolder, error: errorText(e) }); }
   };
   // ---- v2.10: hide / unhide (shown again only with the password) ----
@@ -441,6 +472,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
       else if ((e.ctrlKey || e.metaKey) && key === 'v') { if (!clip || mode !== 'folder') return; void paste(); }
       else if ((e.ctrlKey || e.metaKey) && e.shiftKey && key.toLowerCase() === 'n') { if (mode !== 'folder' || !dir) return; setNewFolder({ name: 'New folder' }); }
       else if (key === 'a' && (e.ctrlKey || e.metaKey)) setSelected(new Set(items.filter(x => x.kind !== 'folder').map(x => x.path)));   // every photo and video shown
+      else if ((e.ctrlKey || e.metaKey) && key.toLowerCase() === 'b') setSidebar(!sidebar);
       else if (e.altKey && key === 'ArrowLeft') goBack();
       else if (e.altKey && key === 'ArrowRight') goFwd();
       else if (e.altKey && key === 'ArrowUp') goUp();
@@ -467,6 +499,7 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
         if (it && !offline(it)) setRename({ path: it.path, name: baseName(it.path) }); else return;
       }
       else if (key === '?') setHelp(true);
+      else if ((key === 'i' || key === 'I') && !e.ctrlKey) setDetails(!details);
       else if ((key === 'l' || key === 'L') && !e.ctrlKey) { if (!selectedTaggable.length) return; setTagPanel(true); }
       else if ((key === 'p' || key === 'P') && !e.ctrlKey && mode !== 'folder') playAll(false);
       else if (/^[0-5]$/.test(key) && !e.ctrlKey) { if (!targets.length) return; void T.setStars(targets.map(T.ref), Number(key)); }
@@ -502,12 +535,26 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
   const watchedHere = dir ? watched.find(w => inside(dir, w.path)) : undefined;
   const title = mode === 'tagged' ? (playlist ? playlist.name : 'Labelled photos and videos')
     : mode === 'watched' ? (watchRoot ? `${baseName(watchRoot)} · watched` : 'All watched folders') : null;
+  useEffect(() => { onState?.({ dir: mode === 'folder' ? dir : null, title: title ?? (dir ? baseName(dir) || dir : 'New tab') }); }, [dir, title, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const firstEpoch = useRef(epoch);
+  useEffect(() => {
+    if (epoch === firstEpoch.current) return;
+    if (mode === 'folder') { if (dir) void relist(dir); } else refresh();
+  }, [epoch]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** Drag photos and videos (the selection, or the one under the mouse) onto another tab. */
+  const onDragItem = (i: number, e: DragEvent) => {
+    const it = items[i];
+    if (offline(it)) { e.preventDefault(); return; }
+    const paths = selected.has(it.path) ? usable() : [it.path];
+    e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(paths));
+    e.dataTransfer.effectAllowed = 'copyMove';
+  };
   const resetKey = `${mode}|${dir}|${search?.id ?? ''}|${playlist?.id ?? ''}|${watchRoot ?? ''}`;
   const indexing = watched.filter(w => w.state === 'indexing' || w.state === 'paused' || w.state === 'waiting');
 
   return (
     <div className="h-full flex min-h-0">
-      <aside className="w-[250px] shrink-0 border-r border-line overflow-y-auto bg-panel">
+      {sidebar && <aside className="w-[250px] shrink-0 border-r border-line overflow-y-auto bg-panel" aria-label="Library sidebar">
         {/* Labels (TAG-05): everything labelled, whichever folder or drive it is on. First, so it is always in view. */}
         <Section id="labels" title="Labels" action={<button className="text-xs text-accent hover:underline" onClick={() => setManage(true)}>Manage</button>}>
           <button onClick={() => showTagged(NO_FILTER)} data-label-view="all"
@@ -564,10 +611,15 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
         </Section>
 
         <FolderTree drives={drives} current={mode === 'folder' ? dir : null} hasMedia={hasMedia} onHasMedia={mergeHasMedia} onOpen={d => void open(d)} />
-      </aside>
+      </aside>}
       <section className="flex-1 min-w-0 flex flex-col">
         {/* toolbar */}
         <div className="flex items-center gap-2 px-3 h-14 border-b border-line shrink-0">
+          <button className="h-8 w-8 rounded-lg hover:bg-panel-2 flex items-center justify-center text-muted hover:text-fg" onClick={() => setSidebar(!sidebar)}
+            aria-label={sidebar ? 'Hide sidebar' : 'Show sidebar'} aria-expanded={sidebar} title={`${sidebar ? 'Hide' : 'Show'} labels, playlists and folders (Ctrl+B)`}>
+            <Icon name="chevron" size={16} className={sidebar ? 'rotate-180' : ''} />
+          </button>
+          <span className="w-px h-5 bg-line" />
           <button className="h-8 w-8 rounded-lg hover:bg-panel-2 disabled:opacity-30 flex items-center justify-center" onClick={goBack} disabled={mode === 'folder' && !back.length} aria-label="Back" title="Back (Alt+←)"><Icon name="back" size={16} /></button>
           <button className="h-8 w-8 rounded-lg hover:bg-panel-2 disabled:opacity-30 flex items-center justify-center" onClick={goFwd} disabled={mode !== 'folder' || !fwd.length} aria-label="Forward" title="Forward (Alt+→)"><Icon name="forward" size={16} /></button>
           <button className="h-8 w-8 rounded-lg hover:bg-panel-2 disabled:opacity-30 flex items-center justify-center" onClick={goUp} disabled={mode !== 'folder' || !listing?.parent} aria-label="Up one folder" title="Up one folder (Alt+↑)"><Icon name="up" size={16} /></button>
@@ -594,6 +646,8 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
               className="w-full h-8 rounded-lg bg-panel-2 border border-line pl-8 pr-2 text-sm outline-none focus:border-accent" />
           </div>
           <button className="h-8 w-8 rounded-lg hover:bg-panel-2 flex items-center justify-center text-muted" onClick={() => setHelp(true)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)"><Icon name="keyboard" size={16} /></button>
+          <button className={`h-8 w-8 rounded-lg flex items-center justify-center ${details ? 'bg-accent-soft text-accent' : 'hover:bg-panel-2 text-muted'}`} onClick={() => setDetails(!details)}
+            aria-label="Details" aria-pressed={details} title="Details (I)"><Icon name="info" size={16} /></button>
         </div>
         <div className="flex items-center gap-3 px-3 h-12 border-b border-line shrink-0 flex-wrap">
           {mode !== 'tagged' && (
@@ -670,7 +724,8 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
           </div>
         )}
 
-        <div className="flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 min-h-0 flex">
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col">
           {error ? <div className="p-6"><Notice tone="danger">{error}</Notice></div>
             : mode === 'folder' && listing?.denied && !search ? (
               <div className="p-6"><Notice>You don't have permission to open this folder. Windows only lets its owner (or an administrator) look inside.</Notice></div>
@@ -688,8 +743,13 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
               <MediaGrid items={items} infos={infos.current} view={lib.view} size={lib.size} selected={selected} focused={focus} onCols={onCols} resetKey={resetKey}
                 showFolder={mode !== 'folder' ? e => e.path.replace(/[\\/][^\\/]*$/, '')
                   : search ? e => e.path.slice(search.root.length).replace(/^[\\/]/, '').replace(/[\\/][^\\/]*$/, '') || '(this folder)' : undefined}
-                onVisible={onVisible} onClick={onItemClick} onOpen={onItemOpen} />
+                onVisible={onVisible} onClick={onItemClick} onOpen={onItemOpen} onDragItem={onDragItem} />
             )}
+        </div>
+        {details && (mode !== 'folder' || dir) && !error && (
+          <DetailsCard items={selectedEntries} infos={infos.current} onClose={() => setDetails(false)}
+            onOpen={e => { const i = items.indexOf(e); if (i >= 0) onItemOpen(i); }} />
+        )}
         </div>
 
         {/* Labels & stars for the selection (TAG-04, TAG-09) */}

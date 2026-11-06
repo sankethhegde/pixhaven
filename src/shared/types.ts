@@ -493,3 +493,18 @@ export interface WatchResult { items: TaggedMedia[]; total: number; truncated: b
 export interface WatchChange { dirs: string[]; added: number; removed: number; relinked: number }
 export interface Playlist { id: number; name: string; filter: TagFilter; created: number }
 export interface FileWriteStatus { pending: number; written: number; failed: { path: string; reason: string }[] }
+
+/** v1.0.4: the details card next to the grid (Library and Photos). Fields are left out when the file does not say. */
+export interface FileDetails {
+  path: string; name: string; folder: string; kind: MediaKind | 'folder';
+  size: number; modified: number; created: number;
+  format?: string;                    // "JPEG", "MP4 (H.264)" …
+  width?: number; height?: number;
+  duration?: number;                  // seconds
+  fps?: number; bitrate?: number;     // bits per second
+  videoCodec?: string; audio?: string[];   // "AAC stereo (eng)"
+  taken?: string;                     // as written in the photo ("2024:05:01 10:22:13")
+  camera?: string; lens?: string; exposure?: string;   // "f/1.8 · 1/120 s · ISO 100 · 4.2 mm"
+  people?: string[];
+  error?: string;
+}

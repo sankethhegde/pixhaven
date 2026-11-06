@@ -4,7 +4,7 @@ import type {
   PowerStatus, QueueItem, ReviewData, SaveResult, ScanProgress, Settings, SortHistory, SortPlan, TidyResults, UpdateStatus, UpscaleOptions,
   FileWriteStatus, Playlist, WatchChange, WatchedFolder, WatchQuery, WatchResult,
   FileOpResult, KnownFolder, MediaEntry, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, ScanEstimate, MergePlan, MergeResult, PrivacyStatus, WallProgress, WallResult, WallScreen, ConvertCaps, ConvertFile, ConvertOptions, ConvertProgress, ConvertResult, EditSpec, DescribeResult, DescribeStatus, GenImage, GenProgress, GenRequest, GenStatus,
-  DriveInfo, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
+  DriveInfo, FileDetails, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
 } from '@shared/types';
 
 export interface AppInfo { version: string; gpu: GpuStatus; dedicated: boolean; settings: Settings; onBattery: boolean; pendingSort: string | null }
@@ -52,7 +52,8 @@ interface LibApi {
   pauseThumbs(p: boolean): Promise<void>;
   preview(p: string): Promise<{ url: string; width: number; height: number; converted: boolean }>;
   search(root: string, q: string): Promise<number>;
-  cancelSearch(): Promise<void>;
+  cancelSearch(id?: number): Promise<void>;
+  details(p: string): Promise<FileDetails>;
   cacheSize(): Promise<number>;
   clearCache(): Promise<void>;
 }
@@ -233,6 +234,7 @@ interface Api {
   saveResult(req: { jobId: string; itemId: string; item: JobItem; saveAs: boolean }): Promise<SaveResult>;
   showItem(p: string): Promise<void>;
   openPath(p: string): Promise<string>;
+  copyText(t: string): Promise<void>;
   openLogs(): Promise<string>;
   licences(): Promise<{ name: string; text: string }[]>;
   pathForFile(f: File): string;

@@ -25,7 +25,7 @@ export default async function run(win, app) {
   const dbl = async (name, startOver = true) => {
     const ok = await js(`(async () => { const box = document.querySelector('[role=listbox]');
       const find = () => [...document.querySelectorAll('[role=option][data-path]')].find(e => e.dataset.path.endsWith(${JSON.stringify(path.sep + name)}));
-      for (let y = 0; !find() && y <= box.scrollHeight; y += 250) { box.scrollTop = y; await new Promise(r => setTimeout(r, 60)); }
+      for (let y = 0; !find() && y <= box.scrollHeight; y += 250) { box.scrollTop = y; box.dispatchEvent(new Event('scroll')); await new Promise(r => setTimeout(r, 60)); }
       const t = find(); if (!t) return false; t.scrollIntoView({ block: 'center' }); t.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return true; })()`);
     if (!ok) throw new Error(`No tile ${name}`);
     // A position saved by an earlier run makes the player ask first: start from the beginning.

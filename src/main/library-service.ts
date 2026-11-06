@@ -101,5 +101,7 @@ export function search(root: string, query: string, send: (u: SearchUpdate) => v
     .catch(e => { log('error', 'Search failed', e); send({ id, items: [], scanned: 0, done: true }); });
   return id;
 }
-export const cancelSearch = () => searchAbort?.abort();
+/** Stops the running search; with an id, only while that search is still the running one (another Library tab may
+ * have started its own since). */
+export const cancelSearch = (id?: number) => { if (id === undefined || id === searchId) searchAbort?.abort(); };
 

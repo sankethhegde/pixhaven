@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, powerMonitor, protocol, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, net, Notification, powerMonitor, protocol, shell } from 'electron';
 import type { JobItem, JobUpdate, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery, GenRequest, CombineRequest, LabelInfo, MediaTags, ConvertOptions, ConvertResult, EditSpec } from '@shared/types';
 import { IMAGE_EXTENSIONS } from '@shared/types';
 import { getSettings, updateSettings, writeTurnedOn } from './settings';
@@ -27,6 +27,7 @@ import * as convert from './convert-service';
 import { SEARCH_LIMIT } from './library/browse';
 import { mediaKind } from '@shared/types';
 import { moveAppData } from './app-data-move';
+import { fileDetails } from './library/details';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'clearup', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 
@@ -542,7 +543,19 @@ handle('lib:pauseThumbs', (p: boolean) => library.pauseThumbs(p));
 handle('lib:preview', (p: string) => library.preview(p));
 handle('lib:search', (root: string, q: string) => library.search(root, q, u => send('lib:search', { ...u, items: privacy.entries(u.items) }),
   (r, text) => (watch.indexedFor(r) ? watch.searchIndex(r, text, SEARCH_LIMIT) : null)));
-handle('lib:cancelSearch', () => library.cancelSearch());
+handle('lib:cancelSearch', (id?: number) => library.cancelSearch(id));
+// v1.0.4: the details card (one file at a time; hidden items stay hidden).
+handle('lib:details', (p: string) => {
+  if (!privacy.isVisible(p)) throw new Error('This item is hidden. Unlock hidden items to see it.');
+  return fileDetails(p, {
+    exiftool: fs.existsSync(tags.exiftool()) ? tags.exiftool() : null,
+    people: f => tags.peopleIn(f),
+    imageSize: async f => {
+      const m = await (await import('sharp')).default(f).metadata();
+      return m.width && m.height ? { width: m.width, height: m.height, format: m.format } : null;
+    },
+  });
+});
 handle('lib:cacheSize', () => library.cacheSize());
 handle('lib:clearCache', () => library.clearCache());
 
@@ -716,6 +729,7 @@ if (!app.isPackaged) {
 
 handle('shell:showItem', (p: string) => shell.showItemInFolder(p));
 handle('shell:openPath', (p: string) => shell.openPath(p));
+handle('shell:copyText', (t: string) => clipboard.writeText(String(t)));
 handle('logs:open', () => { fs.mkdirSync(logDir(), { recursive: true }); return shell.openPath(logDir()); });
 handle('licences:get', () => {
   const dir = path.join(resourcesDir(), 'licences');

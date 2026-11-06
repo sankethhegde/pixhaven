@@ -13,6 +13,7 @@ import { MoveDialog } from '../components/MoveDialog';
 import { MergeDialog } from '../components/MergeDialog';
 import { hideItems, usePrivacy } from '../components/Privacy';
 import { Button, Icon, Notice, Segmented } from '../components/ui';
+import { DetailsCard, useDetailsOpen } from '../components/DetailsCard';
 import { PeopleFilter, useFoundPeople, usePeopleFilter } from '../components/PeopleFilter';
 import * as T from '../tags';
 
@@ -52,6 +53,7 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
   const [busy, setBusy] = useState(false);
   const [combining, setCombining] = useState(false);
   const [moveTo, setMoveTo] = useState<Clip | null>(null);
+  const [details, setDetails] = useDetailsOpen();   // v1.0.4: the card on the right (shared with the Library)
   const [merging, setMerging] = useState(false);
   const filter = usePeopleFilter();
   const shownPeople = useFoundPeople(people, filter);
@@ -230,12 +232,26 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
       else if (e.key === 'F2') { if (sel.length === 1) setAsk({ kind: 'rename', path: sel[0], name: baseName(sel[0]) }); }
       else if (e.key === 'Backspace') { if (view === 'people' && person) setPerson(null); else if (view === 'folders' && dir && parentOf(dir)) openDir(parentOf(dir)!); }
       else if (e.key === 'Escape') { if (selected.size) setSelected(new Set()); else return; }
+      else if (key === 'i' && !c && !e.altKey) setDetails(!details);
       else return;
       e.preventDefault();
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   });
+
+  /** The grid, with the details card on its right. */
+  const withDetails = (grid: ReactNode) => (
+    <div className="h-full flex min-h-0">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col">{grid}</div>
+      {details && <DetailsCard items={items.filter(e => selected.has(e.path))} infos={infos.current} onClose={() => setDetails(false)}
+        onOpen={e => { const i = items.indexOf(e); if (i >= 0) onItemOpen(i); }} />}
+    </div>
+  );
+  const detailsButton = (
+    <button className={`h-8 w-8 shrink-0 rounded-lg flex items-center justify-center ${details ? 'bg-accent-soft text-accent' : 'hover:bg-panel-2 text-muted'}`} onClick={() => setDetails(!details)}
+      aria-label="Details" aria-pressed={details} title="Details (I)"><Icon name="info" size={16} /></button>
+  );
 
   // ---------- start: choose a folder ----------
   if (!root && combining) {
@@ -359,9 +375,10 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
             {person.dir && <Button className="!h-8" variant="ghost" onClick={() => setAsk({ kind: 'rename', path: person.dir!, name: baseName(person.dir!) })} title="Rename this person's folder (the name inside their photos follows)">Rename person</Button>}
             {people.length > 1 && <Button className="!h-8" variant="ghost" onClick={() => setMerging(true)} title="This person is really someone else (or several people): their photos go to that person"><Icon name="people" size={15} />Merge into…</Button>}
             {person.dir && <Button className="!h-8" variant="ghost" onClick={() => { const d = person.dir!; const label = person.label; setPerson(null); void hide([{ path: d, folder: true }], true, label); }} title="Hide this person and their folder until unlocked with the password"><Icon name="eyeOff" size={15} />Hide person</Button>}
+            <span className="ml-auto" />{detailsButton}
           </>}>
-            <MediaGrid items={items} infos={infos.current} view="grid" size="m" selected={selected} onVisible={onVisible}
-              onClick={onItemClick} onOpen={onItemOpen} resetKey={`p${person.id}`} />
+            {withDetails(<MediaGrid items={items} infos={infos.current} view="grid" size="m" selected={selected} onVisible={onVisible}
+              onClick={onItemClick} onOpen={onItemOpen} resetKey={`p${person.id}`} />)}
           </Frame>
         )}
 
@@ -377,11 +394,12 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
               ))}
             </nav>
             <span className="text-xs text-muted ml-auto">{plural(items.filter(e => e.kind === 'folder').length, 'folder')} · {plural(photos.length, 'photo')}{selected.size ? ` · ${selected.size} selected` : ''}</span>
+            {detailsButton}
           </>}>
             {listing?.error || listing?.denied
               ? <div className="p-6"><Notice tone="warn">{listing.denied ? 'Windows does not allow opening this folder.' : listing.error}</Notice></div>
-              : <MediaGrid items={items} infos={infos.current} view="grid" size="m" selected={selected} onVisible={onVisible}
-                  onClick={onItemClick} onOpen={onItemOpen} resetKey={dir ?? ''} />}
+              : withDetails(<MediaGrid items={items} infos={infos.current} view="grid" size="m" selected={selected} onVisible={onVisible}
+                  onClick={onItemClick} onOpen={onItemOpen} resetKey={dir ?? ''} />)}
           </Frame>
         )}
       </div>

@@ -8,7 +8,7 @@ import { Upscale } from './pages/Upscale';
 import { Sort } from './pages/Sort';
 import { SettingsPage } from './pages/SettingsPage';
 import { Tidy, type TidyTab } from './pages/Tidy';
-import { Library } from './pages/Library';
+import { LibraryTabs } from './pages/LibraryTabs';
 import { Photos } from './pages/Photos';
 import { Wallpaper } from './pages/Wallpaper';
 import { VideoEditor } from './pages/VideoEditor';
@@ -155,7 +155,7 @@ export default function App() {
           {/* Mounted on first visit, then kept: the folder, scroll position and thumbnails stay. */}
           {libVisited && (
             <div className={page === 'library' ? 'h-full' : 'hidden'}>
-              <Library settings={settings} onSettings={setSettings} active={page === 'library'} initialDir={pendingLib} onConsumedInitial={() => setPendingLib(null)}
+              <LibraryTabs settings={settings} onSettings={setSettings} active={page === 'library'} initialDir={pendingLib} onConsumedInitial={() => setPendingLib(null)}
                 initialPlay={pendingPlay} onPlayed={() => setPendingPlay(null)}
                 onUpscale={upscaleFiles} onSort={sortFolder} onDescribe={describePicture} onSimilar={similarPicture} onConvert={convertFiles} />
             </div>

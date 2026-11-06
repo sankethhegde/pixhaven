@@ -109,7 +109,8 @@ const api = {
     pauseThumbs: (p: boolean) => invoke('lib:pauseThumbs', p),
     preview: (p: string) => invoke('lib:preview', p),
     search: (root: string, q: string) => invoke('lib:search', root, q),
-    cancelSearch: () => invoke('lib:cancelSearch'),
+    cancelSearch: (id?: number) => invoke('lib:cancelSearch', id),
+    details: (p: string) => invoke('lib:details', p),
     cacheSize: () => invoke('lib:cacheSize'),
     clearCache: () => invoke('lib:clearCache'),
   },
@@ -174,6 +175,7 @@ const api = {
   onTidyApply: listen('tidy:apply-progress'),
   showItem: (p: string) => invoke('shell:showItem', p),
   openPath: (p: string) => invoke('shell:openPath', p),
+  copyText: (t: string) => invoke('shell:copyText', t),
   openLogs: () => invoke('logs:open'),
   licences: () => invoke('licences:get'),
   /** Absolute path of a dropped file or folder. */
