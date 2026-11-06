@@ -151,6 +151,37 @@ export default async function run(win, app) {
       check(`${name}: the window keeps drawing (no frame gap over 1 s)`, r.window < 1000, `${r.window} ms`);
     }
     check('open again: people shown within 5 s', again.secs < 5, `${again.secs.toFixed(1)} s`);
+
+    // 1.0.3: Settings counts the face data and the thumbnail cache (120,000 files each here) without freezing.
+    t = Date.now();
+    for (const [base, n] of [[path.join(app.getPath('userData'), 'facedata', 'crops'), 120000], [path.join(app.getPath('userData'), 'library', 'thumbs'), 120000]]) {
+      for (let i = 0; i < n; i += 1000) {
+        const d = path.join(base, String(i / 1000));
+        await fs.promises.mkdir(d, { recursive: true });
+        await Promise.all(Array.from({ length: 1000 }, (_, k) => fs.promises.writeFile(path.join(d, `${k}.jpg`), 'x')));
+      }
+    }
+    console.log(`settings fixture in ${((Date.now() - t) / 1000).toFixed(0)} s`);
+    await js(`window.__clearupPage('home')`);
+    await sleep(1500);
+    await watchWindow();
+    worstMain = 0; lastTick = Date.now();
+    t = Date.now();
+    await js(`window.__clearupPage('settings')`);
+    const sizesEnd = Date.now() + 300000;
+    let sizes = '';
+    while (Date.now() < sizesEnd) {
+      const tx = await text();
+      sizes = [tx.match(/kept only on this computer \(([^)]+)\)/)?.[1], tx.match(/Now using ([\d.,]+ ?[KMGT]?B)/)?.[1]].filter(Boolean).join(' | ');
+      if (sizes.includes(' | ')) break;
+      await sleep(200);
+    }
+    const secs = (Date.now() - t) / 1000;
+    await sleep(500);
+    const gap = Math.round(await js('window.__gap'));
+    await shot('03-settings');
+    check('Settings: sizes of face data and thumbnails are shown', sizes.includes(' | '), `face data ${sizes.replace(' | ', ', thumbnails ')} after ${secs.toFixed(1)} s`);
+    check('Settings: opening it never blocks PixHaven over 1 s', worstMain < 1000 && gap < 1000, `main ${worstMain} ms, window ${gap} ms`);
     await shot('02-after-changes');
   } catch (e) {
     check('run', false, String(e?.stack ?? e));

@@ -311,16 +311,21 @@ export class TagStore {
   }
 
   /** Rows whose files are missing right now (unplugged drive, moved away, or imported and not found yet). */
-  missingCount(): number {
-    let n = 0;
-    for (const r of this.db.prepare('SELECT path FROM media').all() as { path: string }[]) if (!fs.existsSync(r.path)) n++;
-    return n;
+  async missingCount(): Promise<number> {
+    return (await this.missingRows()).length;
   }
 
   /** Tagged rows whose file is not at its path now (moved, renamed, imported and not found yet). */
-  missingRows(): { path: string; size: number; fingerprint: string }[] {
-    return (this.db.prepare('SELECT path, size, fingerprint FROM media').all() as { path: string; size: number; fingerprint: string }[])
-      .filter(r => r.path.startsWith('missing:') || !fs.existsSync(r.path));
+  // 1.0.3: checked in the background, a few hundred at a time (one by one it held the window for up to 17 s).
+  async missingRows(): Promise<{ path: string; size: number; fingerprint: string }[]> {
+    const rows = this.db.prepare('SELECT path, size, fingerprint FROM media').all() as { path: string; size: number; fingerprint: string }[];
+    const out: typeof rows = [];
+    for (let i = 0; i < rows.length; i += 256) {
+      const part = rows.slice(i, i + 256);
+      const gone = await Promise.all(part.map(r => (r.path.startsWith('missing:') ? true : fs.promises.access(r.path).then(() => false, () => true))));
+      part.forEach((r, j) => { if (gone[j]) out.push(r); });
+    }
+    return out;
   }
 
   /** Has this file got a row (labels or stars)? */

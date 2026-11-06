@@ -103,13 +103,33 @@ export function newFolder(parent: string, name: string): string {
   return p;
 }
 
+const LOCKED = ['EPERM', 'EBUSY', 'EACCES'];
+const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+/**
+ * 1.0.3: Windows will not rename a folder while any file in it is open (a thumbnail being made, labels being read,
+ * Explorer, a virus scanner…). Such locks are usually short, so try again for a few seconds before giving up.
+ */
+export async function renameRetrying(from: string, to: string, delays = [100, 200, 400, 800, 1200, 1600, 2000, 2000]): Promise<void> {
+  for (let i = 0; ; i++) {
+    try { await fs.promises.rename(from, to); return; } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code ?? '';
+      if (!LOCKED.includes(code)) throw e;
+      if (i >= delays.length) {
+        throw new Error(`Windows says something in “${path.basename(from)}” is in use, so it can't be renamed right now. Close it in other programs (File Explorer, a photo viewer) and try again.`);
+      }
+      await wait(delays[i]);
+    }
+  }
+}
+
 /** Rename a folder (files: see tags-service renameFile, which keeps the file type). */
 export async function renameFolder(from: string, name: string, onMoved: MovedHook): Promise<string> {
   const to = path.join(path.dirname(from), checkName(name));
   if (to === from) return to;
   if (key(to) !== key(from) && fs.existsSync(to)) throw new Error(`There is already something called "${name.trim()}" here.`);
   const inside = filesIn(from);
-  await fs.promises.rename(from, to);
+  await renameRetrying(from, to);
   await onMoved(inside.map(f => ({ from: path.join(from, f), to: path.join(to, f) })), { from, to });
   return to;
 }

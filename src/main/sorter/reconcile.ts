@@ -215,7 +215,8 @@ export async function reconcileFolder(db: Db, fid: number, root: string): Promis
  * kept in other folders too — changes with it, and so does the undo log (Undo then takes "Mom" out). Pending renames
  * are kept in the database until done, so an interrupted run carries on next time. Returns the files changed.
  */
-export async function renamePeople(db: Db, fid: number, root: string, exiftool: string): Promise<string[]> {
+// 1.0.3: `pace` runs before each batch, so the app can let thumbnails go first (both read the same drive).
+export async function renamePeople(db: Db, fid: number, root: string, exiftool: string, pace: () => Promise<void> = async () => {}): Promise<string[]> {
   const todo = db.prepare('SELECT id, old, new FROM name_changes WHERE folder_id = ? ORDER BY id').all(fid) as { id: number; old: string; new: string }[];
   if (!todo.length || !fs.existsSync(exiftool)) return [];
   const changed = new Set<string>();
@@ -233,12 +234,14 @@ export async function renamePeople(db: Db, fid: number, root: string, exiftool: 
       const named: { id: number; path: string }[] = [];
       for (let i = 0; i < files.length; i += 200) {
         const part = files.slice(i, i + 200);
+        await pace();
         const tags = await reader.read(part.map(x => x.path));
         for (const x of part) if (tags.get(x.path)?.people.includes(r.old)) named.push(x);
       }
       const setSize = db.prepare('UPDATE images SET size = ?, mtime = ? WHERE id = ?');
-      for (let i = 0; i < named.length; i += 100) {
-        const part = named.slice(i, i + 100);
+      for (let i = 0; i < named.length; i += 25) {
+        const part = named.slice(i, i + 25);
+        await pace();
         const out = await writePeople(exiftool, part.map(x => ({ file: x.path, add: [r.new], remove: [r.old] })));
         out.forEach((o, k) => {
           if (!o.ok) return;

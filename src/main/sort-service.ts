@@ -24,6 +24,8 @@ import type { ListedFile } from './faces/pipeline';
 import type { WorkerInput } from './faces/sort-worker';
 import { fileUrl } from './upscale-job';
 import { queue } from './queue';
+import { dirSize } from './dir-size';
+import { thumbsIdle } from './library-service';
 import { log } from './logger';
 
 export const dataDir = () => path.join(app.getPath('userData'), 'facedata');
@@ -150,7 +152,7 @@ function renamePeopleLater(fid: number, root: string): void {
   renaming = true;
   let changed: string[] = [];
   queue.add('apply', `Sort by person: new names into the photos of ${path.basename(root)}`, async () => {
-    changed = await renamePeople(getDb(), fid, root, exiftool());
+    changed = await renamePeople(getDb(), fid, root, exiftool(), () => thumbsIdle());
   }, () => {}).done
     .then(() => { if (changed.length) { log('info', `Renamed people in ${changed.length} photo(s)`); return tagsAfterSort([], changed); } })
     .catch(e => log('warn', 'Could not rename people in the photos', e))
@@ -492,9 +494,4 @@ export function deleteFaceData(): void {
   log('info', 'Face data deleted');
 }
 
-export function faceDataSize(): number {
-  let n = 0;
-  const walk = (d: string) => { try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else n += fs.statSync(p).size; } } catch { /* none */ } };
-  walk(dataDir());
-  return n;
-}
+export const faceDataSize = () => dirSize([dataDir()]);

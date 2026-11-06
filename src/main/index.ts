@@ -655,7 +655,7 @@ handle('files:pasteTo', async (paths: string[], mode: 'copy' | 'move') => {
   return r.canceled ? null : tags.pasteItems(paths, r.filePaths[0], mode);
 });
 handle('files:newFolder', (parent: string, name: string) => tags.newFolder(parent, name));
-handle('files:rename', (p: string, name: string) => tags.renameItem(p, name));
+handle('files:rename', (p: string, name: string) => library.withoutThumbsIn(p, () => tags.renameItem(p, name)));
 handle('tags:moveFiles', async (paths: string[]) => {
   const r = await dialog.showOpenDialog(win!, { title: `Move ${paths.length} file${paths.length > 1 ? 's' : ''} to…`, properties: ['openDirectory', 'createDirectory'] });
   return r.canceled ? null : tags.moveFiles(paths, r.filePaths[0]);

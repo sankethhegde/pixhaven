@@ -35,11 +35,11 @@ npm run setup:engine     # downloads the engine, models, face models, places, FF
 | `npm run e2e:library` | v2.0 Phase A: drives, media-only browsing, a thumbnail for every format, list view, search, viewer, no-permission folder, a drive appearing (subst), a 5,000-file folder |
 | `node tests/make-media.mjs <folder>` | Builds the mixed-format test folder (17 photo formats incl. HEIC and 7 RAW, 17 video formats) |
 | `npm run e2e:sort` | Same for Sort by person: scan → review → dry run → apply (no copies, people tagged, folders checked against the photos' real names) → re-scan → undo, on ~50 public test photos (`phase0/fetch-test-photos.mjs`, or set `CLEARUP_TESTPHOTOS`) |
-| `npm run e2e:combine` | Photos → Combine people on two sorted folders made by the test (the same person in both): match, name, estimate, combine, files/face data/names/shortcuts checked, destination opened; Move to / Rename; Merge into… (by hand and by face); search and sort people in Photos and the Sort review; then Sort → Estimate time |
+| `npm run e2e:combine` | Photos → Combine people on two sorted folders made by the test (the same person in both): match, name, estimate, combine, files/face data/names/shortcuts checked, destination opened; Move to / Rename; Merge into… (by hand and by face); search and sort people in Photos and the Sort review; a second rename while a file in the folder is open; then Sort → Estimate time |
 | `npm run e2e:privacy` | Hidden folders, photos, videos and labels (password, wrong password, unlock, lock, rename, change password); Library Copy / Paste, New folder, Copy to |
 | `npm run e2e:wallpaper` | Wallpaper recommended with photos made for this screen: ready, upscale first, blurry and wrong-shape ones left out, Set as wallpaper (faked, the desktop is not changed), Upscale, hidden photos left out |
 | `npm run e2e:editor` | Video editor on real files made with the bundled FFmpeg: Convert (→ H.264, copy, fit under 1 MB, MP3, GIF, HEIC → JPG, Stop), Edit (lossless trim, split, cut out + 9:16 + 2× + mute + text + fade, save a frame), Join; player ← / X, full screen without Labels |
-| `npm run e2e:scale` | Opens a made-up 70,000-photo, 2,500-person sorted folder in Photos (first time, again, after Explorer renames/moves) and fails if the app is held for over 1 s |
+| `npm run e2e:scale` | Opens a made-up 70,000-photo, 2,500-person sorted folder in Photos (first time, again, after Explorer renames/moves) and then Settings with 240,000 cache files; fails if the app is held for over 1 s |
 | `npm run dist` | Type-check, build and make the Windows installer `dist/PixHaven-Setup-<version>.exe` |
 | `PixHaven.exe --selftest out.json` | Installed app: GPU check, one real upscale, a face scan, a video thumbnail, an on-the-fly video conversion, labels export/import, ExifTool writing and reading back (labels, stars, people) and the folder index; JSON report, then exits. Add `--cpu` to test CPU mode, `--with-download` to test the model download |
 
@@ -207,6 +207,17 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   (typing "4" puts Person 4 first, then everyone with a 4 in the name); sort by most photos, fewest photos, person
   number or name (A–Z, numbers in order). The order is remembered; in the review, a search also opens "Unsorted".
   `components/PeopleFilter.tsx`.
+- **Fixes (1.0.3):**
+  - **Settings "Not Responding":** the face data and thumbnail cache sizes were added up one file at a time on the main
+    process (logs showed 11–26 s); "files not found" for labels took up to 17 s. Both are now counted in the
+    background (`dir-size.ts`, `TagStore.missingRows`), and so is the thumbnail cache trim 30 s after start.
+  - **Rename failed with EPERM:** Windows will not rename a folder while a file in it is open, and right after a
+    folder opens its thumbnails and labels are being read. A rename now drops the thumbnails waiting inside that
+    folder, waits for the ones being made, and tries again for up to ~8 s (`renameRetrying`); if something else
+    still holds a file, it says so.
+  - **Thumbnails stalled after a rename:** writing the new name into hundreds of photos read the same drive as the
+    thumbnails. It now goes in batches of 25 and waits while thumbnails are being made; a file that never answers
+    frees its thumbnail slot after a minute; the cache lookups of one request share one transaction.
 - **Big folders (1.0):** opening a 70,000-photo folder with 2,500 people and 6,000 group photo shortcuts held the app
   for 52–134 s ("Not Responding"). Now: folders are listed without blocking and file sizes read only for photos that
   moved; what each shortcut points at is remembered in `.clearup/shortcuts.json` (unchanged ones are not read through

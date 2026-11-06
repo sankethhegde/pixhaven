@@ -24,7 +24,7 @@ function getCache(): ThumbCache {
     cache = new ThumbCache(cacheDir());
     // Low-spec: two at a time (doc); otherwise three, leaving the rest of the machine responsive.
     queue = new ThumbQueue(cache, getSettings().lowSpec ? 2 : 3, info => notify(info));
-    setTimeout(() => { try { cache?.trim(CACHE_LIMIT); } catch (e) { log('warn', 'Thumbnail cache trim failed', e); } }, 30_000);
+    setTimeout(() => { cache?.trim(CACHE_LIMIT).catch(e => log('warn', 'Thumbnail cache trim failed', e)); }, 30_000);
   }
   return cache;
 }
@@ -61,6 +61,13 @@ export function thumbs(files: FileRef[]): MediaInfo[] {
   return queue!.request(files.filter(f => mediaKind(f.path)));
 }
 export const pauseThumbs = (p: boolean) => { getCache(); queue!.pause(p); };
+/** Resolves once no thumbnails are waiting, or after `maxMs` (background work that reads the same drive goes after them). */
+export async function thumbsIdle(maxMs = 30_000): Promise<void> {
+  const end = Date.now() + maxMs;
+  while (queue && queue.busy > 0 && Date.now() < end) await new Promise(r => setTimeout(r, 250));
+}
+/** Runs `fn` (a rename) while no thumbnail is being made inside `p`. */
+export const withoutThumbsIn = <T>(p: string, fn: () => Promise<T>): Promise<T> => { getCache(); return queue!.hold(p, fn); };
 
 export async function preview(p: string) {
   const s = await fs.promises.stat(p);

@@ -235,6 +235,31 @@ export default async function run(win, app) {
     check('Rename person: folder renamed, the person view follows', fs.existsSync(path.join(dest, 'Amma')) && !fs.existsSync(momDir) && head.includes('folder “Amma”'), head.match(/\d+ photos · folder “[^”]+”/)?.[0] ?? '');
     await shot('08-renamed-person');
 
+    // 1.0.3: then another person's folder, while a file in it is open (Windows refuses until it is closed).
+    const renamePerson = async (label, to) => {
+      await js(`[...document.querySelectorAll('main button')].find(b => b.innerText.trim() === 'People')?.click()`);
+      await sleep(600);
+      await js(`document.querySelector(${JSON.stringify(`[data-photos-person="${label}"]`)}).click()`);
+      await waitFor('Rename person');
+      await sleep(500);
+      await click('Rename person');
+      await js(`(() => { const i = document.querySelector('[role=dialog] input'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ${JSON.stringify(to)}); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+      await dialogClick('Rename');
+    };
+    const raviNow = path.join(dest, raviName);
+    const fd = fs.openSync(path.join(raviNow, fs.readdirSync(raviNow).find(f => f.endsWith('.jpg'))), 'r');
+    const t0 = Date.now();
+    setTimeout(() => fs.closeSync(fd), 2000);
+    await renamePerson(raviName, 'Ravi R');
+    for (let i = 0; i < 40 && !fs.existsSync(path.join(dest, 'Ravi R')); i++) await sleep(250);
+    await sleep(800);
+    const err = await js(`document.querySelector('[role=dialog]')?.innerText ?? ''`);
+    check('Rename a second person while a file in the folder is open: renamed once it closes', fs.existsSync(path.join(dest, 'Ravi R')) && !fs.existsSync(raviNow) && !err,
+      `${((Date.now() - t0) / 1000).toFixed(1)} s${err ? ` · ${err.replace(/\n/g, ' ')}` : ''}`);
+    await renamePerson('Ravi R', raviName);
+    for (let i = 0; i < 40 && !fs.existsSync(raviNow); i++) await sleep(250);
+    check('…and renamed back', fs.existsSync(raviNow));
+
     // Library: a folder renamed (button) and moved (Move to… → "Move here").
     await js(`window.__clearupLibrary(${JSON.stringify(dest)})`);
     await waitFor('Mom best', 20000);

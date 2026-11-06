@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { load } from './helper.mjs';
 
-const { pasteItems, newFolder, renameFolder, freeName } = await load('library/file-ops');
+const { pasteItems, newFolder, renameFolder, freeName, renameRetrying } = await load('library/file-ops');
+const { dirSize } = await load('dir-size');
 const { syncShortcuts, LINK_MARK } = await load('sorter/shortcuts');
 const { alsoShownFrom, addShown, readManifest, remapManifest } = await load('sorter/people-manifest');
 
@@ -117,4 +118,24 @@ test('Explorer shortcuts follow people.json: made, kept, retargeted, removed; ot
   // Undo: all of PixHaven's shortcuts go, the user's own stays.
   assert.deepEqual(await syncShortcuts(root, links, true), { made: 0, removed: 1 });
   assert.deepEqual(tree(path.join(root, 'Person 2')), ['beach.jpg', 'mine.lnk']);
+});
+
+test('1.0.3: a folder with a file open in it is renamed once the file is closed; gives up with a clear message', { skip: process.platform !== 'win32' }, async () => {
+  const root = tmp();
+  const photo = put(path.join(root, 'Person 8', 'a.jpg'));
+  let fd = fs.openSync(photo, 'r');
+  setTimeout(() => { fs.closeSync(fd); fd = null; }, 500);
+  await renameRetrying(path.join(root, 'Person 8'), path.join(root, 'Kimmy'));
+  assert.ok(fs.existsSync(path.join(root, 'Kimmy', 'a.jpg')));
+  const held = fs.openSync(path.join(root, 'Kimmy', 'a.jpg'), 'r');
+  try {
+    await assert.rejects(renameRetrying(path.join(root, 'Kimmy'), path.join(root, 'Other'), [10, 10]), /is in use, so it can't be renamed right now/);
+  } finally { fs.closeSync(held); }
+});
+
+test('1.0.3: folder sizes are counted (nested, missing folders are 0)', async () => {
+  const root = tmp();
+  put(path.join(root, 'a', 'x.bin'), Buffer.alloc(1000));
+  put(path.join(root, 'a', 'b', 'c', 'y.bin'), Buffer.alloc(234));
+  assert.equal(await dirSize([path.join(root, 'a'), path.join(root, 'nope')]), 1234);
 });

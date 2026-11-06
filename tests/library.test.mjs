@@ -64,7 +64,7 @@ test('every format in the test folder gets a thumbnail (Phase A done-when)', { t
   // Cached: a second look is a database hit, and a changed file gets a new key.
   assert.equal(cache.get(ref('photo.jpg')).thumb, info['photo.jpg'].thumb);
   assert.equal(cache.get({ ...ref('photo.jpg'), mtime: 1 }), null);
-  assert.ok(cache.sizeOnDisk() > 0);
+  assert.ok(await cache.sizeOnDisk() > 0);
 });
 
 test('viewer previews: browser formats direct, HEIC and RAW converted', { timeout: 60000 }, async () => {
@@ -77,7 +77,7 @@ test('viewer previews: browser formats direct, HEIC and RAW converted', { timeou
   const cr3 = await cache.preview(ref('canon.cr3'));
   assert.deepEqual([cr3.width, cr3.height], [4096, 2731], 'CR3: the 6000×4000 camera preview, capped at 4096');
   cache.clear();
-  assert.equal(cache.sizeOnDisk(), 0);
+  assert.equal(await cache.sizeOnDisk(), 0);
 });
 
 test('thumbnail queue returns cached ones at once and works through the rest', { timeout: 60000 }, async () => {
@@ -93,11 +93,21 @@ test('thumbnail queue returns cached ones at once and works through the rest', {
   assert.deepEqual(done.map(p => path.basename(p)).sort(), ['clip.avi', 'photo.webp']);
 });
 
+test('1.0.3: while a folder is held (renamed), nothing in it is opened and its waiting thumbnails are dropped', { timeout: 60000 }, async () => {
+  const cache = new ThumbCache(path.join(tmp, 'cache5'));
+  const done = [];
+  const q = new ThumbQueue(cache, 1, i => done.push(i.path));
+  q.request(['photo.webp', 'clip.avi', 'photo.gif'].map(ref));
+  const inside = await q.hold(dir, async () => q.busy);
+  assert.equal(inside, 0, 'nothing running or waiting inside the folder');
+  assert.ok(done.length <= 1, 'only the one already being made finished');
+});
+
 test('trim keeps the cache under its limit, newest first', { timeout: 60000 }, async () => {
   const cache = new ThumbCache(path.join(tmp, 'cache4'));
   for (const f of ['photo.jpg', 'photo.png', 'photo.webp']) { await cache.make(ref(f)); await new Promise(r => setTimeout(r, 5)); }
   const one = fs.statSync(cache.thumbFile(ThumbCache.key(ref('photo.webp')))).size;
-  cache.trim(one * 1.4 / 0.75);
+  await cache.trim(one * 1.4 / 0.75);
   assert.ok(cache.get(ref('photo.webp')), 'newest kept');
   assert.equal(cache.get(ref('photo.jpg')), null, 'oldest dropped');
 });

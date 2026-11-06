@@ -10,6 +10,7 @@ import { BROWSER_IMAGE_EXTENSIONS, RAW_EXTENSIONS, mediaKind, type MediaInfo } f
 import { decodeBmp } from '../bmp';
 import { decodeStill, probeVideo, videoFrame } from './ffmpeg';
 import { rawPreview, rotatedPreview } from './raw';
+import { dirSize } from '../dir-size';
 export { setFfmpegDir } from './ffmpeg';
 
 // libvips keeps recently read files open in its cache by default; on Windows that stops the user from deleting or
@@ -18,6 +19,7 @@ sharp.cache({ files: 0 });
 
 
 export const THUMB_PX = 320;
+const SLOT_TIMEOUT_MS = 60_000;
 const PREVIEW_PX = 4096;
 const HEIF = ['heic', 'heif', 'hif'];
 const ext = (p: string) => path.extname(p).slice(1).toLowerCase();
@@ -102,16 +104,8 @@ export class ThumbCache {
     return { url: `clearup://preview/${key}.jpg`, width: m.width ?? 0, height: m.height ?? 0, converted: true };
   }
 
-  sizeOnDisk(): number {
-    let total = 0;
-    const walk = (d: string) => {
-      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-        const p = path.join(d, e.name);
-        if (e.isDirectory()) walk(p); else try { total += fs.statSync(p).size; } catch { /* gone */ }
-      }
-    };
-    for (const d of ['thumbs', 'previews']) { const p = path.join(this.dir, d); if (fs.existsSync(p)) walk(p); }
-    return total;
+  sizeOnDisk(): Promise<number> {
+    return dirSize(['thumbs', 'previews'].map(d => path.join(this.dir, d)));
   }
 
   clear(): void {
@@ -120,25 +114,33 @@ export class ThumbCache {
   }
 
   /** Keeps the cache under `maxBytes` by dropping the least recently used thumbnails; previews are capped at a quarter. */
-  trim(maxBytes: number): void {
+  // 1.0.3: file sizes are read in the background (on 80,000 thumbnails the old one-by-one check held the window).
+  async trim(maxBytes: number): Promise<void> {
     const prev = path.join(this.dir, 'previews');
-    if (fs.existsSync(prev)) {
-      const files = fs.readdirSync(prev).map(n => { const p = path.join(prev, n); const s = fs.statSync(p); return { p, size: s.size, t: s.atimeMs }; })
-        .sort((a, b) => b.t - a.t);
-      let sum = 0;
-      for (const f of files) { sum += f.size; if (sum > maxBytes / 4) fs.rmSync(f.p, { force: true }); }
-    }
+    const names = await fs.promises.readdir(prev).catch(() => [] as string[]);
+    const files = (await Promise.all(names.map(n => { const p = path.join(prev, n); return fs.promises.stat(p).then(s => ({ p, size: s.size, t: s.atimeMs }), () => null); })))
+      .filter((f): f is { p: string; size: number; t: number } => !!f).sort((a, b) => b.t - a.t);
+    let psum = 0;
+    for (const f of files) { psum += f.size; if (psum > maxBytes / 4) await fs.promises.rm(f.p, { force: true }); }
     const rows = this.db.prepare('SELECT key FROM media_cache WHERE thumb = 1 ORDER BY used DESC').all() as { key: string }[];
     let sum = 0;
     const drop: string[] = [];
-    for (const r of rows) {
-      try { sum += fs.statSync(this.thumbFile(r.key)).size; } catch { drop.push(r.key); continue; }
-      if (sum > maxBytes * 0.75) drop.push(r.key);
+    for (let i = 0; i < rows.length; i += 256) {
+      const part = rows.slice(i, i + 256);
+      const sizes = await Promise.all(part.map(r => fs.promises.stat(this.thumbFile(r.key)).then(s => s.size, () => -1)));
+      part.forEach((r, j) => { if (sizes[j] < 0) { drop.push(r.key); return; } sum += sizes[j]; if (sum > maxBytes * 0.75) drop.push(r.key); });
     }
     const del = this.db.prepare('DELETE FROM media_cache WHERE key = ?');
-    for (const k of drop) { fs.rmSync(this.thumbFile(k), { force: true }); del.run(k); }
+    for (let i = 0; i < drop.length; i += 256) {
+      const part = drop.slice(i, i + 256);
+      await Promise.all(part.map(k => fs.promises.rm(this.thumbFile(k), { force: true })));
+      for (const k of part) del.run(k);
+    }
   }
 }
+
+const inKey = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+const inside = (p: string, k: string) => { const x = inKey(p); return x === k || x.startsWith(k + path.sep); };
 
 function toInfo(p: string, r: Row): MediaInfo {
   return {
@@ -189,6 +191,7 @@ export class ThumbQueue {
   private pending: FileRef[] = [];
   private running = new Set<string>();
   private paused = false;
+  private held: string[] = [];       // folders being renamed: nothing in them is opened meanwhile
   constructor(private cache: ThumbCache, public concurrency: number, private onDone: (info: MediaInfo) => void) {}
 
   /** Returns what is already cached; queues the rest. */
@@ -196,24 +199,47 @@ export class ThumbQueue {
     const ready: MediaInfo[] = [];
     const todo: FileRef[] = [];
     const seen = new Set<string>();
-    for (const f of files) {
-      if (seen.has(f.path)) continue;
-      seen.add(f.path);
-      const hit = this.cache.get(f);
-      if (hit) ready.push(hit); else if (!this.running.has(f.path)) todo.push(f);
-    }
+    // One transaction for the whole list (up to 3,000 files each time the grid scrolls), not one write per file.
+    this.cache.db.exec('BEGIN');
+    try {
+      for (const f of files) {
+        if (seen.has(f.path)) continue;
+        seen.add(f.path);
+        const hit = this.cache.get(f);
+        if (hit) ready.push(hit); else if (!this.running.has(f.path)) todo.push(f);
+      }
+      this.cache.db.exec('COMMIT');
+    } catch (e) { this.cache.db.exec('ROLLBACK'); throw e; }
     this.pending = todo;
     this.pump();
     return ready;
   }
   pause(p: boolean) { this.paused = p; if (!p) this.pump(); }
+
+  /** 1.0.3: runs `fn` with no thumbnail open inside `dir` (Windows will not rename a folder with an open file in it). */
+  async hold<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+    const k = inKey(dir);
+    this.held.push(k);
+    try {
+      for (let i = 0; i < 100 && [...this.running].some(p => inside(p, k)); i++) await new Promise(r => setTimeout(r, 50));
+      return await fn();
+    } finally {
+      this.held.splice(this.held.indexOf(k), 1);
+      this.pump();
+    }
+  }
   get busy() { return this.running.size + this.pending.length; }
 
   private pump(): void {
+    if (this.held.length) this.pending = this.pending.filter(f => !this.held.some(k => inside(f.path, k)));
     while (!this.paused && this.running.size < this.concurrency && this.pending.length) {
       const f = this.pending.shift()!;
       this.running.add(f.path);
-      this.cache.make(f).then(this.onDone, () => {}).finally(() => { this.running.delete(f.path); this.pump(); });
+      // 1.0.3: a file that never answers (a drive gone to sleep, a stuck network share) frees its place after a minute.
+      let freed = false;
+      const free = () => { if (freed) return; freed = true; this.running.delete(f.path); this.pump(); };
+      const timer = setTimeout(free, SLOT_TIMEOUT_MS);
+      this.cache.make(f).then(this.onDone, () => {}).finally(() => { clearTimeout(timer); free(); });
     }
   }
 }

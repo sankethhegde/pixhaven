@@ -113,8 +113,8 @@ test('labels follow a file moved to another watched folder, and photos get label
   const pic2 = path.join(b, 'portrait (renamed).jpg');
   fs.renameSync(pic, pic2);
   await ix.scan(bid);
-  assert.equal(store.missingRows().length, 1);
-  for (const row of store.missingRows()) for (const cand of ix.bySize(row.size)) if (await quickFingerprint(cand.path, cand.size).catch(() => '') === row.fingerprint) store.moved(row.path, cand.path);
+  assert.equal((await store.missingRows()).length, 1);
+  for (const row of await store.missingRows()) for (const cand of ix.bySize(row.size)) if (await quickFingerprint(cand.path, cand.size).catch(() => '') === row.fingerprint) store.moved(row.path, cand.path);
   assert.equal(store.tagsFor([pic2])[pic2].stars, 5);
   store.close(); ix.close();
 });
@@ -167,7 +167,7 @@ test('stars and labels written into files and sidecars, and cleaned again (TAG-0
   assert.deepEqual((await readTags(EXIFTOOL, path.join(dir, 'party.xmp'))).subject, ['Goa 2024']);
   assert.deepEqual((await readTags(EXIFTOOL, jpg)).subject.sort(), ['FromLightroom', 'Goa 2024']);
   // The file changed, but it is still recognised (new fingerprint stored).
-  assert.equal(store.missingRows().length, 0);
+  assert.equal((await store.missingRows()).length, 0);
   assert.equal(await quickFingerprint(mp4, fs.statSync(mp4).size), store.db.prepare('SELECT fingerprint FROM media WHERE path = ?').get(mp4).fingerprint);
   // Labels and stars taken off: only what PixHaven wrote is removed.
   const goa = store.labels().find(l => l.name === 'Goa 2024').id;

@@ -190,7 +190,7 @@ export async function renameFile(from: string, newName: string): Promise<string>
   const to = path.join(path.dirname(from), name);
   if (to === from) return to;
   if (to.toLowerCase() !== from.toLowerCase() && fs.existsSync(to)) throw new Error(`There is already a file called "${name}" here.`);
-  await fs.promises.rename(from, to);
+  await fileOps.renameRetrying(from, to);
   tagStore().moved(from, to);
   await moveSidecar(from, to);
   onMoved(from, to);
@@ -290,7 +290,7 @@ export async function relinkAdded(files: FileRef[]): Promise<string[]> {
 export async function relinkFromIndex(bySize: (size: number) => FileRef[]): Promise<number> {
   const s = tagStore();
   let n = 0;
-  for (const row of s.missingRows()) {
+  for (const row of await s.missingRows()) {
     for (const c of bySize(row.size)) {
       if (s.isTagged(c.path)) continue;
       const fp = await quickFingerprint(c.path, c.size).catch(() => '');
