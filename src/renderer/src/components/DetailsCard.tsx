@@ -6,6 +6,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { FileDetails, MediaEntry, MediaInfo } from '@shared/types';
 import { api, errorText, fmtBytes, fmtClock } from '../api';
 import { Icon } from './ui';
+import { TagEditor } from './Tags';
 import * as T from '../tags';
 
 const cache = new Map<string, FileDetails>();
@@ -34,9 +35,11 @@ interface Props {
   infos: Map<string, MediaInfo>;             // thumbnails (and quick facts) already loaded
   onOpen?: (e: MediaEntry) => void;
   onClose: () => void;
+  all?: MediaEntry[];                        // 1.0.5: everything shown — its totals when nothing is selected
+  allTitle?: string;                         // "In this folder", "In this view"…
 }
 
-export function DetailsCard({ items, infos, onOpen, onClose }: Props) {
+export function DetailsCard({ items, infos, onOpen, onClose, all, allTitle = 'In this folder' }: Props) {
   const one = items.length === 1 ? items[0] : null;
   const [details, setDetails] = useState<FileDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +72,8 @@ export function DetailsCard({ items, infos, onOpen, onClose }: Props) {
         <button className="ml-auto h-7 w-7 rounded hover:bg-panel-2 flex items-center justify-center text-muted hover:text-fg" onClick={onClose}
           aria-label="Hide details" title="Hide details (I)"><Icon name="x" size={14} /></button>
       </div>
-      {!items.length ? <div className="p-4 text-sm text-muted">Select a photo or video to see its details.</div>
+      {!items.length ? (all?.length ? <Many items={all} infos={infos} title={allTitle} summary />
+          : <div className="p-4 text-sm text-muted">{all ? 'Nothing here.' : 'Select a photo or video to see its details.'}</div>)
         : one ? <One e={one} info={infos.get(one.path)} d={details} error={error} labelNames={id => labels.find(l => l.id === id)} onOpen={onOpen} />
         : <Many items={items} infos={infos} />}
     </aside>
@@ -89,7 +93,6 @@ function One({ e, info, d, error, labelNames, onOpen }: {
   labelNames: (id: number) => { name: string; color: string | null } | undefined; onOpen?: (e: MediaEntry) => void;
 }) {
   const folder = e.path.replace(/[\\/][^\\/]*$/, '');
-  const tags = T.tagsOf(e.path);
   const w = d?.width ?? info?.width, h = d?.height ?? info?.height;
   const duration = d?.duration ?? info?.duration;
   const offline = !!(e as { offline?: boolean }).offline;
@@ -121,20 +124,10 @@ function One({ e, info, d, error, labelNames, onOpen }: {
         {d?.exposure && <Row label="Exposure">{d.exposure}</Row>}
         <Row label="Modified">{date(d?.modified ?? e.mtime)}</Row>
         {d?.created ? <Row label="Created">{date(d.created)}</Row> : null}
-        {tags && tags.stars > 0 && <Row label="Stars"><span className="text-[#f5b301]" aria-label={`${tags.stars} stars`}>{'★'.repeat(tags.stars)}</span></Row>}
-        {tags && tags.labels.length > 0 && (
-          <Row label="Labels">
-            <span className="flex flex-wrap gap-1">
-              {tags.labels.map(id => labelNames(id)).filter(Boolean).map(l => (
-                <span key={l!.name} className="inline-flex items-center gap-1 px-1.5 rounded bg-panel-2 text-xs">
-                  <span className="h-2 w-2 rounded-full" style={{ background: l!.color ?? '#8d8d8d' }} />{l!.name}
-                </span>
-              ))}
-            </span>
-          </Row>
-        )}
         {d?.people?.length ? <Row label="People">{d.people.join(', ')}</Row> : null}
       </dl>
+      {/* 1.0.5: stars and labels, changed right here (written into the file like "Labels & stars") */}
+      {e.kind !== 'folder' && !offline && <TagSection items={[e]} />}
       {!d && !error && !offline && e.kind !== 'folder' && <div className="text-xs text-muted" role="status">Reading details…</div>}
       {offline && <div className="text-xs text-muted">On a drive that is not connected.</div>}
       {(error || d?.error) && <div className="text-xs text-danger" role="alert">Some details could not be read: {error ?? d?.error}</div>}
@@ -149,7 +142,19 @@ function One({ e, info, d, error, labelNames, onOpen }: {
   );
 }
 
-function Many({ items, infos }: { items: MediaEntry[]; infos: Map<string, MediaInfo> }) {
+/** Stars and labels of one or several photos and videos; several: "mixed" stars and how many carry each label. */
+function TagSection({ items }: { items: MediaEntry[] }) {
+  const taggable = items.filter(e => e.kind !== 'folder' && !(e as { offline?: boolean }).offline);
+  if (!taggable.length) return null;
+  return (
+    <div className="border-t border-line pt-3" data-testid="details-tags">
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">Stars & labels{taggable.length > 1 ? ` · ${taggable.length} items` : ''}</div>
+      <TagEditor items={taggable} />
+    </div>
+  );
+}
+
+function Many({ items, infos, title, summary }: { items: MediaEntry[]; infos: Map<string, MediaInfo>; title?: string; summary?: boolean }) {
   const videos = items.filter(e => e.kind === 'video'), photos = items.filter(e => e.kind === 'image'), folders = items.filter(e => e.kind === 'folder');
   const size = items.reduce((n, e) => n + (e.kind === 'folder' ? 0 : e.size), 0);
   const known = videos.map(v => infos.get(v.path)?.duration).filter((x): x is number => !!x);
@@ -168,8 +173,9 @@ function Many({ items, infos }: { items: MediaEntry[]; infos: Map<string, MediaI
           );
         })}
       </div>
-      <div className="font-semibold text-sm" data-testid="details-name">{plural(items.length, 'item')} selected</div>
+      <div className="font-semibold text-sm" data-testid="details-name">{summary ? title : `${plural(items.length, 'item')} selected`}</div>
       <dl>
+        {summary && <Row label="Files" testid="total-files">{(photos.length + videos.length).toLocaleString()}</Row>}
         {photos.length > 0 && <Row label="Photos">{photos.length}</Row>}
         {videos.length > 0 && <Row label="Videos">{videos.length}</Row>}
         {folders.length > 0 && <Row label="Folders">{folders.length}</Row>}
@@ -177,6 +183,7 @@ function Many({ items, infos }: { items: MediaEntry[]; infos: Map<string, MediaI
         {length > 0 && <Row label="Total length" testid="total-length">{fmtClock(length)}{known.length < videos.length ? ` (${known.length} of ${videos.length} videos)` : ''}</Row>}
         {times.length > 1 && <Row label="Modified">{date(times[0])} – {date(times[times.length - 1])}</Row>}
       </dl>
+      {summary ? <div className="text-xs text-muted">Select a photo or video to see its details, or several to rate and label them together.</div> : <TagSection items={items} />}
     </div>
   );
 }

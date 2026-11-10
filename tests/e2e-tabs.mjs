@@ -232,6 +232,94 @@ export default async function run(win, app) {
     const back1 = await sidebarShown();
     await tabClick(1);
     check('Ctrl+B (or the arrow) shows it again', back1 && (await sidebarShown()) && (await js(`localStorage.getItem('lib.sidebar')`)) === '1');
+
+    // ==== 1.0.5 ====
+    const harbour = path.join(A, 'harbour.mp4');
+    {  // a different video (an identical copy would share its fingerprint)
+      const ff = path.join(FFMPEG_DIR, WIN ? 'ffmpeg.exe' : 'ffmpeg');
+      const r = spawnSync(ff, ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30:duration=4', '-c:v', 'mpeg4', '-q:v', '5', '-y', harbour]);
+      if (r.status !== 0) throw new Error(`ffmpeg: ${r.stderr}`);
+    }
+    const ref = p => { const st = fs.statSync(p); return { path: p, size: st.size, mtime: st.mtimeMs }; };
+    const tagsOf = async p => (await js(`window.clearup.tags.forFiles([${JSON.stringify(ref(p))}])`)).tags[p] ?? { stars: 0, labels: [] };
+    const labelId = async name => (await js(`window.clearup.tags.labels()`)).find(l => l.name === name)?.id;
+    await js(`window.__clearupLibrary(${JSON.stringify(A)})`);
+    await waitFor(async () => /1 photo · 2 videos/.test(await counts()), 15000);
+    await sleep(1500);   // labels read from the files first
+    await key('Escape');
+
+    // ---- details card with nothing selected: the folder's totals ----
+    const totals = await card();
+    check('details card with nothing selected shows the folder totals', /In this folder/.test(totals) && /Files\s+3/.test(totals) && /Photos\s+1/.test(totals) && /Videos\s+2/.test(totals) && /Total size/.test(totals),
+      totals.replace(/\n/g, ' | ').slice(0, 200));
+
+    // ---- stars and labels for several videos, from the card ----
+    await tile('beach walk.mp4');
+    await tile('harbour.mp4', { ctrl: true });
+    const editor = `${panel}.querySelector('[data-testid=details-tags]')`;
+    check('several selected: the card offers stars and labels for all of them', /2 items/i.test(await js(`${editor}?.innerText ?? ''`)));
+    await js(`${editor}.querySelector('[aria-label="3 stars"]').click()`);
+    await soft(waitFor(async () => (await tagsOf(video)).stars === 3 && (await tagsOf(harbour)).stars === 3, 10000));
+    await js(`(() => { const i = ${editor}.querySelector('input[aria-label="Add a label"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      set.call(i, 'Live wallpaper'); i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    await soft(waitFor(async () => { const id = await labelId('Live wallpaper'); return id && (await tagsOf(video)).labels.includes(id) && (await tagsOf(harbour)).labels.includes(id); }, 10000));
+    const lid = await labelId('Live wallpaper');
+    const [t1, t2] = [await tagsOf(video), await tagsOf(harbour)];
+    check('stars and a new label set from the card reach both videos', t1.stars === 3 && t2.stars === 3 && !!lid && t1.labels.includes(lid) && t2.labels.includes(lid), JSON.stringify([t1, t2]));
+    await shot('08-card-tags-two');
+    await tile('harbour.mp4');
+    await js(`${editor}.querySelector('[aria-label="5 stars"]').click()`);
+    await soft(waitFor(async () => (await tagsOf(harbour)).stars === 5, 10000));
+    check('one selected: its stars change on their own', (await tagsOf(harbour)).stars === 5 && (await tagsOf(video)).stars === 3);
+
+    // ---- the watch page ----
+    await js(`[...${panel}.querySelectorAll('[role=option][data-path]')].find(e => e.dataset.path.endsWith('beach walk.mp4')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    const vid = `${panel}.querySelector('[data-testid=watch-page] video')`;
+    await waitFor(async () => (await js(`${vid}?.currentTime ?? 0`)) > 0.3, 15000);
+    const upNames = await js(`[...${panel}.querySelectorAll('[data-up-next]')].map(b => (b.dataset.nowPlaying ? '▶' : '') + b.dataset.upNext)`);
+    check('opening a video shows the watch page: it plays large, Up next lists the folder\'s videos', (await js(`!!${panel}.querySelector('[data-testid=watch-page]')`)) && !(await js(`!!document.querySelector('[role=dialog][aria-label^="Player"]')`))
+      && JSON.stringify(upNames) === JSON.stringify(['▶beach walk.mp4', 'harbour.mp4']), upNames.join(', '));
+    check('the watch page shows the video\'s stars and labels', (await js(`${panel}.querySelector('[data-testid=watch-tags]')?.innerText ?? ''`)).includes('Live wallpaper'));
+    await shot('09-watch-page');
+    const box = await js(`(() => { const r = ${vid}.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; })()`);
+    await click('Theatre');
+    await sleep(600);
+    const box2 = await js(`(() => { const r = ${vid}.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; })()`);
+    const tBefore = await js(`${vid}.currentTime`);
+    await sleep(700);
+    const tAfter = await js(`${vid}.currentTime`);
+    check('Theatre makes the video wider and keeps it playing (no restart)', box2.w > box.w + 150 && tAfter > tBefore && !!(await js(`${panel}.querySelector('[data-theatre]')`)), `${box.w}×${box.h} → ${box2.w}×${box2.h}; ${tBefore.toFixed(2)} → ${tAfter.toFixed(2)} s`);
+    await shot('10-theatre');
+    await click('Normal view');
+    await win.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(b => b.offsetParent && b.innerText.trim() === 'Full screen').click()`, true);
+    await soft(waitFor(async () => !!(await js('document.fullscreenElement')), 5000));
+    const fullOk = await js(`!!document.fullscreenElement?.matches('[data-embedded]')`);
+    await js('document.exitFullscreen().catch(() => {})');
+    check('Full screen fills the screen with the video, and comes back', fullOk && !(await js('!!document.fullscreenElement')));
+    await js(`${panel}.querySelector('[data-up-next="harbour.mp4"]').click()`);
+    await soft(waitFor(async () => (await js(`${panel}.querySelector('[data-testid=watch-title]')?.innerText`)) === 'harbour.mp4' && (await js(`${vid}?.currentTime ?? 0`)) > 0.2, 15000));
+    check('clicking a video in Up next plays it', (await js(`${panel}.querySelector('[data-testid=watch-title]')?.innerText`)) === 'harbour.mp4');
+    await tabClick(2);
+    await sleep(500);
+    const pausedAway = await js(`(() => { const v = [...document.querySelectorAll('[data-tab-panel] [data-testid=watch-page] video')]; return v.length === 1 ? v[0].paused : 'videos: ' + v.length; })()`);
+    await tabClick(1);
+    check('switching to another tab pauses the video', pausedAway === true, String(pausedAway));
+    await key('Escape');
+    await sleep(500);
+    const selBack = await js(`[...${panel}.querySelectorAll('[role=option][aria-selected=true]')].map(e => e.dataset.path.split(/[\\\\/]/).pop())`);
+    check('Esc goes back to the folder with the last video selected', !(await js(`!!${panel}.querySelector('[data-testid=watch-page]')`)) && selBack.join() === 'harbour.mp4', selBack.join());
+
+    // ---- Video editor: the nightOwl live wallpaper recommendation ----
+    await js(`[...document.querySelectorAll('nav button')].find(b => b.innerText.trim() === 'Video editor')?.click()`);
+    await waitFor(async () => !!(await js(`document.querySelector('[data-testid=wallpaper-tip]')`)), 10000);
+    const tip = await js(`document.querySelector('[data-testid=wallpaper-tip]').innerText`);
+    const badge = await js(`document.querySelector('[data-conv-target="mp4-h264"] [data-testid=best-for-wallpaper]')?.innerText ?? ''`);
+    check('Video editor says which format is best for a nightOwl live wallpaper', tip.includes('MP4 (H.264)') && tip.includes('sound off') && badge.includes('Best for nightOwl'), tip.replace(/\n/g, ' ').slice(0, 220));
+    await click('Use live wallpaper settings');
+    const conv = await js(`({ target: document.querySelector('[data-conv-target][aria-checked=true]')?.dataset.convTarget, res: document.querySelector('select[aria-label=Resolution]')?.value,
+      sound: document.querySelector('[aria-label="Keep the sound"]')?.getAttribute('aria-checked'), done: [...document.querySelectorAll('button')].some(b => b.innerText.includes('Using these settings')) })`);
+    check('"Use live wallpaper settings" picks H.264, 1080p, sound off', conv.target === 'mp4-h264' && conv.res === '1080' && conv.sound === 'false' && conv.done, JSON.stringify(conv));
+    await shot('11-wallpaper-tip');
   } catch (e) {
     check('e2e run', false, String(e?.stack ?? e));
     await shot('zz-failure').catch(() => {});

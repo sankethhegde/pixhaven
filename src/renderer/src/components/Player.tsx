@@ -15,6 +15,8 @@ interface Props {
   onIndex: (i: number) => void;
   onClose: () => void;
   playlist?: string;          // v2.1 (PLAY-08): playing a playlist; it goes on to the next video by itself
+  embedded?: boolean;         // 1.0.5: inside the Library's watch page instead of over the whole window
+  active?: boolean;           // embedded: its tab and page are on screen (keys go to it; hidden, it pauses)
 }
 
 let capsCache: PlayerCaps | null = null;
@@ -34,7 +36,7 @@ export function playerCaps(): PlayerCaps {
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const store = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 
-export function Player({ items, index, infos, onIndex, onClose, playlist }: Props) {
+export function Player({ items, index, infos, onIndex, onClose, playlist, embedded = false, active = true }: Props) {
   const item = items[index];
   const video = useRef<HTMLVideoElement>(null);
   const shell = useRef<HTMLDivElement>(null);
@@ -209,9 +211,15 @@ export function Player({ items, index, infos, onIndex, onClose, playlist }: Prop
   const toggleFull = () => { if (document.fullscreenElement) void document.exitFullscreen(); else void shell.current?.requestFullscreen(); };
   useEffect(() => { const f = () => setFull(!!document.fullscreenElement); document.addEventListener('fullscreenchange', f); return () => document.removeEventListener('fullscreenchange', f); }, []);
 
+  // Embedded in a tab or page that is no longer on screen: pause (it would keep playing unseen).
+  useEffect(() => { if (!active) video.current?.pause(); }, [active]);
+
   // ---- keyboard (PLAY-04) ----
   useEffect(() => {
+    if (!active) return;
     const key = (e: KeyboardEvent) => {
+      if (embedded && (e.ctrlKey || e.metaKey || e.altKey)) return;   // Library tab shortcuts (Ctrl+T, Ctrl+Tab…)
+      if (embedded && document.querySelector('[role="dialog"]')) return;
       if ((e.target as HTMLElement)?.tagName === 'INPUT' && (e.target as HTMLInputElement).type !== 'range') return;
       const k = e.key;
       if (k === ' ' || k === 'k') togglePlay();
@@ -241,7 +249,7 @@ export function Player({ items, index, infos, onIndex, onClose, playlist }: Prop
 
   // Controls and pointer fade out while playing.
   useEffect(() => {
-    if (paused || menu || hover || tagsOpen) { setIdle(false); return; }
+    if (paused || menu || hover || (tagsOpen && !embedded)) { setIdle(false); return; }
     const t = setTimeout(() => setIdle(true), 2500);
     return () => clearTimeout(t);
   }, [paused, menu, hover, now]);
@@ -274,8 +282,8 @@ export function Player({ items, index, infos, onIndex, onClose, playlist }: Prop
   const btn = 'h-9 min-w-9 px-2 rounded-lg hover:bg-white/15 flex items-center justify-center gap-1 text-sm';
 
   return (
-    <div ref={shell} className={`fixed inset-0 z-40 bg-black text-white flex flex-col select-none ${idle ? 'cursor-none' : ''}`}
-      role="dialog" aria-label={`Player: ${item.name}`} onMouseMove={wake}>
+    <div ref={shell} className={`${embedded ? 'relative w-full h-full' : 'fixed inset-0 z-40'} bg-black text-white flex flex-col select-none overflow-hidden ${idle ? 'cursor-none' : ''}`}
+      role={embedded ? 'region' : 'dialog'} aria-label={`Player: ${item.name}`} onMouseMove={wake} data-embedded={embedded || undefined}>
       {/* top bar */}
       <div className={`absolute top-0 inset-x-0 z-10 flex items-center gap-3 px-4 h-14 bg-gradient-to-b from-black/80 to-transparent transition-opacity ${idle ? 'opacity-0' : ''}`}>
         {/* v2.11: back arrow on the left (leaves full screen first), close on the right */}
@@ -327,7 +335,7 @@ export function Player({ items, index, infos, onIndex, onClose, playlist }: Prop
       </div>
 
       {/* v2.11: labels and stars stay out of the way in full screen */}
-      {tagsOpen && !full && (
+      {tagsOpen && !full && !embedded && (
         <div className="absolute z-20 top-16 right-3 w-80 max-h-[calc(100%-11rem)] overflow-y-auto rounded-2xl bg-black/80 backdrop-blur border border-white/10 p-4 space-y-4"
           onClick={e => e.stopPropagation()} aria-label="Labels and stars panel">
           <div className="flex items-center text-sm font-medium">Labels & stars
@@ -396,7 +404,7 @@ export function Player({ items, index, infos, onIndex, onClose, playlist }: Prop
             ))}
             <MenuItem onClick={() => void loadSubFile()}>Load subtitle file…</MenuItem>
           </Menu>
-          {!full && (
+          {!full && !embedded && (
             <button className={`${btn} ${tagsOpen ? 'bg-white/15' : ''}`} onClick={() => setTagsOpen(!tagsOpen)} aria-label="Labels and stars" aria-expanded={tagsOpen} title="Labels and stars (S); 1–5 sets stars">
               <span className="text-[#f5b301]">★</span>Labels
             </button>

@@ -26,6 +26,11 @@ const RES: { value: ConvertOptions['resolution']; label: string }[] = [
   { value: 'keep', label: 'Keep' }, { value: 2160, label: '4K' }, { value: 1080, label: '1080p' }, { value: 720, label: '720p' }, { value: 480, label: '480p' },
 ];
 const LAST = 'conv.options';
+// 1.0.5: live wallpapers for nightOwl (its wallpaper is a muted, looping web video player): H.264 is decoded by the
+// graphics card on any PC; HEVC needs Microsoft's paid "HEVC Video Extensions", which many PCs (this one) do not have.
+const WALLPAPER: Pick<ConvertOptions, 'target' | 'quality' | 'resolution' | 'sound' | 'maxMB'> = { target: 'mp4-h264', quality: 'best', resolution: 1080, sound: false, maxMB: null };
+const isWallpaper = (o: ConvertOptions) => o.target === WALLPAPER.target && o.quality === WALLPAPER.quality && o.resolution === WALLPAPER.resolution && !o.sound && o.maxMB === null;
+// (PixHaven's own player can often play HEVC through the graphics card when nightOwl's cannot, so this is not probed.)
 const DEFAULTS: ConvertOptions = { target: 'mp4-h264', quality: 'balanced', resolution: 'keep', maxMB: null, sound: true, outDir: null };
 const load = (): ConvertOptions => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(LAST) ?? '{}') }; } catch { return DEFAULTS; } };
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
@@ -180,6 +185,17 @@ export function VideoEditor({ active, incoming, onConsumed }: Props) {
 
         {/* options */}
         {mode === 'convert' && <section className="rounded-2xl border border-line bg-panel p-5 space-y-4">
+          {/* 1.0.5: which format to use for a nightOwl live wallpaper */}
+          <div className="rounded-xl border border-accent/40 bg-accent-soft px-4 py-3 flex items-start gap-3" data-testid="wallpaper-tip">
+            <Icon name="sparkle" size={18} className="text-accent shrink-0 mt-0.5" />
+            <div className="text-sm flex-1 min-w-0">
+              <div className="font-medium">Making a live wallpaper for nightOwl?</div>
+              <div className="text-muted mt-0.5">Best: <b className="text-fg">MP4 (H.264)</b>, sound off, 1080p (your screen size; never made bigger). It plays smoothly on the graphics card of any PC.
+                Second choice: WebM (VP9). Avoid HEVC: without Microsoft's HEVC Video Extensions (this PC has none) the wallpaper stays blank.</div>
+            </div>
+            <Button className="!h-8 shrink-0" variant={isWallpaper(o) ? 'secondary' : 'primary'} disabled={!!job || isWallpaper(o)}
+              onClick={() => { setFit(false); setO({ ...o, ...WALLPAPER }); }}>{isWallpaper(o) ? <><Icon name="check" size={14} />Using these settings</> : 'Use live wallpaper settings'}</Button>
+          </div>
           <div className="text-xs font-semibold uppercase tracking-wide text-muted">Convert to</div>
           <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }} role="radiogroup" aria-label="Convert to">
             {TARGETS.map(t => {
@@ -191,6 +207,8 @@ export function VideoEditor({ active, incoming, onConsumed }: Props) {
                   className={`text-left rounded-xl border p-3 transition ${o.target === t.id ? 'border-accent bg-accent-soft' : 'border-line hover:bg-panel-2'} disabled:opacity-40 disabled:cursor-not-allowed`}>
                   <div className="flex items-center gap-2 text-sm font-medium">{t.title}<span className="ml-auto text-[10px] uppercase tracking-wide text-muted">{t.group}</span></div>
                   <div className="text-xs text-muted mt-0.5">{off ? c?.why : t.hint}</div>
+                  {t.id === 'mp4-h264' && <div className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-accent text-accent-fg text-[10px] font-semibold px-2 h-5" data-testid="best-for-wallpaper">★ Best for nightOwl live wallpaper</div>}
+                  {t.id === 'mp4-hevc' && <div className="mt-1.5 text-[11px] text-warn">Not for nightOwl wallpapers (needs HEVC Video Extensions)</div>}
                 </button>
               );
             })}

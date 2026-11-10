@@ -36,7 +36,7 @@ npm run setup:engine     # downloads the engine, models, face models, places, FF
 | `node tests/make-media.mjs <folder>` | Builds the mixed-format test folder (17 photo formats incl. HEIC and 7 RAW, 17 video formats) |
 | `npm run e2e:sort` | Same for Sort by person: scan → review → dry run → apply (no copies, people tagged, folders checked against the photos' real names) → re-scan → undo, on ~50 public test photos (`phase0/fetch-test-photos.mjs`, or set `CLEARUP_TESTPHOTOS`) |
 | `npm run e2e:combine` | Photos → Combine people on two sorted folders made by the test (the same person in both): match, name, estimate, combine, files/face data/names/shortcuts checked, destination opened; Move to / Rename; Merge into… (by hand and by face); search and sort people in Photos and the Sort review; a second rename while a file in the folder is open; the details card in Photos; then Sort → Estimate time |
-| `npm run e2e:tabs` | Library tabs and the details card: video and photo details (EXIF), several items, I; copy a video in one tab and paste in another, drag a photo onto a tab, cut and paste back, selection and scroll kept, tabs restored after a reload, Ctrl+T / Ctrl+Tab / Ctrl+W, scroll kept, sidebar arrow / Ctrl+B |
+| `npm run e2e:tabs` | Library tabs and the details card: video and photo details (EXIF), several items, I; copy a video in one tab and paste in another, drag a photo onto a tab, cut and paste back, selection and scroll kept, tabs restored after a reload, Ctrl+T / Ctrl+Tab / Ctrl+W, scroll kept, sidebar arrow / Ctrl+B; folder totals, stars and labels for two videos from the card; the watch page (Up next, Theatre without restart, Full screen, pause on tab switch, Esc back); the nightOwl tip and preset |
 | `npm run e2e:privacy` | Hidden folders, photos, videos and labels (password, wrong password, unlock, lock, rename, change password); Library Copy / Paste, New folder, Copy to |
 | `npm run e2e:wallpaper` | Wallpaper recommended with photos made for this screen: ready, upscale first, blurry and wrong-shape ones left out, Set as wallpaper (faked, the desktop is not changed), Upscale, hidden photos left out |
 | `npm run e2e:editor` | Video editor on real files made with the bundled FFmpeg: Convert (→ H.264, copy, fit under 1 MB, MP3, GIF, HEIC → JPG, Stop), Edit (lossless trim, split, cut out + 9:16 + 2× + mute + text + fade, save a frame), Join; player ← / X, full screen without Labels |
@@ -235,6 +235,23 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   The grid also keeps its scroll position when its page or tab is hidden and shown again.
 - **Hide the Library sidebar (1.0.4):** the arrow at the left of the Library toolbar (or Ctrl+B) hides or shows the left
   column (labels, playlists, watched folders, quick access) in every tab; remembered (`lib.sidebar`).
+- **Watch page (Library, 1.0.5):** opening a video (or Play all) plays it large inside the tab, like a video site:
+  name, size, resolution, length and folder underneath with its stars and labels (editable), and **Up next** on the
+  right with the other videos of the folder, view or playlist (thumbnail, length, stars; the next one plays when a
+  video ends). **Theatre** (T) widens the video and moves Up next below it, without restarting it; **Full screen** (F)
+  is the player's own. Esc / Backspace / "Back to …" returns to the folder with the last video selected and the scroll
+  position kept (the grid stays mounted, hidden). Switching tab or page pauses it. The video has square corners on
+  purpose: a rounded, clipped video can't use the graphics card's overlay and dropped ~2.5% of frames at 4K.
+  `components/WatchPage.tsx`, `Player` with `embedded`.
+- **Details card, 1.0.5:** with nothing selected it shows the totals of what is shown (files, photos, videos, folders,
+  size, length, dates); stars and labels can be changed from the card for one item or several at once ("mixed"
+  stars, how many carry each label).
+- **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
+  1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
+  wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
+- **Fixes (1.0.5):** stars and a label set in quick succession could lose the stars (two changes making the same
+  file's row at once, or a background read of the folder pruning a row just made): tag changes now run in order and
+  rows being changed are not pruned. A slow folder listing that answered after a newer one replaced it.
 - **Big folders (1.0):** opening a 70,000-photo folder with 2,500 people and 6,000 group photo shortcuts held the app
   for 52–134 s ("Not Responding"). Now: folders are listed without blocking and file sizes read only for photos that
   moved; what each shortcut points at is remembered in `.clearup/shortcuts.json` (unchanged ones are not read through

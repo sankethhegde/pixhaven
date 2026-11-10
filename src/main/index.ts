@@ -582,7 +582,7 @@ handle('tags:labels', () => privacy.labels(tags.labels()));
 handle('tags:forFiles', async (files: Ref[]) => { const r = await tags.forFiles(files); return { ...r, tags: privacy.tags(r.tags) }; });
 handle('tags:setStars', async (files: Ref[], stars: number) => seen(await tags.setStars(files, stars)));
 handle('tags:addLabel', async (files: Ref[], name: string, color: string | null) => seen(await tags.addLabel(files, name, color)));
-handle('tags:removeLabel', (paths: string[], id: number) => seen(tags.removeLabel(paths, id)));
+handle('tags:removeLabel', async (paths: string[], id: number) => seen(await tags.removeLabel(paths, id)));
 handle('tags:renameLabel', (id: number, name: string) => { const r = tags.renameLabel(id, name); return { ...r, labels: privacy.labels(r.labels) }; });
 handle('tags:setColor', (id: number, color: string | null) => privacy.labels(tags.setColor(id, color)));
 handle('tags:deleteLabel', (id: number) => privacy.labels(tags.deleteLabel(id)));

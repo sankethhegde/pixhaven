@@ -216,12 +216,13 @@ export default async function run(win, app) {
     await js(`[...document.querySelectorAll('[data-path]')].find(b => b.dataset.path.endsWith('short.mp4')).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
     await sleep(2500);
     const bar = await js(`(() => { const back = document.querySelector('[aria-label="Back to the list"]'), x = document.querySelector('[aria-label="Close player"]');
-      return back && x ? { back: back.getBoundingClientRect().left, x: x.getBoundingClientRect().left, w: innerWidth } : null; })()`);
+      const p = back?.closest('[aria-label^="Player"]')?.getBoundingClientRect();   // 1.0.5: the player sits in the Library's watch page
+      return back && x && p ? { back: back.getBoundingClientRect().left - p.left, x: x.getBoundingClientRect().left - p.left, w: p.width } : null; })()`);
     check('player: ← back at the left, X at the right', !!bar && bar.back < 100 && bar.x > bar.w - 100, JSON.stringify(bar));
-    check('player: Labels shown in the window', await js(`!!document.querySelector('[aria-label="Labels and stars"]')`));
-    await js(`document.querySelector('[aria-label="Full screen"]').click()`, true);
+    check('player: stars and labels shown with the video (watch page)', await js(`!!document.querySelector('[data-testid=watch-tags] [data-testid=tag-editor]')`));
+    await js(`document.querySelector('[aria-label^="Player"] [aria-label="Full screen"]').click()`, true);
     await sleep(1500);
-    const fullNoLabels = await js(`!!document.fullscreenElement && !document.querySelector('[aria-label="Labels and stars"]')`);
+    const fullNoLabels = await js(`!!document.fullscreenElement && !document.fullscreenElement.querySelector('[data-testid=tag-editor], [aria-label="Labels and stars"]')`);
     check('player: full screen hides the Labels button', fullNoLabels);
     await shot('03-fullscreen');
     await js(`document.querySelector('[aria-label="Back to the list"]').click()`, true);

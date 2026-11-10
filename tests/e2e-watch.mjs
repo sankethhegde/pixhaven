@@ -67,7 +67,7 @@ export default async function run(win, app) {
   const tile = async (name, how = 'click', mods = {}) => {
     const ok = await js(`(async () => { const box = document.querySelector('[role=listbox]');
       const find = () => [...document.querySelectorAll('[role=option][data-path]')].find(e => e.dataset.path.split(/[\\\\/]/).pop() === ${JSON.stringify(name)});
-      for (let y = 0; !find() && y <= box.scrollHeight; y += 200) { box.scrollTop = y; await new Promise(r => setTimeout(r, 50)); }
+      for (let y = 0; !find() && y <= box.scrollHeight; y += 200) { box.scrollTop = y; box.dispatchEvent(new Event('scroll')); await new Promise(r => setTimeout(r, 50)); }
       const t = find(); if (!t) return false; t.scrollIntoView({ block: 'center' });
       t.dispatchEvent(new MouseEvent(${JSON.stringify(how)}, { bubbles: true, ctrlKey: ${!!mods.ctrl}, shiftKey: ${!!mods.shift} })); return true; })()`);
     if (!ok) throw new Error(`No tile ${name}`);

@@ -176,7 +176,17 @@ export class TagStore {
   private rowByPath(p: string) { return this.db.prepare('SELECT id, size FROM media WHERE path = ?').get(p) as { id: number; size: number } | undefined; }
 
   /** The media row for a file, created (with its fingerprint) the first time it gets a label or stars. */
-  private async ensure(f: FileRef): Promise<number> {
+  /** The row of this file, made if needed. Two calls for the same new file share one answer (no duplicate rows). */
+  private ensuring = new Map<string, Promise<number>>();
+  private ensure(f: FileRef): Promise<number> {
+    const k = f.path.toLowerCase();
+    const busy = this.ensuring.get(k);
+    if (busy) return busy;
+    const p = this.ensureNow(f).finally(() => this.ensuring.delete(k));
+    this.ensuring.set(k, p);
+    return p;
+  }
+  private async ensureNow(f: FileRef): Promise<number> {
     const row = this.rowByPath(f.path);
     if (row && row.size === f.size) return row.id;
     const fp = await quickFingerprint(f.path, f.size);
@@ -190,10 +200,17 @@ export class TagStore {
   }
 
   /** Rows with neither stars nor labels are dropped (their files are no longer "tagged"). */
+  /** 1.0.5: rows being made for a change (stars, a label) that is not applied yet: a file read in between (which
+   * prunes rows without stars or labels) must not drop them, or the change lands on a deleted row and is lost. */
+  private changing = new Map<number, number>();
+  private hold(id: number) { this.changing.set(id, (this.changing.get(id) ?? 0) + 1); return id; }
+  private release(ids: number[]) { for (const id of ids) { const n = (this.changing.get(id) ?? 1) - 1; if (n > 0) this.changing.set(id, n); else this.changing.delete(id); } }
+
   private prune(ids: number[]): void {
     const gone = this.db.prepare('SELECT path, written FROM media WHERE id = ? AND stars = 0 AND NOT EXISTS (SELECT 1 FROM media_labels WHERE media_id = ?)');
     const del = this.db.prepare('DELETE FROM media WHERE id = ?');
     for (const id of ids) {
+      if (this.changing.has(id)) continue;
       const r = gone.get(id, id) as { path: string; written: string | null } | undefined;
       if (!r) continue;
       if (r.written && r.written !== '[]') this.pendingClean.set(r.path, JSON.parse(r.written));
@@ -216,13 +233,16 @@ export class TagStore {
   async setStars(files: FileRef[], stars: number): Promise<void> {
     const s = Math.max(0, Math.min(5, Math.round(stars)));
     const ids: number[] = [];
-    for (const f of files) {
-      if (s === 0 && !this.rowByPath(f.path)) continue;
-      ids.push(await this.ensure(f));
-    }
+    try {
+      for (const f of files) {
+        if (s === 0 && !this.rowByPath(f.path)) continue;
+        ids.push(this.hold(await this.ensure(f)));
+      }
+    } catch (e) { this.release(ids); throw e; }
     this.tx(() => {
       const up = this.db.prepare('UPDATE media SET stars = ?, updated = ? WHERE id = ?');
       for (const id of ids) up.run(s, Date.now(), id);
+      this.release(ids);
       if (s === 0) this.prune(ids);
     });
   }
@@ -230,10 +250,11 @@ export class TagStore {
   async addLabel(files: FileRef[], name: string, color: string | null = null): Promise<number> {
     const label = this.labelId(name, color);
     const ids: number[] = [];
-    for (const f of files) ids.push(await this.ensure(f));
+    try { for (const f of files) ids.push(this.hold(await this.ensure(f))); } catch (e) { this.release(ids); throw e; }
     this.tx(() => {
       const add = this.db.prepare('INSERT OR IGNORE INTO media_labels (media_id, label_id) VALUES (?, ?)');
       for (const id of ids) add.run(id, label);
+      this.release(ids);
     });
     return label;
   }

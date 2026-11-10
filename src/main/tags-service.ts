@@ -114,21 +114,32 @@ export async function peopleIn(file: string): Promise<string[]> {
   return (await fileReader().read([file]).catch(() => new Map())).get(file)?.people ?? [];
 }
 
-export async function setStars(files: FileRef[], stars: number) {
+/** 1.0.5: changes made in quick succession (stars, then a label, from the details card) run one after another, in
+ * order; run together, both could add the same new file's row and one change was lost. */
+let chain: Promise<unknown> = Promise.resolve();
+function inOrder<R>(fn: () => Promise<R>): Promise<R> {
+  const run = chain.then(fn, fn);
+  chain = run.catch(() => {});
+  return run;
+}
+
+export const setStars = (files: FileRef[], stars: number) => inOrder(() => setStarsNow(files, stars));
+async function setStarsNow(files: FileRef[], stars: number) {
   await tagStore().setStars(media(files), stars);
   queueWrite(files.map(f => f.path));
   return result(files.map(f => f.path));
 }
-export async function addLabel(files: FileRef[], name: string, color: string | null) {
+export const addLabel = (files: FileRef[], name: string, color: string | null) => inOrder(() => addLabelNow(files, name, color));
+async function addLabelNow(files: FileRef[], name: string, color: string | null) {
   await tagStore().addLabel(media(files), name, color);
   queueWrite(files.map(f => f.path));
   return result(files.map(f => f.path));
 }
-export function removeLabel(paths: string[], label: number) {
+export const removeLabel = (paths: string[], label: number) => inOrder(async () => {
   tagStore().removeLabel(paths, label);
   queueWrite(paths);
   return result(paths);
-}
+});
 export function renameLabel(id: number, name: string) {
   const affected = tagStore().pathsWithLabel(id);
   const r = tagStore().renameLabel(id, name);

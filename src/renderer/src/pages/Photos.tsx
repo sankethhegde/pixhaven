@@ -244,7 +244,8 @@ export function Photos({ active, onUpscale, onSort, onDescribe, onSimilar }: Pro
   const withDetails = (grid: ReactNode) => (
     <div className="h-full flex min-h-0">
       <div className="flex-1 min-w-0 min-h-0 flex flex-col">{grid}</div>
-      {details && <DetailsCard items={items.filter(e => selected.has(e.path))} infos={infos.current} onClose={() => setDetails(false)}
+      {details && <DetailsCard items={items.filter(e => selected.has(e.path))} infos={infos.current} onClose={() => setDetails(false)} all={items}
+        allTitle={view === 'people' && person ? `Photos of ${person.label}` : 'In this folder'}
         onOpen={e => { const i = items.indexOf(e); if (i >= 0) onItemOpen(i); }} />}
     </div>
   );

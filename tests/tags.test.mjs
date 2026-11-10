@@ -136,3 +136,28 @@ test('fingerprint reads both ends of the file', async () => {
 });
 
 test.after(() => { try { store.close(); fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* busy */ } });
+
+test('1.0.5: stars and a label set at the same moment on new files both stick (no duplicate rows)', async () => {
+  const s = new TagStore(path.join(tmp, 'race', 'library.db'));
+  const a = make(vids, 'race one.mp4'), b = make(vids, 'race two.mp4');
+  await Promise.all([s.setStars([ref(a), ref(b)], 3), s.addLabel([ref(a), ref(b)], 'Live wallpaper')]);
+  const t = s.tagsFor([a, b]);
+  const lid = s.labels().find(l => l.name === 'Live wallpaper').id;
+  for (const p of [a, b]) {
+    assert.equal(t[p]?.stars, 3, `${path.basename(p)} stars`);
+    assert.ok(t[p]?.labels.includes(lid), `${path.basename(p)} label`);
+  }
+});
+
+test('1.0.5: a file read while stars are being set does not drop the new row (the stars stick)', async () => {
+  const s = new TagStore(path.join(tmp, 'race2', 'library.db'));
+  const a = make(vids, 'read race a.mp4'), b = make(vids, 'read race b.mp4', 40 * 1024 * 1024);   // b: a slow fingerprint
+  const setting = s.setStars([ref(a), ref(b)], 4);
+  for (let i = 0; i < 2000 && !s.rowByPath(a); i++) await new Promise(r => setImmediate(r));
+  assert.ok(s.rowByPath(a), 'row for the first file made');
+  await s.mergeFromFile(ref(a), { stars: 0, labels: [] });   // what the background read of the folder does
+  await setting;
+  const t = s.tagsFor([a, b]);
+  assert.equal(t[a]?.stars, 4, 'first file keeps its stars');
+  assert.equal(t[b]?.stars, 4);
+});

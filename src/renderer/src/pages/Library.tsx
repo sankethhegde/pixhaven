@@ -10,7 +10,7 @@ import { api, errorText } from '../api';
 import { FolderTree } from '../components/FolderTree';
 import { MediaGrid } from '../components/MediaGrid';
 import { Viewer } from '../components/Viewer';
-import { Player } from '../components/Player';
+import { WatchPage } from '../components/WatchPage';
 import { FilterBar, ManageLabels, NO_FILTER, TagEditor, filterActive, noun } from '../components/Tags';
 import { ShortcutsDialog } from '../components/Shortcuts';
 import { MoveDialog } from '../components/MoveDialog';
@@ -194,13 +194,16 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
   const searchId = useRef<number | null>(null);
   const resetView = () => { setSelected(new Set()); anchor.current = null; setTagPanel(false); setFocus(null); };
 
+  const openReq = useRef(0);
   const open = useCallback(async (target: string, how: 'push' | 'back' | 'fwd' | 'refresh' = 'push') => {
+    const req = ++openReq.current;   // a slow folder answering after a newer one was asked for is ignored
     setLoading(true); setError(null); setSearch(null); setQuery(''); resetView();
     if (searchId.current !== null) void api.lib.cancelSearch(searchId.current);
     searchId.current = null;
     const t0 = performance.now();
     try {
       const l = await api.lib.list(target);
+      if (req !== openReq.current) return;
       setListing(l);
       setMode('folder'); setPlaylist(null);
       if (how === 'push' && dir && dir !== target) { setBack(b => [...b, dir]); setFwd([]); }
@@ -212,9 +215,9 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
       // Labels and stars of the photos and videos here (renamed or moved ones are found again by fingerprint).
       void T.loadFor(l.entries.filter(e => e.kind !== 'folder').map(T.ref));
     } catch (e) {
-      setError(errorText(e));
+      if (req === openReq.current) setError(errorText(e));
     } finally {
-      setLoading(false);
+      if (req === openReq.current) setLoading(false);
     }
   }, [dir, setLib, mergeHasMedia]);
 
@@ -549,11 +552,28 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
     e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(paths));
     e.dataTransfer.effectAllowed = 'copyMove';
   };
+  // 1.0.5: videos open in the watch page (big player, Up next on the right) inside this tab.
+  const backTo = (e: MediaEntry | undefined) => { if (!e) return; const i = items.indexOf(e); setSelected(new Set([e.path])); anchor.current = i >= 0 ? i : null; setFocus(i >= 0 ? i : null); };
+  const watch = playing ? {
+    key: 'playing', items: playing.items, index: playing.index, title: playing.name, playlist: playing.name,
+    onIndex: (i: number) => setPlaying(p => p && { ...p, index: i }), onClose: () => { const e = playing.items[playing.index]; setPlaying(null); backTo(e); },
+  } : viewer !== null && media[viewer]?.kind === 'video' ? {
+    key: 'folder', items: media, index: viewer, title: title ?? (dir ? baseName(dir) || dir : 'folder'), playlist: undefined,
+    onIndex: setViewer, onClose: () => { const e = media[viewer]; setViewer(null); backTo(e); },
+  } : null;
   const resetKey = `${mode}|${dir}|${search?.id ?? ''}|${playlist?.id ?? ''}|${watchRoot ?? ''}`;
   const indexing = watched.filter(w => w.state === 'indexing' || w.state === 'paused' || w.state === 'waiting');
 
   return (
     <div className="h-full flex min-h-0">
+      {watch && (
+        <div className="flex-1 min-w-0 min-h-0">
+          <WatchPage key={watch.key} items={watch.items} index={watch.index} infos={infos.current} title={watch.title} playlist={watch.playlist}
+            active={active} onIndex={watch.onIndex} onClose={watch.onClose} />
+        </div>
+      )}
+      {/* Kept while a video is watched (hidden): back in the folder, the scroll position and selection are as left. */}
+      <div className={watch ? 'hidden' : 'flex flex-1 min-w-0 min-h-0'}>
       {sidebar && <aside className="w-[250px] shrink-0 border-r border-line overflow-y-auto bg-panel" aria-label="Library sidebar">
         {/* Labels (TAG-05): everything labelled, whichever folder or drive it is on. First, so it is always in view. */}
         <Section id="labels" title="Labels" action={<button className="text-xs text-accent hover:underline" onClick={() => setManage(true)}>Manage</button>}>
@@ -747,7 +767,8 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
             )}
         </div>
         {details && (mode !== 'folder' || dir) && !error && (
-          <DetailsCard items={selectedEntries} infos={infos.current} onClose={() => setDetails(false)}
+          <DetailsCard items={selectedEntries} infos={infos.current} onClose={() => setDetails(false)} all={items}
+            allTitle={search ? 'In the search results' : mode === 'folder' ? 'In this folder' : playlist ? `In “${playlist.name}”` : 'In this view'}
             onOpen={e => { const i = items.indexOf(e); if (i >= 0) onItemOpen(i); }} />
         )}
         </div>
@@ -810,16 +831,10 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
           )}
         </footer>
       </section>
-      {viewer !== null && media[viewer]?.kind === 'video' && (
-        <Player items={media} index={viewer} infos={infos.current} onIndex={setViewer} onClose={() => setViewer(null)} />
-      )}
+      </div>
       {viewer !== null && media[viewer]?.kind === 'image' && (
         <Viewer items={media} index={viewer} infos={infos.current} onIndex={setViewer} onClose={() => setViewer(null)}
           onUpscale={p => { setViewer(null); onUpscale(p); }} onSort={f => { setViewer(null); onSort(f); }} onDescribe={p => { setViewer(null); onDescribe(p); }} onSimilar={p => { setViewer(null); onSimilar(p); }} />
-      )}
-      {playing && (
-        <Player items={playing.items} index={playing.index} infos={infos.current} playlist={playing.name}
-          onIndex={i => setPlaying(p => p && { ...p, index: i })} onClose={() => setPlaying(null)} />
       )}
       {manage && <ManageLabels onClose={() => setManage(false)} />}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
