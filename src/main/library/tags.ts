@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import type { ImportResult, LabelInfo, MediaTags, Playlist, RecentVideo, TagFilter } from '../../shared/types';
+import type { ImportResult, LabelInfo, LabelOrigin, MediaTags, Playlist, RecentVideo, TagFilter } from '../../shared/types';
 import { LABEL_COLORS } from '../../shared/types';
 
 const IS_WIN = process.platform === 'win32';
@@ -81,6 +81,19 @@ export class TagStore {
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID`);
     const lcols = (this.db.prepare('PRAGMA table_info(labels)').all() as { name: string }[]).map(c => c.name);
     if (!lcols.includes('hidden')) this.db.exec('ALTER TABLE labels ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
+    if (!lcols.includes('origin')) this.db.exec('ALTER TABLE labels ADD COLUMN origin TEXT; ALTER TABLE labels ADD COLUMN origin_file TEXT; ALTER TABLE labels ADD COLUMN origin_sure INTEGER NOT NULL DEFAULT 1');
+  }
+
+  // ---------- 1.0.6 who made each label ----------
+  /** Labels from before 1.0.6, not worked out yet: when each was made and up to five files carrying it. */
+  unclassifiedLabels(): { id: number; name: string; created: number; files: string[]; burst: number }[] {
+    const rows = this.db.prepare('SELECT id, name, created FROM labels WHERE origin IS NULL').all() as { id: number; name: string; created: number }[];
+    const files = this.db.prepare(`SELECT m.path FROM media_labels ml JOIN media m ON m.id = ml.media_id WHERE ml.label_id = ? AND m.path NOT LIKE 'missing:%' ORDER BY m.added LIMIT 5`);
+    const near = this.db.prepare('SELECT COUNT(*) AS n FROM labels WHERE id <> ? AND created BETWEEN ? AND ?');
+    return rows.map(r => ({ ...r, files: (files.all(r.id) as { path: string }[]).map(x => x.path), burst: (near.get(r.id, r.created - 3000, r.created + 3000) as { n: number }).n }));
+  }
+  setLabelOrigin(id: number, origin: LabelOrigin, file: string | null, sure: boolean): void {
+    this.db.prepare('UPDATE labels SET origin = ?, origin_file = ?, origin_sure = ? WHERE id = ?').run(origin, file, sure ? 1 : 0, id);
   }
 
   // ---------- v2.10 hidden items ----------
@@ -130,20 +143,21 @@ export class TagStore {
   // ---------- labels (TAG-01, TAG-02) ----------
 
   labels(): LabelInfo[] {
-    return (this.db.prepare(`SELECT l.id, l.name, l.color, l.hidden, COUNT(ml.media_id) AS count FROM labels l
-      LEFT JOIN media_labels ml ON ml.label_id = l.id GROUP BY l.id ORDER BY l.name COLLATE NOCASE`).all() as unknown as (Omit<LabelInfo, 'hidden'> & { hidden: number })[])
-      .map(l => ({ ...l, hidden: !!l.hidden }));
+    return (this.db.prepare(`SELECT l.id, l.name, l.color, l.hidden, l.origin, l.origin_file, l.origin_sure, COUNT(ml.media_id) AS count FROM labels l
+      LEFT JOIN media_labels ml ON ml.label_id = l.id GROUP BY l.id ORDER BY l.name COLLATE NOCASE`).all() as unknown as (Omit<LabelInfo, 'hidden'> & { hidden: number; origin_file: string | null; origin_sure: number })[])
+      .map(({ origin_file, origin_sure, ...l }) => ({ ...l, hidden: !!l.hidden, originFile: origin_file, originSure: !!origin_sure }));
   }
 
   /** Id of the label with this name (any case), created if new. */
-  labelId(name: string, color: string | null = null): number {
+  labelId(name: string, color: string | null = null, origin: { kind: LabelOrigin; file?: string } | null = null): number {
     const clean = name.trim().replace(/\s+/g, ' ').slice(0, 60);
     if (!clean) throw new Error('A label needs a name.');
     const row = this.db.prepare('SELECT id FROM labels WHERE name = ?').get(clean) as { id: number } | undefined;
     if (row) return row.id;
     // New labels take the next colour of the palette, so chips are easy to tell apart.
     const n = (this.db.prepare('SELECT COUNT(*) AS n FROM labels').get() as { n: number }).n;
-    return Number(this.db.prepare('INSERT INTO labels (name, color, created) VALUES (?, ?, ?)').run(clean, color ?? LABEL_COLORS[n % LABEL_COLORS.length], Date.now()).lastInsertRowid);
+    return Number(this.db.prepare('INSERT INTO labels (name, color, created, origin, origin_file, origin_sure) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(clean, color ?? LABEL_COLORS[n % LABEL_COLORS.length], Date.now(), origin?.kind ?? 'unknown', origin?.file ?? null).lastInsertRowid);
   }
 
   /** Renaming onto an existing name merges the two labels. */
@@ -248,7 +262,7 @@ export class TagStore {
   }
 
   async addLabel(files: FileRef[], name: string, color: string | null = null): Promise<number> {
-    const label = this.labelId(name, color);
+    const label = this.labelId(name, color, { kind: 'you' });
     const ids: number[] = [];
     try { for (const f of files) ids.push(this.hold(await this.ensure(f))); } catch (e) { this.release(ids); throw e; }
     this.tx(() => {
@@ -410,7 +424,7 @@ export class TagStore {
       const mine = lower(have().map(l => l.name));
       const fileL = lower(ft.labels);
       const baseL = base ? lower(base.l) : null;
-      for (const l of ft.labels) if (!mine.has(l.toLowerCase()) && (!baseL || !baseL.has(l.toLowerCase()))) { add.run(id, this.labelId(l)); changed = true; }
+      for (const l of ft.labels) if (!mine.has(l.toLowerCase()) && (!baseL || !baseL.has(l.toLowerCase()))) { add.run(id, this.labelId(l, null, { kind: 'files', file: f.path })); changed = true; }
       if (baseL) for (const l of have()) if (baseL.has(l.name.toLowerCase()) && !fileL.has(l.name.toLowerCase())) {
         this.db.prepare('DELETE FROM media_labels WHERE media_id = ? AND label_id = ?').run(id, l.id); changed = true;
       }
@@ -515,7 +529,7 @@ export class TagStore {
     if ((data?.app !== 'PixHaven' && data?.app !== 'ClearUp') || data.kind !== 'labels' || !Array.isArray(data.media)) throw new Error('This is not a PixHaven labels file.');
     const res: ImportResult = { labels: 0, applied: 0, waiting: 0, skipped: 0 };
     const before = (this.db.prepare('SELECT COUNT(*) AS n FROM labels').get() as { n: number }).n;
-    for (const l of data.labels ?? []) { const id = this.labelId(l.name, l.color ?? null); if (l.color) this.db.prepare('UPDATE labels SET color = COALESCE(color, ?) WHERE id = ?').run(l.color, id); }
+    for (const l of data.labels ?? []) { const id = this.labelId(l.name, l.color ?? null, { kind: 'backup' }); if (l.color) this.db.prepare('UPDATE labels SET color = COALESCE(color, ?) WHERE id = ?').run(l.color, id); }
     for (const m of data.media) {
       if (!m || typeof m.path !== 'string' || !m.fingerprint || !(m.size >= 0)) { res.skipped++; continue; }
       let id = (this.db.prepare('SELECT id, path FROM media WHERE fingerprint = ? AND size = ?').all(m.fingerprint, m.size) as { id: number; path: string }[])
@@ -534,13 +548,13 @@ export class TagStore {
         here = !!same;
       } else here = await exists((this.db.prepare('SELECT path FROM media WHERE id = ?').get(id) as { path: string }).path);
       if (m.stars > 0) this.db.prepare('UPDATE media SET stars = ?, updated = ? WHERE id = ?').run(Math.min(5, Math.round(m.stars)), Date.now(), id);
-      for (const name of m.labels ?? []) if (name?.trim()) this.db.prepare('INSERT OR IGNORE INTO media_labels (media_id, label_id) VALUES (?, ?)').run(id, this.labelId(name));
+      for (const name of m.labels ?? []) if (name?.trim()) this.db.prepare('INSERT OR IGNORE INTO media_labels (media_id, label_id) VALUES (?, ?)').run(id, this.labelId(name, null, { kind: 'backup' }));
       this.prune([id]);
       if (here) res.applied++; else res.waiting++;
     }
     for (const p of data.playlists ?? []) {
       if (!p?.name) continue;
-      try { this.savePlaylist(p.name, { labels: (p.labels ?? []).filter(Boolean).map(n => this.labelId(n)), mode: p.mode === 'any' ? 'any' : 'all', minStars: Number(p.minStars) || 0 }); } catch { /* bad entry */ }
+      try { this.savePlaylist(p.name, { labels: (p.labels ?? []).filter(Boolean).map(n => this.labelId(n, null, { kind: 'backup' })), mode: p.mode === 'any' ? 'any' : 'all', minStars: Number(p.minStars) || 0 }); } catch { /* bad entry */ }
     }
     res.labels = (this.db.prepare('SELECT COUNT(*) AS n FROM labels').get() as { n: number }).n - before;
     return res;

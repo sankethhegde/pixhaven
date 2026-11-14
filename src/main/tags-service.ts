@@ -17,6 +17,7 @@ import { TagReader } from './library/file-tags';
 import { manifestRootOf, movedFile as manifestMoved, remapManifest } from './sorter/people-manifest';
 import { syncGroupLinksFor } from './group-links';
 import * as fileOps from './library/file-ops';
+import { decideOrigin, readKeywords } from './library/label-origin';
 
 const KEEP_BACKUPS = 7;
 let store: TagStore | null = null;
@@ -519,3 +520,31 @@ export function setLocation(dir: string, mode: 'move' | 'use'): string {
 export const locationTaken = (dir: string) => fs.existsSync(path.join(dir, 'library.db'));
 
 export function close(): void { store?.close(); store = null; reader?.stop(); reader = null; }
+
+// ---------- 1.0.6: who made the labels from before 1.0.6 (worked out once, in the background) ----------
+let classifying = false;
+/** Works out the origin of labels that have none yet. Labels whose files are all on a drive that isn't connected wait
+ * for another time. Returns how many were worked out. */
+export async function classifyLabels(): Promise<number> {
+  if (classifying) return 0;
+  classifying = true;
+  let done = 0;
+  try {
+    const s = tagStore();
+    const tool = exiftoolPath();
+    const todo = s.unclassifiedLabels();
+    for (const l of todo) {
+      const there = l.files.filter(f => fs.existsSync(f));
+      const read = !l.files.length ? new Map() : there.length ? await readKeywords(tool, there).catch(() => null) : null;
+      const answer = decideOrigin(l, read);
+      if (!answer) continue;
+      s.setLabelOrigin(l.id, answer.origin, answer.file, answer.sure);
+      done++;
+    }
+    if (done) { log('info', `Worked out who made ${done} label(s)`); onLabelsChanged(); }
+  } catch (e) { log('warn', 'Could not work out who made the labels', e); }
+  finally { classifying = false; }
+  return done;
+}
+let onLabelsChanged: () => void = () => {};
+export const setOnLabelsChanged = (fn: () => void) => { onLabelsChanged = fn; };

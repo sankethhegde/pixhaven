@@ -36,6 +36,7 @@ npm run setup:engine     # downloads the engine, models, face models, places, FF
 | `node tests/make-media.mjs <folder>` | Builds the mixed-format test folder (17 photo formats incl. HEIC and 7 RAW, 17 video formats) |
 | `npm run e2e:sort` | Same for Sort by person: scan → review → dry run → apply (no copies, people tagged, folders checked against the photos' real names) → re-scan → undo, on ~50 public test photos (`phase0/fetch-test-photos.mjs`, or set `CLEARUP_TESTPHOTOS`) |
 | `npm run e2e:combine` | Photos → Combine people on two sorted folders made by the test (the same person in both): match, name, estimate, combine, files/face data/names/shortcuts checked, destination opened; Move to / Rename; Merge into… (by hand and by face); search and sort people in Photos and the Sort review; a second rename while a file in the folder is open; the details card in Photos; then Sort → Estimate time |
+| `npm run e2e:videos` | 1.0.6: Videos tab (empty state, drives offered, a folder added, sort, search, where), paused middle controls (play, next), Labels & stars in full screen (fades while playing), who made each label (from a photo's keywords vs by you, filter) |
 | `npm run e2e:tabs` | Library tabs and the details card: video and photo details (EXIF), several items, I; copy a video in one tab and paste in another, drag a photo onto a tab, cut and paste back, selection and scroll kept, tabs restored after a reload, Ctrl+T / Ctrl+Tab / Ctrl+W, scroll kept, sidebar arrow / Ctrl+B; folder totals, stars and labels for two videos from the card; the watch page (Up next, Theatre without restart, Full screen, pause on tab switch, Esc back); the nightOwl tip and preset |
 | `npm run e2e:privacy` | Hidden folders, photos, videos and labels (password, wrong password, unlock, lock, rename, change password); Library Copy / Paste, New folder, Copy to |
 | `npm run e2e:wallpaper` | Wallpaper recommended with photos made for this screen: ready, upscale first, blurry and wrong-shape ones left out, Set as wallpaper (faked, the desktop is not changed), Upscale, hidden photos left out |
@@ -249,6 +250,18 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
   1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
+- **Videos tab (1.0.6):** every video of the watched folders and drives in one grid (This PC / external drives /
+  network, search, labels and stars filter, sort), with the watch page and the details card. It reads the watched-folder
+  index, so it opens instantly; "Add a drive or folder" adds a whole drive (C:, E:…) or a folder to it. `pages/Videos.tsx`.
+- **Player (1.0.6):** paused, big previous / −10 / play / +10 / next buttons sit in the middle of the picture (gone while
+  playing). The Labels & stars panel is back in full screen (S or ★ Labels), fading with the controls while playing.
+  Fix: the controls never faded while playing — the fade timer restarted on every playing-time update.
+- **Who made each label (1.0.6):** labels record whether you made them, they were found inside files (keywords put there
+  by a phone gallery, Windows Photos, Lightroom… — "first in <file>"), or came from a backup; Labels → Manage shows it,
+  with a "Made by" filter, and the sidebar tooltip too. Labels from before 1.0.6 are worked out once in the background
+  (`library/label-origin.ts`): in a file's IPTC keywords (PixHaven never adds those) or inside a file older than the
+  label → from files; else a guess marked "(probably)": made within seconds of other labels = a folder read, alone = you.
+  Labels whose drive isn't connected are checked again later.
 - **Fixes (1.0.5):** stars and a label set in quick succession could lose the stars (two changes making the same
   file's row at once, or a background read of the folder pruning a row just made): tag changes now run in order and
   rows being changed are not pruned. A slow folder listing that answered after a newer one replaced it.

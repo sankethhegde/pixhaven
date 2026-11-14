@@ -129,6 +129,7 @@ const api = {
     labels: () => invoke('tags:labels'),
     forFiles: (files: unknown[]) => invoke('tags:forFiles', files),
     setStars: (files: unknown[], stars: number) => invoke('tags:setStars', files, stars),
+    classify: () => invoke('tags:classify'),
     addLabel: (files: unknown[], name: string, color: string | null) => invoke('tags:addLabel', files, name, color),
     removeLabel: (paths: string[], id: number) => invoke('tags:removeLabel', paths, id),
     renameLabel: (id: number, name: string) => invoke('tags:renameLabel', id, name),

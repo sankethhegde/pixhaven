@@ -419,7 +419,14 @@ export interface SubtitleCue { start: number; end: number; text: string }
 export interface RecentVideo { path: string; position: number; duration: number; updated: number; size: number; mtime: number }
 
 // ---------------- Labels and stars (v2.0 Phase C) ----------------
-export interface LabelInfo { id: number; name: string; color: string | null; count: number; hidden?: boolean }
+export interface LabelInfo {
+  id: number; name: string; color: string | null; count: number; hidden?: boolean;
+  // 1.0.6: who made it. 'files' = a keyword already inside photos or videos (phone gallery, Windows Photos, Lightroom…),
+  // picked up when PixHaven read them; originFile = where it was first seen. Labels from before 1.0.6 are worked out
+  // once (originSure false when it is a best guess); null = not worked out yet.
+  origin?: LabelOrigin | null; originFile?: string | null; originSure?: boolean;
+}
+export type LabelOrigin = 'you' | 'files' | 'backup' | 'unknown';
 // v2.11 Video editor, phase 1: converting videos (and phone photos) to other formats — no upscaling.
 export type ConvertTarget = 'mp4-h264' | 'mp4-hevc' | 'mp4-av1' | 'webm-vp9' | 'mov-prores' | 'mp3' | 'm4a' | 'gif' | 'jpg' | 'png';
 export interface ConvertOptions {

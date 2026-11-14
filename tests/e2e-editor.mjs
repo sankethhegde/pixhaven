@@ -222,8 +222,9 @@ export default async function run(win, app) {
     check('player: stars and labels shown with the video (watch page)', await js(`!!document.querySelector('[data-testid=watch-tags] [data-testid=tag-editor]')`));
     await js(`document.querySelector('[aria-label^="Player"] [aria-label="Full screen"]').click()`, true);
     await sleep(1500);
-    const fullNoLabels = await js(`!!document.fullscreenElement && !document.fullscreenElement.querySelector('[data-testid=tag-editor], [aria-label="Labels and stars"]')`);
-    check('player: full screen hides the Labels button', fullNoLabels);
+    await sleep(300);
+    const fullLabels = await js(`!!document.fullscreenElement?.querySelector('[aria-label="Labels and stars"]')`);
+    check('player: full screen has the Labels button (back in 1.0.6)', fullLabels);
     await shot('03-fullscreen');
     await js(`document.querySelector('[aria-label="Back to the list"]').click()`, true);
     await sleep(1200);

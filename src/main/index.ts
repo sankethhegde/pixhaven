@@ -236,6 +236,7 @@ app.whenReady().then(async () => {
   tags.setOnMoved((from, to) => watch.moved(from, to));
   tags.setWriteHooks(p => player.isOpen(p), s => send('tags:writeStatus', s));
   tags.setOnFromFiles(paths => send('tags:fromFiles', paths));
+  tags.setOnLabelsChanged(() => send('tags:fromFiles', []));   // 1.0.6: label list again (who made each one)
   privacy.setOnChange(s => send('privacy:changed', s));
   tags.setAfterImport(() => void tags.relinkFromIndex(s => watch.bySize(s)).then(n => { if (n) send('watch:changed', { dirs: [], added: 0, removed: 0, relinked: n }); }));
   watch.init(s => send('watch:status', s), c => send('watch:changed', c));
@@ -251,6 +252,8 @@ app.whenReady().then(async () => {
   initUpdater(s => send('update:status', s));
   // Phase C: one backup of library.db a day (last 7 kept).
   setTimeout(() => tags.dailyBackup(), 20_000);
+  // 1.0.6: who made the labels from before 1.0.6 (once; again later for labels whose drive wasn't connected).
+  if (!process.argv.includes('--selftest')) { setTimeout(() => void tags.classifyLabels(), 25_000); setInterval(() => void tags.classifyLabels(), 30 * 60_000); }
   setInterval(() => tags.dailyBackup(), 6 * 3600_000);
   detectGpu().then(async gpu => { applyAutoLowSpec(gpu); await firstRunCheck(gpu); })
     .catch(e => log('error', 'GPU detection failed', e));
@@ -581,6 +584,7 @@ const seen = <T extends { tags: Record<string, MediaTags>; labels: LabelInfo[] }
 handle('tags:labels', () => privacy.labels(tags.labels()));
 handle('tags:forFiles', async (files: Ref[]) => { const r = await tags.forFiles(files); return { ...r, tags: privacy.tags(r.tags) }; });
 handle('tags:setStars', async (files: Ref[], stars: number) => seen(await tags.setStars(files, stars)));
+handle('tags:classify', () => tags.classifyLabels());   // 1.0.6: who made the old labels, now
 handle('tags:addLabel', async (files: Ref[], name: string, color: string | null) => seen(await tags.addLabel(files, name, color)));
 handle('tags:removeLabel', async (paths: string[], id: number) => seen(await tags.removeLabel(paths, id)));
 handle('tags:renameLabel', (id: number, name: string) => { const r = tags.renameLabel(id, name); return { ...r, labels: privacy.labels(r.labels) }; });

@@ -11,7 +11,7 @@ import { FolderTree } from '../components/FolderTree';
 import { MediaGrid } from '../components/MediaGrid';
 import { Viewer } from '../components/Viewer';
 import { WatchPage } from '../components/WatchPage';
-import { FilterBar, ManageLabels, NO_FILTER, TagEditor, filterActive, noun } from '../components/Tags';
+import { FilterBar, ManageLabels, NO_FILTER, TagEditor, filterActive, noun, originText } from '../components/Tags';
 import { ShortcutsDialog } from '../components/Shortcuts';
 import { MoveDialog } from '../components/MoveDialog';
 import { hideItems, usePrivacy } from '../components/Privacy';
@@ -582,7 +582,8 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
             <span className="text-[#f5b301]">★</span><span className="truncate">All labelled or rated</span>
           </button>
           {(allLabels ? labels : [...labels].sort((a, b) => b.count - a.count).slice(0, 8)).map(l => (
-            <button key={l.id} onClick={() => showTagged({ labels: [l.id], mode: 'all', minStars: 0 })} data-label-view={l.name}
+            <button key={l.id} onClick={() => showTagged({ labels: [l.id], mode: 'all', minStars: 0 })} data-label-view={l.name} title={`${l.name}
+${originText(l)}`}
               className={`w-full flex items-center gap-2 h-8 px-2 rounded-md text-sm text-left ${isLabelView(l.id) ? 'bg-accent-soft text-accent' : 'hover:bg-panel-2'}`}>
               <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: l.color ?? '#8d8d8d' }} />
               <span className="truncate flex-1">{l.name}</span><span className="text-xs text-muted">{l.count}</span>

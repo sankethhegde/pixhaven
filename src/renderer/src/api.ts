@@ -76,6 +76,7 @@ interface TagsApi {
   labels(): Promise<LabelInfo[]>;
   forFiles(files: Ref[]): Promise<{ tags: Record<string, MediaTags>; relinked: string[] }>;
   setStars(files: Ref[], stars: number): Promise<TagUpdate>;
+  classify(): Promise<number>;
   addLabel(files: Ref[], name: string, color: string | null): Promise<TagUpdate>;
   removeLabel(paths: string[], id: number): Promise<TagUpdate>;
   renameLabel(id: number, name: string): Promise<{ mergedInto: number | null; labels: LabelInfo[] }>;

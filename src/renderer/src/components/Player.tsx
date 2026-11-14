@@ -57,6 +57,7 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
   const [resume, setResume] = useState<number | null>(null);
   const [full, setFull] = useState(false);
   const [idle, setIdle] = useState(false);
+  const [woken, setWoken] = useState(0);
   const [hover, setHover] = useState<{ x: number; t: number; img?: string } | null>(null);
   // PLAY-07: labels and stars beside the player (remembered open/closed).
   const [tagsOpen, setTagsOpen] = useState(() => store.get('player.tags') === '1');
@@ -249,11 +250,20 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
 
   // Controls and pointer fade out while playing.
   useEffect(() => {
-    if (paused || menu || hover || (tagsOpen && !embedded)) { setIdle(false); return; }
+    // The labels panel keeps the controls up beside the window player; in full screen it fades with them (1.0.6),
+    // unless you are typing a label.
+    if (paused || menu || hover || (tagsOpen && !embedded && !full) || document.activeElement?.matches('[data-tags-panel] input')) { setIdle(false); return; }
     const t = setTimeout(() => setIdle(true), 2500);
     return () => clearTimeout(t);
-  }, [paused, menu, hover, now]);
-  const wake = () => setIdle(false);
+    // 1.0.6: restarted by the mouse (wake), not by the playing time — that changed several times a second, so the
+    // controls never faded.
+  }, [paused, menu, hover, woken, tagsOpen, full]);
+  const lastWake = useRef(0);
+  const wake = () => {   // at most twice a second: a mouse move must not redraw the player on every event
+    if (idle) setIdle(false);
+    const t = performance.now();
+    if (idle || t - lastWake.current > 500) { lastWake.current = t; setWoken(w => w + 1); }
+  };
 
   // ---- seek bar preview ----
   const step = Math.max(2, duration / 150);
@@ -322,6 +332,22 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
             <div className="bg-black/70 rounded px-3 py-1 text-center text-[clamp(16px,2.4vw,30px)] leading-snug whitespace-pre-line" data-testid="player-subtitle">{cue.text}</div>
           </div>
         )}
+        {/* 1.0.6: big middle controls, only while paused */}
+        {paused && stream && !error && resume === null && !skipping && (
+          <div className="absolute inset-0 flex items-center justify-center gap-4 sm:gap-6 pointer-events-none" data-testid="center-controls">
+            <CenterButton label="Previous video" title="Previous video (P)" size="md" disabled={prev < 0} onClick={() => prev >= 0 && onIndex(prev)}>
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9 12z" /></svg>
+            </CenterButton>
+            <CenterButton label="Back 10 seconds" title="Back 10 s (J)" size="sm" onClick={() => void seekTo(timeNow() - 10)}><span className="text-sm font-semibold">−10</span></CenterButton>
+            <CenterButton label="Play" title="Play (Space)" size="lg" onClick={togglePlay}>
+              <svg width="38" height="38" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+            </CenterButton>
+            <CenterButton label="Forward 10 seconds" title="Forward 10 s (L)" size="sm" onClick={() => void seekTo(timeNow() + 10)}><span className="text-sm font-semibold">+10</span></CenterButton>
+            <CenterButton label="Next video" title="Next video (N)" size="md" disabled={next < 0} onClick={() => next >= 0 && onIndex(next)}>
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5v14l11-7z" /></svg>
+            </CenterButton>
+          </div>
+        )}
         {resume !== null && (
           <div className="absolute bg-black/80 rounded-2xl px-6 py-5 flex flex-col items-center gap-3" onClick={e => e.stopPropagation()} role="alertdialog" aria-label="Resume">
             <div className="text-sm text-white/80">You stopped at {fmtClock(resume)}</div>
@@ -334,10 +360,11 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
         )}
       </div>
 
-      {/* v2.11: labels and stars stay out of the way in full screen */}
-      {tagsOpen && !full && !embedded && (
-        <div className="absolute z-20 top-16 right-3 w-80 max-h-[calc(100%-11rem)] overflow-y-auto rounded-2xl bg-black/80 backdrop-blur border border-white/10 p-4 space-y-4"
-          onClick={e => e.stopPropagation()} aria-label="Labels and stars panel">
+      {/* Labels and stars beside the video: the window player, and (1.0.6) full screen again, where it fades with the
+          controls. The watch page shows them under the video instead. */}
+      {tagsOpen && (!embedded || full) && (
+        <div className={`absolute z-20 top-16 right-3 w-80 max-h-[calc(100%-11rem)] overflow-y-auto rounded-2xl bg-black/75 backdrop-blur border border-white/10 p-4 space-y-4 transition-opacity ${idle ? 'opacity-0 pointer-events-none' : ''}`}
+          onClick={e => e.stopPropagation()} onKeyDown={wake} onMouseMove={wake} aria-label="Labels and stars panel" data-tags-panel>
           <div className="flex items-center text-sm font-medium">Labels & stars
             <button className="ml-auto text-white/60 hover:text-white" onClick={() => setTagsOpen(false)} aria-label="Close labels panel"><Icon name="x" size={15} /></button>
           </div>
@@ -404,7 +431,7 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
             ))}
             <MenuItem onClick={() => void loadSubFile()}>Load subtitle file…</MenuItem>
           </Menu>
-          {!full && !embedded && (
+          {(!embedded || full) && (
             <button className={`${btn} ${tagsOpen ? 'bg-white/15' : ''}`} onClick={() => setTagsOpen(!tagsOpen)} aria-label="Labels and stars" aria-expanded={tagsOpen} title="Labels and stars (S); 1–5 sets stars">
               <span className="text-[#f5b301]">★</span>Labels
             </button>
@@ -413,6 +440,18 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
         </div>
       </div>
     </div>
+  );
+}
+
+/** A round button over the middle of the picture (paused). Clicks don't reach the picture (which plays/pauses). */
+function CenterButton({ label, title, size, disabled, onClick, children }: { label: string; title: string; size: 'sm' | 'md' | 'lg'; disabled?: boolean; onClick: () => void; children: ReactNode }) {
+  const px = size === 'lg' ? 'h-20 w-20' : size === 'md' ? 'h-14 w-14' : 'h-11 w-11';
+  return (
+    <button type="button" aria-label={label} title={title} disabled={disabled} data-center={label}
+      onClick={e => { e.stopPropagation(); onClick(); }} onDoubleClick={e => e.stopPropagation()}
+      className={`${px} pointer-events-auto rounded-full bg-black/55 hover:bg-black/75 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white shadow-lg transition disabled:opacity-30 disabled:cursor-default`}>
+      {children}
+    </button>
   );
 }
 

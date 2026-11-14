@@ -6,7 +6,7 @@ import type { LabelInfo, MediaEntry, TagFilter } from '@shared/types';
 import { LABEL_COLORS } from '@shared/types';
 import { errorText } from '../api';
 import * as T from '../tags';
-import { Button, Icon } from './ui';
+import { Button, Icon, Segmented } from './ui';
 import { hideLabel } from './Privacy';
 
 // ---------- stars (TAG-03) ----------
@@ -200,7 +200,9 @@ export function ManageLabels({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('');
   const [confirm, setConfirm] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [who, setWho] = useState<'all' | 'you' | 'files'>('all');   // 1.0.6: filter by who made them
   const box = useRef<HTMLDivElement>(null);
+  const shown = labels.filter(l => who === 'all' || (who === 'you' ? l.origin === 'you' : l.origin === 'files'));
   useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
   const save = async (id: number) => {
     try { const r = await T.renameLabel(id, name); setEditing(null); setError(r.mergedInto ? `Merged into the existing label “${name.trim()}”.` : null); } catch (e) { setError(errorText(e)); }
@@ -212,16 +214,28 @@ export function ManageLabels({ onClose }: { onClose: () => void }) {
           <div className="font-semibold">Labels</div>
           <button className="ml-auto h-8 w-8 rounded-lg hover:bg-panel-2 flex items-center justify-center" onClick={onClose} aria-label="Close"><Icon name="x" /></button>
         </div>
+        {labels.length > 0 && (
+          <div className="flex items-center gap-2 px-5 pt-3 text-sm">
+            <span className="text-muted">Made by</span>
+            <Segmented label="Made by" value={who} onChange={setWho} options={[{ value: 'all', label: `Anyone (${labels.length})` }, { value: 'you', label: `You (${labels.filter(l => l.origin === 'you').length})` }, { value: 'files', label: `From files (${labels.filter(l => l.origin === 'files').length})` }]} />
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto p-3 space-y-1">
           {!labels.length && <div className="text-sm text-muted p-3">No labels yet. Add one to a photo or video from the grid, the viewer, the player or a selection.</div>}
-          {labels.map(l => (
-            <div key={l.id} className="flex items-center gap-2 px-2 h-11 rounded-lg hover:bg-panel-2" data-manage={l.name}>
+          {labels.length > 0 && !shown.length && <div className="text-sm text-muted p-3">None.</div>}
+          {shown.map(l => (
+            <div key={l.id} className="flex items-center gap-2 px-2 min-h-11 py-1 rounded-lg hover:bg-panel-2" data-manage={l.name}>
               <ColorPicker value={l.color} onChange={c => void T.setColor(l.id, c)} />
               {editing === l.id ? (
                 <input autoFocus value={name} onChange={e => setName(e.target.value)} aria-label="New name"
                   onKeyDown={e => { if (e.key === 'Enter') void save(l.id); if (e.key === 'Escape') { setEditing(null); e.stopPropagation(); } }}
                   className="flex-1 h-8 rounded-lg bg-panel-2 border border-accent px-2 text-sm outline-none" />
-              ) : <div className="flex-1 truncate text-sm">{l.name}{l.hidden && <span className="ml-2 text-xs text-muted">(hidden)</span>}</div>}
+              ) : (
+                <div className="flex-1 min-w-0">
+                  <div className="truncate text-sm">{l.name}{l.hidden && <span className="ml-2 text-xs text-muted">(hidden)</span>}</div>
+                  <OriginText label={l} />
+                </div>
+              )}
               <span className="text-xs text-muted w-16 text-right">{l.count} file{l.count === 1 ? '' : 's'}</span>
               <Button className="!h-8" variant="ghost" onClick={() => void hideLabel(l.id, !l.hidden).catch(e => setError(errorText(e)))}
                 title={l.hidden ? 'Show this label and its files again' : 'Hide this label and every photo and video with it, until unlocked with the password'}>
@@ -238,6 +252,25 @@ export function ManageLabels({ onClose }: { onClose: () => void }) {
         {error && <div className="px-5 py-2 text-sm text-muted border-t border-line">{error}</div>}
         <div className="px-5 py-3 border-t border-line text-xs text-muted">Renaming a label to the name of another one merges them. Deleting removes it from every photo and video. Hiding a label hides it and its files until hidden items are unlocked.</div>
       </div>
+    </div>
+  );
+}
+
+/** 1.0.6: who made a label, in one short line (the file it was first found in on hover). */
+export function originText(l: LabelInfo): string {
+  const maybe = l.originSure === false ? ' (probably)' : '';
+  const file = l.originFile ? l.originFile.split(/[\\/]/).pop() : '';
+  return l.origin === 'you' ? `Made by you${maybe}`
+    : l.origin === 'files' ? `From files${maybe}${file ? ` · first in ${file}` : ''}`
+    : l.origin === 'backup' ? 'From a backup you restored'
+    : l.origin === 'unknown' ? 'Not sure who made it (from before 1.0.6)'
+    : 'Working out who made it…';
+}
+function OriginText({ label: l }: { label: LabelInfo }) {
+  return (
+    <div className={`text-[11px] truncate ${l.origin === 'files' ? 'text-accent' : 'text-muted'}`} data-origin={l.origin ?? 'pending'}
+      title={l.originFile ? `First seen in ${l.originFile}${l.origin === 'files' ? '\nThe keyword was already inside this file (put there by another app, a phone or a camera); PixHaven picked it up when it read the folder.' : ''}` : undefined}>
+      {originText(l)}
     </div>
   );
 }
