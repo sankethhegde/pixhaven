@@ -23,16 +23,13 @@ export default async function run(win, app) {
   const menuItem = async label => { if (!await js(`(() => { const b = [...document.querySelectorAll('[role=menu] button')].find(b => b.innerText.includes(${JSON.stringify(label)})); if (!b || b.disabled) return false; b.click(); return true; })()`)) throw new Error(`No menu item ${label}`); await sleep(300); };
   const key = async k => { await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true }))`); await sleep(250); };
   const dbl = async (name, startOver = true) => {
+    // 1.0.8: a saved place is resumed by itself; tests that need the beginning forget it first.
+    if (startOver) await js(`window.clearup.player.position(${JSON.stringify(path.join(ROOT, name))}, 0, 1)`);
     const ok = await js(`(async () => { const box = document.querySelector('[role=listbox]');
       const find = () => [...document.querySelectorAll('[role=option][data-path]')].find(e => e.dataset.path.endsWith(${JSON.stringify(path.sep + name)}));
       for (let y = 0; !find() && y <= box.scrollHeight; y += 250) { box.scrollTop = y; box.dispatchEvent(new Event('scroll')); await new Promise(r => setTimeout(r, 60)); }
       const t = find(); if (!t) return false; t.scrollIntoView({ block: 'center' }); t.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return true; })()`);
     if (!ok) throw new Error(`No tile ${name}`);
-    // A position saved by an earlier run makes the player ask first: start from the beginning.
-    if (startOver) {
-      await sleep(700);
-      await js(`[...document.querySelectorAll('[role=alertdialog] button')].find(b => b.innerText === 'Start over')?.click()`);
-    }
   };
   const vid = () => js(`(() => { const v = document.querySelector('[data-testid=player-video]'); if (!v) return null;
     const q = v.getVideoPlaybackQuality(); return { t: v.currentTime, w: v.videoWidth, h: v.videoHeight, paused: v.paused, rate: v.playbackRate, muted: v.muted,
@@ -156,9 +153,11 @@ export default async function run(win, app) {
     await closePlayer();
     await dbl('two tracks.mkv', false);
     const saved = JSON.stringify((await js('window.clearup.player.recent()')).find(r => r.path.endsWith('two tracks.mkv')));
-    await waitFor('You stopped at', 10000).then(() => check('offers to resume', true), async () => check('offers to resume', false, `stopped at ${stoppedAt} s, saved ${saved}, video ${JSON.stringify(await vid())}`));
+    // 1.0.8: no question: it carries on by itself, and says so
+    await waitFor(async () => (await js(`document.querySelector('[data-testid=resumed]')?.innerText ?? ''`)).includes('Resumed at'), 10000)
+      .then(() => check('carries on where it stopped, without asking', true), async () => check('carries on where it stopped, without asking', false, `stopped at ${stoppedAt} s, saved ${saved}, video ${JSON.stringify(await vid())}`));
+    check('no "Resume?" question any more', !(await js(`!!document.querySelector('[role=alertdialog]')`)));
     await shot('05-resume');
-    await js(`[...document.querySelectorAll('[role=alertdialog] button')].find(b => b.innerText.startsWith('Resume')).click()`);
     await waitFor(async () => { const v = await vid(); return v && !v.paused && v.t > 0; }, 10000);
     await sleep(800);
     const resumed = await clock();

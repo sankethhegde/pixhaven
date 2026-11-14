@@ -8,6 +8,8 @@ import { fmtBytes, fmtClock } from '../api';
 import { Icon } from './ui';
 import { LabelChip, Stars } from './Tags';
 import * as T from '../tags';
+import * as P from '../positions';
+import { HOVER_DELAY_MS, HoverPreview } from './HoverPreview';
 
 export const TILE: Record<'s' | 'm' | 'l', number> = { s: 120, m: 168, l: 240 };
 const GAP = 10, LABEL = 56, LIST_ROW = 36, OVERSCAN = 2;
@@ -96,10 +98,20 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
   }, [focused, cols, rowH, items.length]);
 
   useEffect(() => {
-    const t = setTimeout(() => onVisible(first, last), 80);   // settle while scrolling fast
+    const t = setTimeout(() => {
+      onVisible(first, last);
+      P.want(items.slice(first, last + 1).filter(e => e.kind === 'video').map(e => e.path));   // 1.0.8: the watched line
+    }, 80);   // settle while scrolling fast
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [first, last, items]);
+  P.usePositions();
+  // 1.0.8: resting on a video thumbnail plays it there (after HOVER_DELAY_MS).
+  const [hovered, setHovered] = useState<string | null>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoverOn = (p: string) => { if (hoverTimer.current) clearTimeout(hoverTimer.current); hoverTimer.current = setTimeout(() => setHovered(p), HOVER_DELAY_MS); };
+  const hoverOff = () => { if (hoverTimer.current) clearTimeout(hoverTimer.current); hoverTimer.current = null; setHovered(null); };
+  useEffect(() => hoverOff, [items]);   // a new folder: nothing keeps playing
 
   const cells = [];
   for (let i = first; i <= last && i >= 0; i++) {
@@ -117,8 +129,14 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
       cells.push(
         <div key={e.path} {...common} className={`absolute rounded-xl p-1.5 cursor-default ${sel ? 'bg-accent-soft ring-2 ring-accent' : 'hover:bg-panel-2'} ${foc ? 'outline-2 outline-dashed outline-offset-2 outline-accent' : ''}`}
           style={{ left: left + c * (tile + GAP), top: 8 + r * rowH, width: tile, height: tile + LABEL }}>
-          <div className="relative">
+          <div className="relative" {...(e.kind === 'video' && !(e as { offline?: boolean }).offline ? { onMouseEnter: () => hoverOn(e.path), onMouseLeave: hoverOff } : {})}>
             <Thumb entry={e} info={info} px={tile - 12} offline={(e as { offline?: boolean }).offline} />
+            {hovered === e.path && <HoverPreview path={e.path} />}
+            {e.kind === 'video' && P.watched(e.path) !== null && (
+              <div className="absolute left-0 right-0 bottom-0 h-1 rounded-b-lg overflow-hidden bg-white/25 pointer-events-none" data-watched={Math.round(P.watched(e.path)! * 100)}>
+                <div className="h-full bg-[#ff2d2d]" style={{ width: `${P.watched(e.path)! * 100}%` }} />
+              </div>
+            )}
             {e.taggedFrom && <span className="absolute left-1 top-1 max-w-[85%] truncate rounded bg-black/65 text-white text-[10px] px-1.5 py-0.5" data-testid="tagged-badge"
               title={`Group photo: kept in “${e.taggedFrom}”, shown here too.`}>Kept in · {e.taggedFrom}</span>}
             {e.alsoIn?.length ? <span className="absolute left-1 bottom-1 max-w-[85%] truncate rounded bg-accent/85 text-accent-fg text-[10px] px-1.5 py-0.5" data-testid="alsoin-badge"

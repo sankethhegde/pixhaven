@@ -114,6 +114,11 @@ const api = {
     cacheSize: () => invoke('lib:cacheSize'),
     clearCache: () => invoke('lib:clearCache'),
   },
+  videoFaces: {
+    get: (p: string, size: number, mtime: number) => invoke('videoFaces:get', p, size, mtime),
+    start: (p: string, size: number, mtime: number) => invoke('videoFaces:start', p, size, mtime),
+    cancel: () => invoke('videoFaces:cancel'),
+  },
   attic: {
     status: () => invoke('attic:status'),
     current: () => invoke('attic:current'),
@@ -140,6 +145,7 @@ const api = {
     loadSubtitle: (id: string) => invoke('player:loadSubtitle', id),
     frame: (p: string, t: number) => invoke('player:frame', p, t),
     position: (p: string, t: number, d: number) => invoke('player:position', p, t, d),
+    positions: (paths: string[]) => invoke('player:positions', paths),
     playing: (b: boolean) => invoke('player:playing', b),
     recent: () => invoke('player:recent'),
   },
@@ -189,6 +195,8 @@ const api = {
   onTagsFromFiles: listen('tags:fromFiles'),
   onLibThumb: listen('lib:thumb'),
   onAtticStatus: listen('attic:status'),
+  onPositions: listen('player:positions'),
+  onVideoFaces: listen('videoFaces:update'),
   onAtticTransfer: listen('attic:transfer'),
   onLibSearch: listen('lib:search'),
   onTidyProgress: listen('tidy:progress'),

@@ -4,7 +4,7 @@ import type {
   PowerStatus, QueueItem, ReviewData, SaveResult, ScanProgress, Settings, SortHistory, SortPlan, TidyResults, UpdateStatus, UpscaleOptions,
   FileWriteStatus, Playlist, WatchChange, WatchedFolder, WatchQuery, WatchResult,
   FileOpResult, KnownFolder, MediaEntry, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, ScanEstimate, MergePlan, MergeResult, PrivacyStatus, WallProgress, WallResult, WallScreen, ConvertCaps, ConvertFile, ConvertOptions, ConvertProgress, ConvertResult, EditSpec, DescribeResult, DescribeStatus, GenImage, GenProgress, GenRequest, GenStatus,
-  AtticListing, AtticShareInfo, AtticStatus, AtticTransfer, DriveInfo, FileDetails, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
+  AtticListing, AtticShareInfo, VideoFaces, AtticStatus, AtticTransfer, DriveInfo, FileDetails, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
 } from '@shared/types';
 
 export interface AppInfo { version: string; gpu: GpuStatus; dedicated: boolean; settings: Settings; onBattery: boolean; pendingSort: string | null }
@@ -58,6 +58,12 @@ interface LibApi {
   clearCache(): Promise<void>;
 }
 
+interface VideoFacesApi {
+  get(p: string, size: number, mtime: number): Promise<VideoFaces>;
+  start(p: string, size: number, mtime: number): Promise<VideoFaces>;
+  cancel(): Promise<void>;
+}
+
 interface AtticApi {
   status(): Promise<AtticStatus>;
   current(): Promise<AtticStatus>;
@@ -85,6 +91,7 @@ interface PlayerApi {
   loadSubtitle(id: string): Promise<{ tracks: SubtitleTrack[]; id: string } | null>;
   frame(p: string, t: number): Promise<string>;
   position(p: string, t: number, d: number): Promise<void>;
+  positions(paths: string[]): Promise<Record<string, { position: number; duration: number }>>;
   playing(b: boolean): Promise<void>;
   recent(): Promise<RecentVideo[]>;
 }
@@ -179,8 +186,11 @@ interface Api {
   tags: TagsApi;
   player: PlayerApi;
   attic: AtticApi;
+  videoFaces: VideoFacesApi;
   onLibThumb(cb: (i: MediaInfo) => void): Off;
   onAtticStatus(cb: (s: AtticStatus) => void): Off;
+  onVideoFaces(cb: (v: VideoFaces) => void): Off;
+  onPositions(cb: (p: Record<string, { position: number; duration: number } | null>) => void): Off;
   onAtticTransfer(cb: (t: AtticTransfer) => void): Off;
   onLibSearch(cb: (u: SearchUpdate) => void): Off;
   watch: WatchApi;

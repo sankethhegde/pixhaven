@@ -105,7 +105,7 @@ function RecentVideos({ onPlay }: { onPlay: (path: string) => void }) {
             </div>
             <div className="px-2.5 py-2">
               <div className="text-sm truncate">{name(v.path)}</div>
-              <div className="text-xs text-muted">{v.position >= 5 ? `Stopped at ${fmtClock(v.position)} of ${fmtClock(v.duration)}` : fmtClock(v.duration)}</div>
+              <div className="text-xs text-muted">{v.duration > 0 && v.position >= v.duration - 1 ? `Watched · ${fmtClock(v.duration)}` : v.position >= 5 ? `Stopped at ${fmtClock(v.position)} of ${fmtClock(v.duration)}` : fmtClock(v.duration)}</div>
             </div>
           </button>
         ))}

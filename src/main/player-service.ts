@@ -119,8 +119,9 @@ const finished = (position: number, duration: number) => duration > 0 && positio
 
 /** PLAY-05: remembered every few seconds; cleared when the video is (nearly) finished. */
 export function savePosition(file: string, position: number, duration: number): void {
-  // Finished (or a short clip watched): kept for "Recently played", but nothing to resume.
-  const at = finished(position, duration) ? 0 : position;
+  // Finished (or a short clip watched): kept for "Recently played" and shown as watched to the end on the thumbnail
+  // (1.0.8; it used to be 0, the same as never watched), but nothing to resume.
+  const at = finished(position, duration) ? duration : position;
   tagStore().savePosition(file, at, duration);
 }
 

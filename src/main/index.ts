@@ -29,6 +29,7 @@ import { mediaKind, LIB_IMAGE_EXTENSIONS, LIB_VIDEO_EXTENSIONS } from '@shared/t
 import { moveAppData } from './app-data-move';
 import { fileDetails } from './library/details';
 import * as attic from './attic-service';
+import * as videoFaces from './video-faces-service';
 import { isAttic } from './attic/client';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'clearup', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
@@ -239,6 +240,7 @@ app.whenReady().then(async () => {
   // 1.0.7: Attic, the home file server
   attic.init();
   attic.setHooks(s => send('attic:status', s), t => send('attic:transfer', t));
+  videoFaces.setOnUpdate(v => send('videoFaces:update', v));   // 1.0.8: people in a video
   setTimeout(() => void attic.status(), 2000);
   // v2.1: watched folders, labels following files moved inside them, and (optionally) writing labels into files.
   tags.setOnMoved((from, to) => watch.moved(from, to));
@@ -578,6 +580,11 @@ handle('lib:details', (p: string) => {
 });
 handle('lib:cacheSize', () => library.cacheSize());
 
+// ---- 1.0.8 people in a video ----
+handle('videoFaces:get', (p: string, size: number, mtime: number) => videoFaces.get(p, size, mtime));
+handle('videoFaces:start', (p: string, size: number, mtime: number) => videoFaces.start(p, size, mtime));
+handle('videoFaces:cancel', () => videoFaces.cancel());
+
 // ---- 1.0.7 Attic ----
 handle('attic:status', () => attic.status());
 handle('attic:current', () => attic.current());
@@ -609,7 +616,8 @@ handle('player:loadSubtitle', async (id: string) => {
   return { tracks, id: player.subtitleTrackId(id, r.filePaths[0]) };
 });
 handle('player:frame', (p: string, t: number) => player.frame(p, t));
-handle('player:position', (p: string, t: number, d: number) => player.savePosition(p, t, d));
+handle('player:position', (p: string, t: number, d: number) => { player.savePosition(p, t, d); send('player:positions', { [p]: tags.tagStore().positions([p])[p] ?? null }); });
+handle('player:positions', (paths: string[]) => tags.tagStore().positions(paths));   // 1.0.8: the line under video thumbnails
 handle('player:playing', (b: boolean) => { player.playing(b); watch.pause('player', b); });
 handle('player:recent', () => privacy.paths(player.recent(), r => r.path));
 

@@ -55,6 +55,8 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
   const [cues, setCues] = useState<SubtitleCue[]>([]);
   const [menu, setMenu] = useState<'speed' | 'audio' | 'subs' | null>(null);
   const [resume, setResume] = useState<number | null>(null);
+  const pendingResume = useRef<number | null>(null);
+  const [resumedAt, setResumedAt] = useState<number | null>(null);   // 1.0.8: "Resumed at 3:12 · Start over"
   const [full, setFull] = useState(false);
   const [idle, setIdle] = useState(false);
   const [woken, setWoken] = useState(0);
@@ -75,25 +77,28 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
   const duration = info?.duration || (video.current && Number.isFinite(video.current.duration) ? video.current.duration : 0);
   const timeNow = () => base + (video.current?.currentTime ?? 0);
   const latest = useRef({ base, duration });
+  const lastTime = useRef<number | null>(null);   // where it is now (seconds into the video), for saving on close
   latest.current = { base, duration };
 
   // ---- open the file ----
   useEffect(() => {
     let live = true;
     let session: string | null = null;
-    setInfo(null); setStream(null); setError(null); setNow(0); setCues([]); setSubId(null); setAudio(0); setResume(null); setWaiting(true);
+    lastTime.current = null; setInfo(null); setStream(null); setError(null); setNow(0); setCues([]); setSubId(null); setAudio(0); setResume(null); setWaiting(true);
     frames.current.clear();
     api.player.open(item.path, playerCaps()).then(i => {
       session = i.session;
       if (!live) { void api.player.close(i.session); return; }
-      setInfo(i); setSubs(i.subtitles); setResume(i.resumeAt); setWantPlay(i.resumeAt === null);
+      // 1.0.8: no question: it carries on where you stopped (a chip offers Start over).
+      setInfo(i); setSubs(i.subtitles); setResume(null); setWantPlay(true); pendingResume.current = i.resumeAt; setResumedAt(null);
       setStream({ url: i.url, base: i.base, mode: i.mode, reason: i.reason, encoder: i.encoder });
     }).catch(e => { if (live) setError(errorText(e)); });
     return () => {
       live = false;
-      const v = video.current;
-      const { base: b, duration: d } = latest.current;
-      if (v && session && d) void api.player.position(item.path, b + v.currentTime, d);
+      // 1.0.8: the last time seen while playing (closing removes the <video> first, which used to lose the last few s).
+      const { duration: d } = latest.current;
+      const at = lastTime.current;
+      if (session && d && at !== null) void api.player.position(item.path, at, d);
       if (session) void api.player.close(session);
       void api.player.playing(false);
     };
@@ -212,6 +217,17 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
   const toggleFull = () => { if (document.fullscreenElement) void document.exitFullscreen(); else void shell.current?.requestFullscreen(); };
   useEffect(() => { const f = () => setFull(!!document.fullscreenElement); document.addEventListener('fullscreenchange', f); return () => document.removeEventListener('fullscreenchange', f); }, []);
 
+  // 1.0.8: once the video is ready, carry on where it was left (no question asked).
+  useEffect(() => {
+    const t = pendingResume.current;
+    if (t === null || !info || !stream) return;
+    pendingResume.current = null;
+    setResumedAt(t);
+    void seekTo(t, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [info, stream]);
+  useEffect(() => { if (resumedAt === null) return; const h = setTimeout(() => setResumedAt(null), 10000); return () => clearTimeout(h); }, [resumedAt]);
+
   // Embedded in a tab or page that is no longer on screen: pause (it would keep playing unseen).
   useEffect(() => { if (!active) video.current?.pause(); }, [active]);
 
@@ -314,7 +330,7 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
       <div className="flex-1 min-h-0 relative flex items-center justify-center" onClick={() => { if (menu) setMenu(null); else togglePlay(); }} onDoubleClick={toggleFull}>
         {stream && (
           <video ref={video} key={stream.url} src={stream.url} autoPlay={wantPlay && resume === null} className="max-w-full max-h-full w-full h-full object-contain" data-testid="player-video"
-            onTimeUpdate={() => { catchUp(); setNow(pendingSeek.current ?? timeNow()); if (pendingSeek.current === null) savePos(); }}
+            onTimeUpdate={() => { catchUp(); setNow(pendingSeek.current ?? timeNow()); if (pendingSeek.current === null) { lastTime.current = timeNow(); savePos(); } }}
             onPlay={() => { if (pendingSeek.current === null || wantPlayRef.current) setPaused(false); void api.player.playing(true); }}
             onPause={() => { setPaused(true); if (pendingSeek.current === null) savePos(true); void api.player.playing(false); }}
             onWaiting={() => setWaiting(true)} onPlaying={() => setWaiting(false)} onCanPlay={() => setWaiting(false)}
@@ -348,14 +364,11 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
             </CenterButton>
           </div>
         )}
-        {resume !== null && (
-          <div className="absolute bg-black/80 rounded-2xl px-6 py-5 flex flex-col items-center gap-3" onClick={e => e.stopPropagation()} role="alertdialog" aria-label="Resume">
-            <div className="text-sm text-white/80">You stopped at {fmtClock(resume)}</div>
-            <div className="flex gap-2">
-              <button className="h-9 px-4 rounded-lg bg-accent text-accent-fg font-medium" autoFocus
-                onClick={() => { const t = resume; setResume(null); void seekTo(t, true); }}>Resume from {fmtClock(resume)}</button>
-              <button className="h-9 px-4 rounded-lg bg-white/15 hover:bg-white/25" onClick={() => { setResume(null); setWantPlay(true); void video.current?.play().catch(() => {}); }}>Start over</button>
-            </div>
+        {resumedAt !== null && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 rounded-full bg-black/75 backdrop-blur px-4 h-10 text-sm shadow-lg" onClick={e => e.stopPropagation()}
+            role="status" data-testid="resumed">
+            <span>Resumed at {fmtClock(resumedAt)}</span>
+            <button className="h-7 px-3 rounded-full bg-white/15 hover:bg-white/25" onClick={() => { setResumedAt(null); void seekTo(0, true); }}>Start over</button>
           </div>
         )}
       </div>

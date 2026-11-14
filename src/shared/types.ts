@@ -532,3 +532,23 @@ export interface AtticTransfer {
   files: number; done: number; bytes: number; totalBytes: number; current: string | null;
   finished: boolean; failed: { path: string; reason: string }[]; moved: { from: string; to: string }[];
 }
+
+// ---------- 1.0.8 people in a video ----------
+export interface VideoPerson {
+  id: number; name: string; sure: number;              // 50–99 %
+  frames: number; times: number[];                     // seconds where they were seen
+  folder: string | null;                               // their person folder
+  root: string;                                        // the sorted folder they belong to
+  face: string | null;                                 // their best face crop
+  photos: { path: string; url: string }[];             // a few of their photos
+}
+export interface VideoFaces {
+  path: string;
+  state: 'none' | 'searching' | 'done' | 'error' | 'no-people';
+  done: number; total: number;                         // frames looked at
+  folders: number;                                     // sorted folders searched
+  frames?: number; faces?: number; unknown?: number;
+  people: VideoPerson[];
+  error?: string;
+  at?: number;                                         // when it was worked out
+}

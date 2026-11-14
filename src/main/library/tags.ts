@@ -511,6 +511,16 @@ export class TagStore {
   position(p: string): number | null {
     return (this.db.prepare('SELECT position FROM playback WHERE path = ?').get(p) as { position: number } | undefined)?.position ?? null;
   }
+  /** 1.0.8: where each of these videos was left (for the line under thumbnails). */
+  positions(paths: string[]): Record<string, { position: number; duration: number }> {
+    const out: Record<string, { position: number; duration: number }> = {};
+    for (let i = 0; i < paths.length; i += 500) {
+      const part = paths.slice(i, i + 500);
+      const rows = this.db.prepare(`SELECT path, position, duration FROM playback WHERE path IN (${part.map(() => '?').join(',')})`).all(...part) as { path: string; position: number; duration: number }[];
+      for (const r of rows) if (r.duration > 0 && r.position >= 5) out[r.path] = { position: r.position, duration: r.duration };
+    }
+    return out;
+  }
   savePosition(p: string, position: number, duration: number): void {
     this.db.prepare('INSERT OR REPLACE INTO playback (path, position, duration, updated) VALUES (?, ?, ?, ?)').run(p, position, duration, Date.now());
   }

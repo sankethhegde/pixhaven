@@ -36,6 +36,7 @@ npm run setup:engine     # downloads the engine, models, face models, places, FF
 | `node tests/make-media.mjs <folder>` | Builds the mixed-format test folder (17 photo formats incl. HEIC and 7 RAW, 17 video formats) |
 | `npm run e2e:sort` | Same for Sort by person: scan → review → dry run → apply (no copies, people tagged, folders checked against the photos' real names) → re-scan → undo, on ~50 public test photos (`phase0/fetch-test-photos.mjs`, or set `CLEARUP_TESTPHOTOS`) |
 | `npm run e2e:combine` | Photos → Combine people on two sorted folders made by the test (the same person in both): match, name, estimate, combine, files/face data/names/shortcuts checked, destination opened; Move to / Rename; Merge into… (by hand and by face); search and sort people in Photos and the Sort review; a second rename while a file in the folder is open; the details card in Photos; then Sort → Estimate time |
+| `npm run e2e:facevideo` | 1.0.8 with real faces: public portraits scanned by the real Sort scanner, a video made from two other photos of one person; he is found (and nobody else), with his folder, photos and the right times; the Theatre panel |
 | `npm run e2e:attic` | 1.0.7, against a real Attic server from the attic repo next to this one, reached through this PC's network address: "Move to Attic" grey before set-up, address → 6-digit code → sign in (wrong password refused, password not kept), a device account's empty view, the master's files, thumbnails and details over the network, stars kept in PixHaven, an Attic video playing, Move to Attic (labels follow, original to a test recycle bin), the Videos tab's Attic source, rename and delete on Attic (its trash), Move to this PC |
 | `npm run e2e:videos` | 1.0.6: Videos tab (empty state, drives offered, a folder added, sort, search, where), paused middle controls (play, next), Labels & stars in full screen (fades while playing), who made each label (from a photo's keywords vs by you, filter) |
 | `npm run e2e:tabs` | Library tabs and the details card: video and photo details (EXIF), several items, I; copy a video in one tab and paste in another, drag a photo onto a tab, cut and paste back, selection and scroll kept, tabs restored after a reload, Ctrl+T / Ctrl+Tab / Ctrl+W, scroll kept, sidebar arrow / Ctrl+B; folder totals, stars and labels for two videos from the card; the watch page (Up next, Theatre without restart, Full screen, pause on tab switch, Esc back); the nightOwl tip and preset |
@@ -251,6 +252,18 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
   1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
+- **People in this video (1.0.8):** in Theatre, under the video. FFmpeg hands over a frame every 2 s (wider apart on
+  long videos, at most 600), the face engine finds faces and fingerprints them (in a worker), and each face is compared
+  with the people of every sorted folder PixHaven knows (their best faces, as Combine does) a little more strictly than
+  for photos (strictness + 0.06). A person counts when matched in two frames, or once very clearly. Shown: their face,
+  how sure, when they appear, a few of their photos and the folder those come from (click: opens in the Library). Kept
+  per video in `video-faces/` and worked out again when the sorted folders change; works for Attic videos too.
+  `faces/video-faces.ts`, `faces/video-worker.ts`, `video-faces-service.ts`, `components/VideoPeople.tsx`. Tested with
+  real faces: `npm run e2e:facevideo` (public test photos from `phase0/fetch-test-photos.mjs`).
+- **Watching (1.0.8):** a video carries on where it was left without asking ("Resumed at 3:12 · Start over" for a few
+  seconds); thumbnails show a red line for how much was watched (full when finished — finished videos are now saved as
+  watched to the end); resting the mouse on a video thumbnail for about a second plays it there, muted, through the
+  player's own pipeline (any format; Attic too). Fix: closing the player lost the last few seconds of the place.
 - **Attic tab (1.0.7):** Attic, the home file server (Attic Hub on the HP), inside PixHaven. Set up once: find it on the
   Wi-Fi (Attic's UDP discovery) or type its address → pair with a 6-digit code from Attic Hub (Devices → Pair a device)
   → sign in with an Attic account. The password goes to Attic only; PixHaven keeps the pairing and the 30-day session,

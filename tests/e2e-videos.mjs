@@ -164,6 +164,88 @@ export default async function run(win, app) {
     check('"Made by" filter: From files shows only labels found in files', JSON.stringify(filtered) === JSON.stringify(['Phone album']), filtered.join(', '));
     await shot('04-label-origin');
     await key('Escape');
+
+    // ==== 1.0.8 ====
+    await nav('Videos');
+    await waitFor(async () => (await names()).length === 4, 10000);
+    // The player's own clock (a converted stream's <video> counts from where the stream starts).
+    const clock = () => js(`Number(document.querySelector('[data-testid=watch-page] [data-testid=player-seek]')?.getAttribute('aria-valuenow') ?? -1)`);
+    const tileOf = n => `[...${page}.querySelectorAll('[role=option][data-path]')].find(e => e.dataset.path.endsWith(${JSON.stringify(n)}))`;
+    // ---- carries on where it was left, no question asked; the thumbnail shows how far ----
+    await js(`${tileOf('b hills.mp4')}.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    await waitFor(async () => (await js(`${vid}?.currentTime ?? 0`)) > 7, 20000);
+    await key('Escape');
+    await sleep(800);
+    const hills = path.join(V, 'b hills.mp4');
+    const saved = (await js(`window.clearup.player.positions([${JSON.stringify(hills)}])`))[hills];
+    const want = Math.round((saved?.position / saved?.duration) * 100);
+    await soft(waitFor(async () => Math.abs(Number(await js(`${tileOf('b hills.mp4')}?.querySelector('[data-watched]')?.dataset.watched ?? 0`)) - want) <= 1, 5000));
+    const line = Number(await js(`${tileOf('b hills.mp4')}?.querySelector('[data-watched]')?.dataset.watched ?? 0`));
+    check('the thumbnail shows a red line for how much was watched (the place it was left, saved on close)', saved?.position > 7 && Math.abs(line - want) <= 1 && line > 30 && line < 95, `${line}% · saved at ${saved?.position?.toFixed(1)} of ${saved?.duration?.toFixed(1)} s`);
+    await shot('05-watched-line');
+    await js(`${tileOf('b hills.mp4')}.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    await soft(waitFor(async () => !!(await js(`document.querySelector('[data-testid=resumed]')`)) && (await clock()) >= Math.floor(saved.position) - 1, 15000));
+    const chip = await js(`document.querySelector('[data-testid=resumed]')?.innerText ?? ''`);
+    const at = await clock();
+    const m = /Resumed at (\d+):(\d+)/.exec(chip), chipAt = m ? Number(m[1]) * 60 + Number(m[2]) : -1;
+    await soft(waitFor(async () => (await clock()) > chipAt + 0.8 && !(await js(`${vid}.paused`)), 10000));   // the converted stream has started
+    const asked = await js(`!!document.querySelector('[role=alertdialog]')`), paused = await js(`${vid}.paused`);
+    check('reopened: it plays on from where it stopped, without asking', chipAt >= 7 && Math.abs(chipAt - saved.position) <= 2 && at >= chipAt - 1 && !asked && !paused,
+      `${chip.replace(/\n/g, ' ')} · saved ${saved.position.toFixed(1)} · clock ${at.toFixed(1)} s · asked ${asked} · paused ${paused}`);
+    await js(`[...document.querySelectorAll('[data-testid=resumed] button')].find(b => b.innerText.includes('Start over'))?.click()`);
+    await soft(waitFor(async () => { const t = await clock(); return t >= 0 && t < 3; }, 8000));
+    check('"Start over" goes back to the beginning', (await clock()) < 3);
+    await shot('06-resumed');
+    await key('Escape');
+    await sleep(600);
+
+    // ---- resting on a thumbnail plays it there ----
+    const wrap = `${tileOf('a lake.mp4')}.querySelector('.relative')`;
+    await js(`${wrap}.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: document.body }))`);
+    const early = await js(`!!${page}.querySelector('[data-testid=hover-preview]')`);
+    await soft(waitFor(async () => (await js(`${page}.querySelector('[data-testid=hover-preview]')?.currentTime ?? 0`)) > 0.3, 10000));
+    const playing = await js(`(v => v && { t: v.currentTime, muted: v.muted })(${page}.querySelector('[data-testid=hover-preview]'))`);
+    await shot('07-hover-preview');
+    await js(`${wrap}.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))`);
+    await sleep(400);
+    check('resting on a video thumbnail plays it there, muted, after a moment; moving away stops it',
+      !early && playing?.t > 0.3 && playing.muted && !(await js(`!!${page}.querySelector('[data-testid=hover-preview]')`)), JSON.stringify(playing));
+
+    // ---- Theatre: people in this video (a sorted folder made for the test; the test video has no faces) ----
+    await js('window.clearup.photos.folders()');   // the face database exists
+    const { DatabaseSync } = await import('node:sqlite');
+    const faces = path.join(process.env.CLEARUP_USER_DATA, 'facedata', 'faces.db');
+    const SORTED = path.join(OUT, 'Sorted'), MOM = path.join(SORTED, 'Mom');
+    fs.rmSync(SORTED, { recursive: true, force: true }); fs.mkdirSync(MOM, { recursive: true });
+    const sharp = (await import('sharp')).default;
+    await sharp({ create: { width: 200, height: 200, channels: 3, background: '#a76' } }).jpeg().toFile(path.join(MOM, 'mom-1.jpg'));
+    {
+      const db = new DatabaseSync(faces);
+      db.exec('PRAGMA busy_timeout = 5000;');
+      const fid = Number(db.prepare('INSERT INTO folders (path, created, last_scan) VALUES (?, ?, ?)').run(SORTED, Date.now(), Date.now()).lastInsertRowid);
+      db.prepare("INSERT INTO sorts (folder_id, created, state, kind, summary) VALUES (?, ?, 'done', 'people', '{}')").run(fid, Date.now());
+      const pid = Number(db.prepare('INSERT INTO people (folder_id, num, keep, dir) VALUES (?, 1, 1, ?)').run(fid, MOM).lastInsertRowid);
+      const iid = Number(db.prepare("INSERT INTO images (folder_id, path, size, mtime, status, faces) VALUES (?, ?, 1, 1, 'done', 1)").run(fid, path.join(MOM, 'mom-1.jpg')).lastInsertRowid);
+      const e = new Float32Array(512).map(() => Math.random() - 0.5); const n = Math.hypot(...e); for (let i = 0; i < 512; i++) e[i] /= n;
+      for (let k = 0; k < 2; k++) db.prepare('INSERT INTO faces (image_id, x, y, w, h, score, sharpness, usable, emb, model, quality, person_id) VALUES (?, 0, 0, 40, 40, 0.9, 50, 1, ?, 5, 0.9, ?)').run(iid, new Uint8Array(e.buffer), pid);
+      db.close();
+    }
+    await js(`localStorage.setItem('watch.theatre', '1')`);
+    await js(`${tileOf('a lake.mp4')}.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    await waitFor(async () => !!(await js(`document.querySelector('[data-testid=watch-page][data-theatre] [data-testid=video-people]')`)), 10000);
+    const states = new Set();
+    await soft(waitFor(async () => { const s = await js(`document.querySelector('[data-testid=video-people]')?.dataset.state`); states.add(s); return s === 'done' || s === 'error'; }, 60000));
+    const ppl = await js(`document.querySelector('[data-testid=video-people]')?.innerText ?? ''`);
+    check('Theatre: "People in this video" searches the sorted folders by itself (worker, face models, frames)', states.has('done') && /frames looked at, in 1 sorted folder/.test(ppl) && /No faces clear enough/.test(ppl),
+      `${[...states].join(' → ')} · ${ppl.replace(/\n/g, ' | ').slice(0, 200)}`);
+    await shot('08-theatre-people');
+    await key('Escape');
+    await sleep(500);
+    await js(`${tileOf('a lake.mp4')}.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    await soft(waitFor(async () => (await js(`document.querySelector('[data-testid=video-people]')?.dataset.state`)) === 'done', 5000));
+    check('the answer is remembered: opening the video again shows it at once', (await js(`document.querySelector('[data-testid=video-people]')?.dataset.state`)) === 'done');
+    await js(`localStorage.setItem('watch.theatre', '0')`);
+    await key('Escape');
   } catch (e) {
     check('e2e run', false, String(e?.stack ?? e));
     await shot('zz-failure').catch(() => {});

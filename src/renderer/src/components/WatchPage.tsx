@@ -6,9 +6,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MediaEntry, MediaInfo } from '@shared/types';
 import { api, fmtBytes, fmtClock } from '../api';
 import { Player } from './Player';
+import { VideoPeople } from './VideoPeople';
 import { Stars, TagEditor } from './Tags';
 import { Button, Icon } from './ui';
 import * as T from '../tags';
+import * as P from '../positions';
 
 const store = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 
@@ -32,6 +34,8 @@ export function WatchPage({ items, index, infos, title, active, playlist, onInde
   const info = infos.get(item.path);
   const videos = useMemo(() => items.map((e, i) => ({ e, i })).filter(x => x.e.kind === 'video'), [items]);
   const list = useRef<HTMLDivElement>(null);
+  P.usePositions();
+  useEffect(() => { P.want(videos.map(v => v.e.path)); }, [videos]);
 
   // Thumbnails and lengths for Up next (the folder's may not all be made yet).
   useEffect(() => {
@@ -78,6 +82,7 @@ export function WatchPage({ items, index, infos, title, active, playlist, onInde
                 {inf?.thumb ? <img src={inf.thumb} alt="" className="w-full h-full object-cover" draggable={false} loading="lazy" /> : <Icon name="video" size={18} className="text-muted" />}
                 {inf?.duration ? <span className="absolute bottom-1 right-1 text-[10px] px-1 rounded bg-black/75 text-white">{fmtClock(inf.duration)}</span> : null}
                 {now && <span className="absolute inset-0 flex items-center justify-center bg-black/40 text-white text-[11px] font-semibold">▶ Playing</span>}
+                {!now && P.watched(e.path) !== null && <div className="absolute left-0 right-0 bottom-0 h-1 bg-white/25"><div className="h-full bg-[#ff2d2d]" style={{ width: `${P.watched(e.path)! * 100}%` }} /></div>}
               </div>
               <div className="min-w-0 py-0.5">
                 <div className={`text-sm leading-snug line-clamp-2 break-words ${now ? 'text-accent font-medium' : ''}`}>{e.name}</div>
@@ -133,7 +138,7 @@ export function WatchPage({ items, index, infos, title, active, playlist, onInde
           </div>
           {theatre ? (
             <div className="flex gap-6 px-6 max-w-[1400px] mx-auto">
-              <div className="flex-1 min-w-0">{about}</div>
+              <div className="flex-1 min-w-0">{about}<div className="pb-6"><VideoPeople item={item} auto /></div></div>
               <div className="w-[380px] shrink-0 py-3">{upNext}</div>
             </div>
           ) : about}
