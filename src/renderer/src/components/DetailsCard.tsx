@@ -134,7 +134,7 @@ function One({ e, info, d, error, labelNames, onOpen }: {
       {!offline && (
         <div className="flex flex-wrap gap-1.5 pt-1">
           {onOpen && <SmallButton onClick={() => onOpen(e)} icon={e.kind === 'video' ? 'play' : e.kind === 'folder' ? 'folder' : 'image'}>{e.kind === 'video' ? 'Play' : 'Open'}</SmallButton>}
-          <SmallButton onClick={() => void api.showItem(e.path)} icon="external">Show in Explorer</SmallButton>
+          {!e.path.startsWith('attic://') && <SmallButton onClick={() => void api.showItem(e.path)} icon="external">Show in Explorer</SmallButton>}
           <SmallButton onClick={() => void api.copyText(e.path)} icon="copy">Copy path</SmallButton>
         </div>
       )}

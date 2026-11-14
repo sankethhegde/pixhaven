@@ -57,8 +57,9 @@ export const labels = (): LabelInfo[] => tagStore().labels();
  * themselves hold is read in the background; changes arrive through the "from files" event. */
 export async function forFiles(files: FileRef[]): Promise<{ tags: Record<string, MediaTags>; relinked: string[] }> {
   const m = media(files);
-  const relinked = await tagStore().relink(m).catch(e => { log('warn', 'Re-linking failed', e); return [] as string[]; });
-  void readFolders(m);
+  const local = m.filter(f => !f.path.startsWith('attic://'));   // 1.0.7: Attic files keep their labels in PixHaven only
+  const relinked = await tagStore().relink(local).catch(e => { log('warn', 'Re-linking failed', e); return [] as string[]; });
+  void readFolders(local);
   return { tags: tagStore().tagsFor(m.map(f => f.path)), relinked };
 }
 
@@ -383,7 +384,7 @@ export const writeStatus = (): FileWriteStatus => ({ ...writeStats, pending: toW
 /** Changes are collected for a moment (stars clicked a few times in a row become one write). */
 export function queueWrite(paths: string[], force = false): void {
   if (!getSettings().library.writeToFiles && !force) return;
-  for (const p of paths) if (mediaKind(p) && !p.startsWith('missing:')) toWrite.add(p);
+  for (const p of paths) if (mediaKind(p) && !p.startsWith('missing:') && !p.startsWith('attic://')) toWrite.add(p);
   if (!toWrite.size) return;
   onWriteStatus(writeStatus());
   if (writeTimer) clearTimeout(writeTimer);

@@ -101,7 +101,7 @@ export function WatchPage({ items, index, infos, title, active, playlist, onInde
         <span className="truncate max-w-full" title={folder}>{folder}</span>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        <Button className="!h-8" variant="ghost" onClick={() => void api.showItem(item.path)}><Icon name="external" size={14} />Show in Explorer</Button>
+        {!item.path.startsWith('attic://') && <Button className="!h-8" variant="ghost" onClick={() => void api.showItem(item.path)}><Icon name="external" size={14} />Show in Explorer</Button>}
         <Button className="!h-8" variant="ghost" onClick={() => void api.copyText(item.path)}><Icon name="copy" size={14} />Copy path</Button>
       </div>
       <div className="rounded-xl border border-line bg-panel p-3" data-testid="watch-tags" aria-label="Labels and stars panel">

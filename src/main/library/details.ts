@@ -7,7 +7,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import type { FileDetails } from '../../shared/types';
 import { mediaKind } from '../../shared/types';
-import { run } from './ffmpeg';
+import { inputArgs, run } from './ffmpeg';
 
 const CODECS: Record<string, string> = {
   h264: 'H.264', hevc: 'HEVC (H.265)', av1: 'AV1', vp9: 'VP9', vp8: 'VP8', mpeg4: 'MPEG-4', mpeg2video: 'MPEG-2', mpeg1video: 'MPEG-1',
@@ -90,9 +90,25 @@ export interface DetailTools {
   exiftool: string | null;                              // null: ExifTool not available
   imageSize?: (file: string) => Promise<{ width: number; height: number; format?: string } | null>;   // sharp fallback
   people?: (file: string) => Promise<string[]>;
+  // 1.0.7: an Attic file: its size and date from Attic, and the start of the file (where cameras put EXIF) in a temp file.
+  remote?: (file: string) => { stat: () => Promise<{ size: number; mtimeMs: number }>; head: () => Promise<string> } | null;
 }
 
 export async function fileDetails(file: string, tools: DetailTools): Promise<FileDetails> {
+  const remote = tools.remote?.(file) ?? null;
+  if (remote) {
+    const r = await remote.stat();
+    const kind = mediaKind(file) ?? 'folder';
+    const base: FileDetails = { path: file, name: file.split('/').pop() ?? file, folder: file.replace(/\/[^/]*$/, ''), kind, size: r.size, modified: r.mtimeMs, created: 0 };
+    try {
+      if (kind === 'video') return { ...base, ...videoFacts(JSON.parse((await run('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', ...inputArgs(file)], 30000)).toString('utf8'))) };
+      if (kind === 'image' && tools.exiftool) {
+        const tmp = await remote.head();
+        try { return { ...base, ...photoFacts(await exif(tools.exiftool, tmp)) }; } finally { fs.rmSync(tmp, { force: true }); }
+      }
+      return base;
+    } catch (e) { return { ...base, error: e instanceof Error ? e.message : String(e) }; }
+  }
   const st = await fs.promises.stat(file);
   const kind = st.isDirectory() ? 'folder' : mediaKind(file) ?? 'image';
   const base: FileDetails = {
@@ -102,7 +118,7 @@ export async function fileDetails(file: string, tools: DetailTools): Promise<Fil
   if (kind === 'folder') return base;
   try {
     if (kind === 'video') {
-      const j = JSON.parse((await run('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file], 15000)).toString('utf8'));
+      const j = JSON.parse((await run('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', ...inputArgs(file)], 15000)).toString('utf8'));
       return { ...base, ...videoFacts(j) };
     }
     const [facts, people] = await Promise.all([

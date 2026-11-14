@@ -17,6 +17,7 @@ import { MoveDialog } from '../components/MoveDialog';
 import { hideItems, usePrivacy } from '../components/Privacy';
 import { Button, Icon, Notice, Segmented } from '../components/ui';
 import { DetailsCard, useDetailsOpen } from '../components/DetailsCard';
+import { MoveToAtticButton, useTransferDone } from '../components/attic';
 import * as T from '../tags';
 
 interface Props {
@@ -539,6 +540,8 @@ export function Library({ settings, onSettings, active, initialDir, onConsumedIn
   const title = mode === 'tagged' ? (playlist ? playlist.name : 'Labelled photos and videos')
     : mode === 'watched' ? (watchRoot ? `${baseName(watchRoot)} · watched` : 'All watched folders') : null;
   useEffect(() => { onState?.({ dir: mode === 'folder' ? dir : null, title: title ?? (dir ? baseName(dir) || dir : 'New tab') }); }, [dir, title, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 1.0.7: files moved to Attic leave this folder; ones brought from Attic arrive.
+  useTransferDone(useCallback(() => { if (modeRef.current === 'folder' && dirRef.current) void relist(dirRef.current); }, [])); // eslint-disable-line react-hooks/exhaustive-deps
   const firstEpoch = useRef(epoch);
   useEffect(() => {
     if (epoch === firstEpoch.current) return;
@@ -805,6 +808,7 @@ ${originText(l)}`}
               )}
               <Button className="!h-8" variant="ghost" onClick={() => cutCopy('move')} title="Ctrl+X">Cut</Button>
               <Button className="!h-8" variant="ghost" onClick={() => cutCopy('copy')} title="Ctrl+C"><Icon name="copy" size={15} />Copy</Button>
+              <MoveToAtticButton paths={selectedEntries.filter(e => !offline(e)).map(e => e.path)} onDone={() => setSelected(new Set())} />
               <Button className="!h-8" variant="ghost" onClick={() => doMove('move')} disabled={!selectedEntries.some(e => !offline(e))}>Move to…</Button>
               <Button className="!h-8" variant="ghost" onClick={() => doMove('copy')} disabled={!selectedEntries.some(e => !offline(e))}>Copy to…</Button>
               {selectedEntries.some(e => !e.hidden) && <Button className="!h-8" variant="ghost" onClick={() => void hide(true)} title="Hide from PixHaven until unlocked with the password"><Icon name="eyeOff" size={15} />Hide</Button>}

@@ -25,9 +25,11 @@ import * as privacy from './privacy';
 import * as wallpaper from './wallpaper-service';
 import * as convert from './convert-service';
 import { SEARCH_LIMIT } from './library/browse';
-import { mediaKind } from '@shared/types';
+import { mediaKind, LIB_IMAGE_EXTENSIONS, LIB_VIDEO_EXTENSIONS } from '@shared/types';
 import { moveAppData } from './app-data-move';
 import { fileDetails } from './library/details';
+import * as attic from './attic-service';
+import { isAttic } from './attic/client';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'clearup', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 
@@ -220,6 +222,7 @@ app.whenReady().then(async () => {
     // Video player: the file itself (with byte ranges for seeking), or an FFmpeg stream for other formats.
     if (url.host === 'media') {
       const p = decodeURIComponent(url.pathname.slice(1));
+      if (isAttic(p) && mediaKind(p) === 'video') return attic.serve(req, p);   // 1.0.7: from Attic, byte ranges passed through
       return mediaKind(p) === 'video' && path.isAbsolute(p) ? player.serveFile(req, p) : new Response('Not found', { status: 404 });
     }
     if (url.host === 'stream') return player.serveStream(url);
@@ -228,10 +231,15 @@ app.whenReady().then(async () => {
       return f ? net.fetch(pathToFileURL(f).toString()) : new Response('Not found', { status: 404 });
     }
     const p = decodeURIComponent(url.pathname.slice(1));
+    if (isAttic(p) && mediaKind(p) === 'image') return attic.serve(req, p);
     if (!(isImageFile(p) || mediaKind(p) === 'image') || !path.isAbsolute(p)) return new Response('Not found', { status: 404 });
     return net.fetch(pathToFileURL(p).toString());
   });
   library.init(info => send('lib:thumb', info));
+  // 1.0.7: Attic, the home file server
+  attic.init();
+  attic.setHooks(s => send('attic:status', s), t => send('attic:transfer', t));
+  setTimeout(() => void attic.status(), 2000);
   // v2.1: watched folders, labels following files moved inside them, and (optionally) writing labels into files.
   tags.setOnMoved((from, to) => watch.moved(from, to));
   tags.setWriteHooks(p => player.isOpen(p), s => send('tags:writeStatus', s));
@@ -326,6 +334,11 @@ handle('power:get', () => ({ onBattery: powerMonitor.isOnBatteryPower() }));
 const imageFilter = { name: 'Images', extensions: IMAGE_EXTENSIONS };
 handle('dialog:openImages', async () => {
   const r = await dialog.showOpenDialog(win!, { properties: ['openFile', 'multiSelections'], filters: [imageFilter] });
+  return r.canceled ? [] : r.filePaths;
+});
+// 1.0.7: photos and videos to send to Attic
+handle('dialog:openMedia', async (title?: string) => {
+  const r = await dialog.showOpenDialog(win!, { title, properties: ['openFile', 'multiSelections'], filters: [{ name: 'Photos and videos', extensions: [...LIB_IMAGE_EXTENSIONS, ...LIB_VIDEO_EXTENSIONS] }, { name: 'All files', extensions: ['*'] }] });
   return r.canceled ? [] : r.filePaths;
 });
 handle('dialog:openFolder', async (title?: string) => {
@@ -543,7 +556,10 @@ handle('lib:list', async (dir: string) => {
 handle('lib:hasMedia', (dirs: string[]) => library.hasMedia(dirs));
 handle('lib:thumbs', (files: { path: string; size: number; mtime: number }[]) => library.thumbs(files));
 handle('lib:pauseThumbs', (p: boolean) => library.pauseThumbs(p));
-handle('lib:preview', (p: string) => library.preview(p));
+handle('lib:preview', async (p: string) => {
+  const r = attic.remoteFor(p);
+  return library.preview(p, r ? await r.stat().then(s => ({ size: s.size, mtime: s.mtimeMs })) : undefined);
+});
 handle('lib:search', (root: string, q: string) => library.search(root, q, u => send('lib:search', { ...u, items: privacy.entries(u.items) }),
   (r, text) => (watch.indexedFor(r) ? watch.searchIndex(r, text, SEARCH_LIMIT) : null)));
 handle('lib:cancelSearch', (id?: number) => library.cancelSearch(id));
@@ -552,6 +568,7 @@ handle('lib:details', (p: string) => {
   if (!privacy.isVisible(p)) throw new Error('This item is hidden. Unlock hidden items to see it.');
   return fileDetails(p, {
     exiftool: fs.existsSync(tags.exiftool()) ? tags.exiftool() : null,
+    remote: f => attic.remoteFor(f),
     people: f => tags.peopleIn(f),
     imageSize: async f => {
       const m = await (await import('sharp')).default(f).metadata();
@@ -560,6 +577,24 @@ handle('lib:details', (p: string) => {
   });
 });
 handle('lib:cacheSize', () => library.cacheSize());
+
+// ---- 1.0.7 Attic ----
+handle('attic:status', () => attic.status());
+handle('attic:current', () => attic.current());
+handle('attic:find', () => attic.find());
+handle('attic:connect', (address: string, port?: number) => attic.connect(address, port));
+handle('attic:pair', (code: string) => attic.pair(code));
+handle('attic:signIn', (username: string, password: string, master: boolean) => attic.signIn(username, password, master));
+handle('attic:signOut', () => attic.signOut());
+handle('attic:forget', () => attic.forget());
+handle('attic:shares', () => attic.shares());
+handle('attic:list', (p: string) => attic.list(p));
+handle('attic:videos', (fresh?: boolean) => attic.videos(!!fresh));
+handle('attic:newFolder', (parent: string, name: string) => attic.newFolder(parent, name));
+handle('attic:move', (p: string, toFolder: string, name?: string) => attic.move(p, toFolder, name));
+handle('attic:trash', (paths: string[]) => attic.trash(paths));
+handle('attic:toAttic', (paths: string[], dest: string, move: boolean) => attic.toAttic(paths, dest, move));
+handle('attic:fromAttic', (items: { path: string; kind: string; size: number }[], dest: string, move: boolean) => attic.fromAttic(items, dest, move));
 handle('lib:clearCache', () => library.clearCache());
 
 // ---- video player (v2.0 Phase B) ----

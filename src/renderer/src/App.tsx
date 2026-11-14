@@ -11,12 +11,14 @@ import { Tidy, type TidyTab } from './pages/Tidy';
 import { LibraryTabs } from './pages/LibraryTabs';
 import { Photos } from './pages/Photos';
 import { Videos } from './pages/Videos';
+import { Attic } from './pages/Attic';
+import { AtticTransfers } from './components/attic';
 import { Wallpaper } from './pages/Wallpaper';
 import { VideoEditor } from './pages/VideoEditor';
 import { ImageGenerator } from './pages/ImageGenerator';
 import { Icon, Notice } from './components/ui';
 
-type Page = 'home' | 'library' | 'photos' | 'videos' | 'wallpaper' | 'editor' | 'generator' | 'upscale' | 'sort' | 'tidy' | 'settings';
+type Page = 'home' | 'library' | 'photos' | 'videos' | 'attic' | 'wallpaper' | 'editor' | 'generator' | 'upscale' | 'sort' | 'tidy' | 'settings';
 
 export default function App() {
   const [page, setPage] = useState<Page>('home');
@@ -37,6 +39,7 @@ export default function App() {
   const [libVisited, setLibVisited] = useState(false);
   const [photosVisited, setPhotosVisited] = useState(false);
   const [videosVisited, setVideosVisited] = useState(false);
+  const [atticVisited, setAtticVisited] = useState(false);
   const [wallVisited, setWallVisited] = useState(false);
   const [editorVisited, setEditorVisited] = useState(false);
   const [pendingConvert, setPendingConvert] = useState<string[] | null>(null);
@@ -83,6 +86,7 @@ export default function App() {
     { id: 'library', label: 'Library', icon: 'library' },
     { id: 'photos', label: 'Photos', icon: 'image' },
     { id: 'videos', label: 'Videos', icon: 'video' },
+    { id: 'attic', label: 'Attic', icon: 'attic' },
     { id: 'wallpaper', label: 'Wallpaper recommended', icon: 'grid' },
     { id: 'editor', label: 'Video editor', icon: 'video' },
     { id: 'upscale', label: 'Upscale', icon: 'sparkle' },
@@ -95,6 +99,7 @@ export default function App() {
   if (page === 'library' && !libVisited) setLibVisited(true);
   if (page === 'photos' && !photosVisited) setPhotosVisited(true);
   if (page === 'videos' && !videosVisited) setVideosVisited(true);
+  if (page === 'attic' && !atticVisited) setAtticVisited(true);
   if (page === 'wallpaper' && !wallVisited) setWallVisited(true);
   if (page === 'editor' && !editorVisited) setEditorVisited(true);
   const convertFiles = (paths: string[]) => { setPendingConvert(paths); setPage('editor'); };
@@ -152,6 +157,7 @@ export default function App() {
             <Icon name="battery" size={16} />On battery power: long jobs run slower and drain the battery. Plug in for best speed.
           </div>
         )}
+        <AtticTransfers />
         <div className="flex-1 min-h-0">
           {page === 'home' && <Home settings={settings} onSettings={setSettings} onUpscale={upscaleFiles} onSort={f => { setPendingSort(f); setPage('sort'); }}
             onTidy={tab => { setTidyTab(tab); setPage('tidy'); }} onLibrary={() => setPage('library')}
@@ -177,6 +183,11 @@ export default function App() {
           {wallVisited && (
             <div className={page === 'wallpaper' ? 'h-full' : 'hidden'}>
               <Wallpaper active={page === 'wallpaper'} onUpscale={upscaleFiles} onSort={sortFolder} onDescribe={describePicture} onSimilar={similarPicture} />
+            </div>
+          )}
+          {atticVisited && (
+            <div className={page === 'attic' ? 'h-full' : 'hidden'}>
+              <Attic active={page === 'attic'} />
             </div>
           )}
           {videosVisited && (

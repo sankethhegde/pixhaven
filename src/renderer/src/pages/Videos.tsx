@@ -11,8 +11,9 @@ import { WatchPage } from '../components/WatchPage';
 import { FilterBar, NO_FILTER, filterActive } from '../components/Tags';
 import { Button, Icon, Notice, Segmented } from '../components/ui';
 import * as T from '../tags';
+import { MoveToAtticButton, useAttic, useTransferDone } from '../components/attic';
 
-type Source = 'all' | 'pc' | 'external' | 'network';
+type Source = 'all' | 'pc' | 'external' | 'network' | 'attic';
 type Order = 'date:desc' | 'date:asc' | 'name:asc' | 'name:desc' | 'size:desc' | 'size:asc';
 const store = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 const rootOf = (p: string) => (/^[a-z]:/i.test(p) ? p.slice(0, 2).toUpperCase() + '\\' : p.startsWith('\\\\') ? p.split('\\').slice(0, 4).join('\\') : '/');
@@ -65,22 +66,46 @@ export function Videos({ active }: { active: boolean }) {
     return () => { live = false; clearTimeout(t); };
   }, [active, query, filter, filterVersion, tick, watched.length]);
 
+  // 1.0.7: Attic's videos too, when Attic is connected (its index; labels and stars are PixHaven's).
+  const attic = useAttic();
+  const [atticItems, setAtticItems] = useState<TaggedMedia[]>([]);
+  useEffect(() => {
+    if (!active || attic.state !== 'connected') { if (attic.state !== 'connected') setAtticItems([]); return; }
+    let live = true;
+    void api.attic.videos(tick > 0).then(list => {
+      if (!live) return;
+      void T.loadFor(list.map(T.ref));
+      setAtticItems(list.map(e => ({ ...e, stars: 0, labels: [], offline: false })));
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [active, attic.state, tick]);
+  useTransferDone(useCallback(() => setTick(t => t + 1), []));
+  const atticShown = useMemo(() => {
+    const q = query.toLowerCase().split(/s+/).filter(Boolean);
+    return atticItems.filter(e => q.every(w => e.name.toLowerCase().includes(w)) && (!filterActive(filter) || (() => {
+      const t = T.tagsOf(e.path);
+      if (!t || t.stars < filter.minStars) return false;
+      return !filter.labels.length || (filter.mode === 'all' ? filter.labels.every(l => t.labels.includes(l)) : filter.labels.some(l => t.labels.includes(l)));
+    })()));
+  }, [atticItems, query, filter, version]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const kindOf = useCallback((p: string): Source => {
+    if (p.startsWith('attic://')) return 'attic';
     const d = drives.find(x => rootOf(x.path) === rootOf(p));
     return d?.kind === 'removable' ? 'external' : d?.kind === 'network' || p.startsWith('\\\\') ? 'network' : 'pc';
   }, [drives]);
   const shown = useMemo(() => {
-    const list = (items ?? []).filter(e => source === 'all' || kindOf(e.path) === source);
+    const list = [...(items ?? []), ...atticShown].filter(e => source === 'all' || kindOf(e.path) === source);
     const [by, dir] = order.split(':');
     const cmp = by === 'date' ? (a: MediaEntry, b: MediaEntry) => a.mtime - b.mtime : by === 'size' ? (a: MediaEntry, b: MediaEntry) => a.size - b.size
       : (a: MediaEntry, b: MediaEntry) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
     return list.sort((a, b) => (dir === 'desc' ? -cmp(a, b) : cmp(a, b)));
-  }, [items, source, order, kindOf]);
+  }, [items, atticShown, source, order, kindOf]);
   const counts = useMemo(() => {
-    const c = { pc: 0, external: 0, network: 0 };
-    for (const e of items ?? []) c[kindOf(e.path) as 'pc' | 'external' | 'network']++;
+    const c = { pc: 0, external: 0, network: 0, attic: 0 };
+    for (const e of [...(items ?? []), ...atticShown]) c[kindOf(e.path) as 'pc' | 'external' | 'network' | 'attic']++;
     return c;
-  }, [items, kindOf]);
+  }, [items, atticShown, kindOf]);
   // Selection survives a new order; what is no longer shown is no longer selected.
   useEffect(() => { setSelected(s => { const here = new Set(shown.map(e => e.path)); return [...s].every(p => here.has(p)) ? s : new Set([...s].filter(p => here.has(p))); }); }, [shown]);
 
@@ -171,6 +196,7 @@ export function Videos({ active }: { active: boolean }) {
         <Segmented label="Where" value={source} onChange={setSource} options={[
           { value: 'all', label: `All` }, { value: 'pc', label: `This PC (${counts.pc})` },
           { value: 'external', label: `External drives (${counts.external})` }, ...(counts.network ? [{ value: 'network' as const, label: `Network (${counts.network})` }] : []),
+          ...(attic.state === 'connected' ? [{ value: 'attic' as const, label: `Attic (${counts.attic})` }] : []),
         ]} />
         <button onClick={() => setShowFilter(!showFilter)} aria-expanded={showFilter} aria-label="Filter by labels and stars"
           className={`h-8 px-3 rounded-lg border text-sm flex items-center gap-1.5 ${filterActive(filter) ? 'border-accent text-accent bg-accent-soft' : 'border-line hover:bg-panel-2'}`}>
@@ -200,7 +226,7 @@ export function Videos({ active }: { active: boolean }) {
       )}
       <div className="flex-1 min-h-0 flex">
         <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-          {!watched.length ? (
+          {!watched.length && !atticItems.length ? (
             <div className="flex-1 flex items-center justify-center p-8">
               <div className="max-w-md text-center space-y-3">
                 <Icon name="video" size={36} className="text-muted mx-auto" />
@@ -216,11 +242,20 @@ export function Videos({ active }: { active: boolean }) {
               showFolder={e => e.path.replace(/[\\/][^\\/]*$/, '')} onClick={onClick} onOpen={i => setWatching(i)} />
           )}
         </div>
-        {details && watched.length > 0 && (
+        {details && (watched.length > 0 || atticItems.length > 0) && (
           <DetailsCard items={sel} infos={infos.current} onClose={() => setDetails(false)} all={shown} allTitle="All videos shown"
             onOpen={e => { const i = shown.indexOf(e as TaggedMedia); if (i >= 0) setWatching(i); }} />
         )}
       </div>
+      {sel.length > 0 && (
+        <footer className="flex items-center gap-2 px-4 min-h-11 py-1.5 border-t border-line text-sm shrink-0" data-testid="videos-selection">
+          <span>{sel.length} selected · {fmtBytes(sel.reduce((n, e) => n + e.size, 0))}</span>
+          <div className="ml-auto flex items-center gap-1">
+            {sel.some(e => !e.path.startsWith('attic://')) && <MoveToAtticButton paths={sel.filter(e => !e.path.startsWith('attic://')).map(e => e.path)} onDone={() => setSelected(new Set())} />}
+            <Button className="!h-8" variant="ghost" onClick={() => setSelected(new Set())}>Clear</Button>
+          </div>
+        </footer>
+      )}
     </div>
     </>
   );

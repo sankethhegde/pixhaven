@@ -43,6 +43,9 @@ export async function quickFingerprint(file: string, size: number): Promise<stri
 
 const exists = async (p: string) => { try { return (await fs.promises.stat(p)).isFile(); } catch { return false; } };
 
+/** 1.0.7: a file on Attic (read over the network, never written into). */
+export const isRemote = (p: string) => p.startsWith('attic://');
+
 export class TagStore {
   readonly db: DatabaseSync;
 
@@ -118,6 +121,15 @@ export class TagStore {
   /** Files carrying a hidden label. */
   pathsWithHiddenLabels(): string[] {
     return (this.db.prepare('SELECT DISTINCT m.path FROM media m JOIN media_labels ml ON ml.media_id = m.id JOIN labels l ON l.id = ml.label_id WHERE l.hidden = 1').all() as { path: string }[]).map(r => r.path);
+  }
+  /** 1.0.7: everything labelled inside a folder that moved (between this PC and Attic too: the separators follow). */
+  movedTree(from: string, to: string): number {
+    const sepOf = (p: string) => (p.startsWith('attic://') ? '/' : path.sep);
+    const f = from.replace(/[\\/]+$/, ''), t = to.replace(/[\\/]+$/, '');
+    const rows = (this.db.prepare(`SELECT path FROM media WHERE path LIKE ? ESCAPE '!'`).all(f.replace(/[!%_]/g, '!$&') + '_%') as { path: string }[])
+      .filter(r => r.path.toLowerCase().startsWith(f.toLowerCase()) && /[\\/]/.test(r.path[f.length] ?? ''));
+    for (const r of rows) this.moved(r.path, t + sepOf(t) + r.path.slice(f.length + 1).split(/[\\/]/).join(sepOf(t)));
+    return rows.length;
   }
   /** A folder renamed or moved by the app: hidden things inside it follow. */
   movedDir(from: string, to: string): void {
@@ -203,7 +215,8 @@ export class TagStore {
   private async ensureNow(f: FileRef): Promise<number> {
     const row = this.rowByPath(f.path);
     if (row && row.size === f.size) return row.id;
-    const fp = await quickFingerprint(f.path, f.size);
+    // 1.0.7: an Attic file (attic://share/path) can't be read here cheaply: its place and size stand in.
+    const fp = isRemote(f.path) ? 'remote:' + crypto.createHash('sha1').update(`${f.path}|${f.size}`).digest('hex').slice(0, 24) : await quickFingerprint(f.path, f.size);
     const now = Date.now();
     if (row) {   // same path, file replaced: keep the tags, refresh the fingerprint
       this.db.prepare('UPDATE media SET size = ?, mtime = ?, fingerprint = ?, updated = ? WHERE id = ?').run(f.size, Math.floor(f.mtime), fp, now, row.id);
@@ -322,8 +335,9 @@ export class TagStore {
     const done: string[] = [];
     const bySize = this.db.prepare('SELECT id, path, fingerprint FROM media WHERE size = ?');
     for (const f of files) {
-      if (this.rowByPath(f.path)) continue;
-      const cands = bySize.all(f.size) as { id: number; path: string; fingerprint: string }[];
+      if (isRemote(f.path) || this.rowByPath(f.path)) continue;
+      // An Attic file's labels stay with it: a local copy of the same file never takes them over.
+      const cands = (bySize.all(f.size) as { id: number; path: string; fingerprint: string }[]).filter(c => !isRemote(c.path));
       if (!cands.length) continue;
       let fp: string | null = null;
       for (const c of cands) {

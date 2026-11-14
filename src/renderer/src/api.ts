@@ -4,7 +4,7 @@ import type {
   PowerStatus, QueueItem, ReviewData, SaveResult, ScanProgress, Settings, SortHistory, SortPlan, TidyResults, UpdateStatus, UpscaleOptions,
   FileWriteStatus, Playlist, WatchChange, WatchedFolder, WatchQuery, WatchResult,
   FileOpResult, KnownFolder, MediaEntry, CombineEstimate, CombineMatch, CombineProgress, CombineRequest, CombineResult, ScanEstimate, MergePlan, MergeResult, PrivacyStatus, WallProgress, WallResult, WallScreen, ConvertCaps, ConvertFile, ConvertOptions, ConvertProgress, ConvertResult, EditSpec, DescribeResult, DescribeStatus, GenImage, GenProgress, GenRequest, GenStatus,
-  DriveInfo, FileDetails, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
+  AtticListing, AtticShareInfo, AtticStatus, AtticTransfer, DriveInfo, FileDetails, FolderListing, MediaInfo, SearchUpdate, BackupInfo, ImportResult, LabelInfo, MediaTags, TaggedMedia, TagFilter, PlayerCaps, PlayInfo, PlayStream, RecentVideo, SubtitleCue, SubtitleTrack,
 } from '@shared/types';
 
 export interface AppInfo { version: string; gpu: GpuStatus; dedicated: boolean; settings: Settings; onBattery: boolean; pendingSort: string | null }
@@ -56,6 +56,25 @@ interface LibApi {
   details(p: string): Promise<FileDetails>;
   cacheSize(): Promise<number>;
   clearCache(): Promise<void>;
+}
+
+interface AtticApi {
+  status(): Promise<AtticStatus>;
+  current(): Promise<AtticStatus>;
+  find(): Promise<{ name: string; address: string; port: number; serverId: string }[]>;
+  connect(address: string, port?: number): Promise<AtticStatus>;
+  pair(code: string): Promise<AtticStatus>;
+  signIn(username: string, password: string, master: boolean): Promise<AtticStatus>;
+  signOut(): Promise<AtticStatus>;
+  forget(): Promise<AtticStatus>;
+  shares(): Promise<AtticShareInfo[]>;
+  list(p: string): Promise<AtticListing>;
+  videos(fresh?: boolean): Promise<MediaEntry[]>;
+  newFolder(parent: string, name: string): Promise<string>;
+  move(p: string, toFolder: string, name?: string): Promise<string>;
+  trash(paths: string[]): Promise<{ done: string[]; failed: { path: string; reason: string }[] }>;
+  toAttic(paths: string[], dest: string, move: boolean): Promise<string>;
+  fromAttic(items: { path: string; kind: string; size: number }[], dest: string, move: boolean): Promise<string>;
 }
 
 interface PlayerApi {
@@ -159,7 +178,10 @@ interface Api {
   lib: LibApi;
   tags: TagsApi;
   player: PlayerApi;
+  attic: AtticApi;
   onLibThumb(cb: (i: MediaInfo) => void): Off;
+  onAtticStatus(cb: (s: AtticStatus) => void): Off;
+  onAtticTransfer(cb: (t: AtticTransfer) => void): Off;
   onLibSearch(cb: (u: SearchUpdate) => void): Off;
   watch: WatchApi;
   onWatchStatus(cb: (s: WatchedFolder[]) => void): Off;
@@ -235,6 +257,7 @@ interface Api {
   saveResult(req: { jobId: string; itemId: string; item: JobItem; saveAs: boolean }): Promise<SaveResult>;
   showItem(p: string): Promise<void>;
   openPath(p: string): Promise<string>;
+  openMedia(title?: string): Promise<string[]>;
   copyText(t: string): Promise<void>;
   openLogs(): Promise<string>;
   licences(): Promise<{ name: string; text: string }[]>;

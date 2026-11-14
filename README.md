@@ -36,6 +36,7 @@ npm run setup:engine     # downloads the engine, models, face models, places, FF
 | `node tests/make-media.mjs <folder>` | Builds the mixed-format test folder (17 photo formats incl. HEIC and 7 RAW, 17 video formats) |
 | `npm run e2e:sort` | Same for Sort by person: scan → review → dry run → apply (no copies, people tagged, folders checked against the photos' real names) → re-scan → undo, on ~50 public test photos (`phase0/fetch-test-photos.mjs`, or set `CLEARUP_TESTPHOTOS`) |
 | `npm run e2e:combine` | Photos → Combine people on two sorted folders made by the test (the same person in both): match, name, estimate, combine, files/face data/names/shortcuts checked, destination opened; Move to / Rename; Merge into… (by hand and by face); search and sort people in Photos and the Sort review; a second rename while a file in the folder is open; the details card in Photos; then Sort → Estimate time |
+| `npm run e2e:attic` | 1.0.7, against a real Attic server from the attic repo next to this one, reached through this PC's network address: "Move to Attic" grey before set-up, address → 6-digit code → sign in (wrong password refused, password not kept), a device account's empty view, the master's files, thumbnails and details over the network, stars kept in PixHaven, an Attic video playing, Move to Attic (labels follow, original to a test recycle bin), the Videos tab's Attic source, rename and delete on Attic (its trash), Move to this PC |
 | `npm run e2e:videos` | 1.0.6: Videos tab (empty state, drives offered, a folder added, sort, search, where), paused middle controls (play, next), Labels & stars in full screen (fades while playing), who made each label (from a photo's keywords vs by you, filter) |
 | `npm run e2e:tabs` | Library tabs and the details card: video and photo details (EXIF), several items, I; copy a video in one tab and paste in another, drag a photo onto a tab, cut and paste back, selection and scroll kept, tabs restored after a reload, Ctrl+T / Ctrl+Tab / Ctrl+W, scroll kept, sidebar arrow / Ctrl+B; folder totals, stars and labels for two videos from the card; the watch page (Up next, Theatre without restart, Full screen, pause on tab switch, Esc back); the nightOwl tip and preset |
 | `npm run e2e:privacy` | Hidden folders, photos, videos and labels (password, wrong password, unlock, lock, rename, change password); Library Copy / Paste, New folder, Copy to |
@@ -250,6 +251,23 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
   1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
+- **Attic tab (1.0.7):** Attic, the home file server (Attic Hub on the HP), inside PixHaven. Set up once: find it on the
+  Wi-Fi (Attic's UDP discovery) or type its address → pair with a 6-digit code from Attic Hub (Devices → Pair a device)
+  → sign in with an Attic account. The password goes to Attic only; PixHaven keeps the pairing and the 30-day session,
+  encrypted with Windows' own protection (`safeStorage`) in `attic.json`. A device account sees only its own and
+  shared files (Attic's rule); the master sees everything. Then it works like the Library: folders, thumbnails (FFmpeg
+  reads Attic videos over the network with the session cookie; photos are fetched), the details card (EXIF from the
+  first 1 MB), the watch page (direct play proxied with byte ranges through `clearup://media/attic…`; remux/convert
+  read the URL), the viewer, stars and labels (kept in PixHaven — never written into the files on the HP; an Attic
+  file's labels never move to a local copy), rename (F2), Move to another Attic folder, Delete (Attic's 30-day trash),
+  New folder, "Send files here", and Copy / Move to this PC. Attic files are `attic://<share>/<path>` everywhere
+  inside PixHaven. `attic/client.ts`, `attic-service.ts`, `pages/Attic.tsx`, `components/attic.tsx`.
+- **Move to Attic (1.0.7):** in the Library and the Videos tab, for one file or a selection (folders too). Blue when
+  Attic is connected, grey with the reason otherwise. Pick an Attic folder (or make one); "Remove from this PC after"
+  moves: each original goes to the Recycle Bin only once its copy on Attic is complete and the same size (a folder only
+  when everything in it arrived); labels and stars follow. "Move to this PC" in the Attic tab is the reverse (Attic's
+  trash). A strip at the top of the window shows progress and the result. Needs Attic Hub 0.14 on the HP (its new move
+  and delete routes). The Videos tab lists Attic's videos too ("Where: Attic").
 - **Videos tab (1.0.6):** every video of the watched folders and drives in one grid (This PC / external drives /
   network, search, labels and stars filter, sort), with the watch page and the details card. It reads the watched-folder
   index, so it opens instantly; "Add a drive or folder" adds a whole drive (C:, E:…) or a folder to it. `pages/Videos.tsx`.

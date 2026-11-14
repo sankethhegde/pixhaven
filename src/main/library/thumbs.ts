@@ -78,6 +78,8 @@ export class ThumbCache {
       row.thumb = 1;
     } catch (e) {
       row.error = String((e as Error).message ?? e).slice(0, 300);
+      // 1.0.7: Attic off or signed out is not the file's fault: tried again next time instead of remembered.
+      if (f.path.startsWith('attic://') && /answer|connect|refused|timed out|timeout|forbidden|unauthori[sz]ed|server returned|fetch failed|403|401|5\d\d/i.test(row.error)) return toInfo(f.path, row);
     }
     this.db.prepare(`INSERT OR REPLACE INTO media_cache (key, path, width, height, duration, codec, thumb, error, used)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(key, f.path, row.width, row.height, row.duration, row.codec, row.thumb, row.error, Date.now());
@@ -150,9 +152,25 @@ function toInfo(p: string, r: Row): MediaInfo {
   };
 }
 
+// 1.0.7: photos on Attic are read over the network (the Attic module registers how); null = a local file.
+let remoteBytes: (file: string) => Promise<Buffer> | null = () => null;
+export function setRemoteReader(fn: (file: string) => Promise<Buffer> | null): void { remoteBytes = fn; }
+
 /** Any library photo as an upright sharp pipeline, with its displayed size. */
 export async function openStill(file: string): Promise<{ img: Sharp; width: number; height: number }> {
   const e = ext(file);
+  const remote = remoteBytes(file);
+  if (remote) {
+    // HEIC and camera RAW: FFmpeg reads them from Attic itself (RAW previews need ExifTool on a local file).
+    if (HEIF.includes(e) || RAW_EXTENSIONS.includes(e)) return fromBuffer(await decodeStill(file));
+    const buf = await remote;
+    if (e === 'bmp') { const b = decodeBmp(buf); return { img: sharp(b.data, { raw: { width: b.width, height: b.height, channels: 4 } }), width: b.width, height: b.height }; }
+    const img = sharp(buf, { failOn: 'none', limitInputPixels: false });
+    const m = await img.metadata();
+    if (!m.width || !m.height) return fromBuffer(await decodeStill(file));
+    const swap = (m.orientation ?? 1) >= 5;
+    return { img: img.rotate(), width: swap ? m.height : m.width, height: swap ? m.width : m.height };
+  }
   if (RAW_EXTENSIONS.includes(e)) {
     const p = await rawPreview(file);
     return { img: rotatedPreview(p), width: p.width, height: p.height };

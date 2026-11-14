@@ -515,3 +515,20 @@ export interface FileDetails {
   people?: string[];
   error?: string;
 }
+
+// ---------- 1.0.7 Attic (the home file server) inside PixHaven ----------
+/** none: never set up · offline: set up, not answering · unpaired: needs a code from Attic Hub · signed-out · connected. */
+export interface AtticStatus {
+  state: 'none' | 'offline' | 'unpaired' | 'signed-out' | 'connected';
+  name?: string; address?: string; port?: number;
+  account?: { displayName: string; username: string; type: 'master' | 'device' } | null;
+  error?: string;
+}
+export interface AtticShareInfo { id: string; name: string; path: string }   // path: attic://<id>
+export interface AtticListing { share: string; path: string; entries: MediaEntry[]; otherFiles: number }
+/** Copying or moving between this PC and Attic. */
+export interface AtticTransfer {
+  id: string; kind: 'to-attic' | 'from-attic'; move: boolean;
+  files: number; done: number; bytes: number; totalBytes: number; current: string | null;
+  finished: boolean; failed: { path: string; reason: string }[]; moved: { from: string; to: string }[];
+}

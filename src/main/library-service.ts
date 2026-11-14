@@ -69,9 +69,9 @@ export async function thumbsIdle(maxMs = 30_000): Promise<void> {
 /** Runs `fn` (a rename) while no thumbnail is being made inside `p`. */
 export const withoutThumbsIn = <T>(p: string, fn: () => Promise<T>): Promise<T> => { getCache(); return queue!.hold(p, fn); };
 
-export async function preview(p: string) {
-  const s = await fs.promises.stat(p);
-  return getCache().preview({ path: p, size: s.size, mtime: s.mtimeMs });
+export async function preview(p: string, known?: { size: number; mtime: number }) {
+  const s: { size: number; mtime: number } = known ?? await fs.promises.stat(p).then(st => ({ size: st.size, mtime: st.mtimeMs }));   // 1.0.7: Attic files say their size
+  return getCache().preview({ path: p, size: s.size, mtime: s.mtime });
 }
 
 /** Serves clearup://thumb/<ab>/<key>.jpg and clearup://preview/<key>.jpg from the cache folder. */

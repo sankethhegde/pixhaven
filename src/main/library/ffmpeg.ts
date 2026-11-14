@@ -9,6 +9,13 @@ let toolDir = '';
 export function setFfmpegDir(dir: string): void { toolDir = dir; }
 export const tool = (name: 'ffmpeg' | 'ffprobe') => path.join(toolDir, IS_WIN ? `${name}.exe` : name);
 
+// 1.0.7: a file can also be an Attic file (attic://share/path), read over the home network: the Attic module
+// registers how (its URL plus the session cookie). Everything else is a local path.
+let resolver: (file: string) => string[] | null = () => null;
+export function setInputResolver(fn: (file: string) => string[] | null): void { resolver = fn; }
+/** FFmpeg / FFprobe input arguments for a file: `-i <path>`, or `-headers … -i <url>`. */
+export const inputArgs = (file: string): string[] => resolver(file) ?? ['-i', file];
+
 /** Runs a tool and collects stdout; kills it after `timeoutMs`. */
 export function run(name: 'ffmpeg' | 'ffprobe', args: string[], timeoutMs = 20000): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -30,7 +37,7 @@ export function run(name: 'ffmpeg' | 'ffprobe', args: string[], timeoutMs = 2000
 export interface VideoFacts { duration: number; width: number; height: number; codec: string; hasVideo: boolean }
 
 export async function probeVideo(file: string): Promise<VideoFacts> {
-  const json = JSON.parse((await run('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file])).toString('utf8'));
+  const json = JSON.parse((await run('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', ...inputArgs(file)])).toString('utf8'));
   const v = (json.streams ?? []).find((s: any) => s.codec_type === 'video' && !s.disposition?.attached_pic);
   const duration = Number(json.format?.duration ?? v?.duration ?? 0) || 0;
   if (!v) return { duration, width: 0, height: 0, codec: '', hasVideo: false };
@@ -42,7 +49,7 @@ export async function probeVideo(file: string): Promise<VideoFacts> {
 /** One JPEG frame, at most `max` pixels on the long side. Seeks to `at` seconds (falls back to the first frame). */
 export async function videoFrame(file: string, at: number, max: number): Promise<Buffer> {
   const args = (t: number) => [
-    '-v', 'error', ...(t > 0 ? ['-ss', t.toFixed(2)] : []), '-i', file, '-map', '0:V:0', '-frames:v', '1', '-an', '-sn',
+    '-v', 'error', ...(t > 0 ? ['-ss', t.toFixed(2)] : []), ...inputArgs(file), '-map', '0:V:0', '-frames:v', '1', '-an', '-sn',
     '-vf', `scale=w=${max}:h=${max}:force_original_aspect_ratio=decrease:force_divisible_by=2`,
     '-f', 'image2pipe', '-c:v', 'mjpeg', '-q:v', '4', '-',
   ];
@@ -54,5 +61,5 @@ export async function videoFrame(file: string, at: number, max: number): Promise
 
 /** Decodes a HEIC/HEIF photo (phone tile grids and rotation included) to a PNG. */
 export function decodeStill(file: string): Promise<Buffer> {
-  return run('ffmpeg', ['-v', 'error', '-i', file, '-frames:v', '1', '-f', 'image2pipe', '-c:v', 'png', '-compression_level', '1', '-'], 30000);
+  return run('ffmpeg', ['-v', 'error', ...inputArgs(file), '-frames:v', '1', '-f', 'image2pipe', '-c:v', 'png', '-compression_level', '1', '-'], 30000);
 }

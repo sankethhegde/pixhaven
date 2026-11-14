@@ -114,8 +114,9 @@ export default async function run(win, app) {
       check('auto-complete offers existing labels', offered[0] === 'Family', offered.join(' | '));
       await js(`(() => { const i = document.querySelector('[aria-label="Labels and stars for the selection"] input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, ''); i.dispatchEvent(new Event('input', { bubbles: true })); i.blur(); })()`);
       await addLabel('2024', '[aria-label="Labels and stars for the selection"]');
+      for (let i = 0; i < 50 && Object.values(await stateOf(ROOT)).filter(t => t.labels.includes('2024')).length < 52; i++) await sleep(200);   // 52 new files: a moment
       let st = await stateOf(ROOT);
-      check('bulk label on 52 videos at once', Object.values(st).filter(t => t.labels.includes('2024')).length === 52);
+      check('bulk label on 52 videos at once', Object.values(st).filter(t => t.labels.includes('2024')).length === 52, `${Object.values(st).filter(t => t.labels.includes('2024')).length} of 52`);
       await shot('02-bulk');
       await tile('birthday.mkv');
       for (let i = 0; i < 10; i++) await tile(`clip_00${i}.mp4`, 'click', { ctrl: true });

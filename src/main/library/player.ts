@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AudioTrack, PlayerCaps, PlayMode, SubtitleCue } from '../../shared/types';
-import { run } from './ffmpeg';
+import { inputArgs, run } from './ffmpeg';
 
 export interface SubStream { index: number; codec: string; language?: string; title?: string; text: boolean }
 export interface MediaProbe {
@@ -22,7 +22,7 @@ const AUDIO_OK = ['aac', 'mp3', 'opus', 'vorbis', 'flac'];     // Chromium plays
 const AUDIO_IN_MP4 = ['aac', 'mp3'];                             // copied as-is when remuxing; others become AAC
 
 export async function probeMedia(file: string): Promise<MediaProbe> {
-  const j = JSON.parse((await run('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file])).toString('utf8'));
+  const j = JSON.parse((await run('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', ...inputArgs(file)])).toString('utf8'));
   const streams: any[] = j.streams ?? [];
   const v = streams.find(s => s.codec_type === 'video' && !s.disposition?.attached_pic);
   const fps = (r: string | undefined) => { const [a, b] = String(r ?? '0/1').split('/').map(Number); return b ? a / b : 0; };
@@ -97,7 +97,7 @@ export function streamArgs(file: string, p: MediaProbe, mode: Exclude<PlayMode, 
   // and Vulkan one after another and can stall on a machine without a working GPU, so it decodes on the CPU there.
   if (mode === 'transcode' && process.platform === 'win32') args.push('-hwaccel', 'auto');
   if (start > 0) args.push('-ss', start.toFixed(3));
-  args.push('-i', file, '-map', '0:V:0?');
+  args.push(...inputArgs(file), '-map', '0:V:0?');
   if (a) args.push('-map', `0:a:${audioIndex}`);
   if (mode === 'remux') {
     args.push('-c:v', 'copy');
@@ -121,7 +121,7 @@ export async function keyframeAtOrBefore(file: string, p: MediaProbe, t: number)
   for (const back of [20, 120, Infinity]) {
     const from = Math.max(0, t - back);
     const out = (await run('ffprobe', ['-v', 'error', '-select_streams', 'V:0', '-show_entries', 'packet=pts_time,flags', '-of', 'csv=p=0',
-      '-read_intervals', `${(from + p.start).toFixed(3)}%${(t + p.start + 0.001).toFixed(3)}`, file], 20000)).toString('utf8');
+      '-read_intervals', `${(from + p.start).toFixed(3)}%${(t + p.start + 0.001).toFixed(3)}`, ...inputArgs(file)], 20000)).toString('utf8');
     let best = -1;
     for (const line of out.split(/\r?\n/)) {
       const [pts, flags] = line.split(',');
@@ -139,11 +139,11 @@ export async function seekFrame(file: string, t: number, width = 192): Promise<B
   const tail = ['-map', '0:V:0', '-frames:v', '1', '-vf', `scale=${width}:-2`, '-f', 'image2pipe', '-c:v', 'mjpeg', '-q:v', '6', '-'];
   const at = Math.max(0, t).toFixed(2);
   try {
-    const jpg = await run('ffmpeg', ['-v', 'error', '-skip_frame', 'nokey', '-noaccurate_seek', '-ss', at, '-i', file, ...tail], 15000);
+    const jpg = await run('ffmpeg', ['-v', 'error', '-skip_frame', 'nokey', '-noaccurate_seek', '-ss', at, ...inputArgs(file), ...tail], 15000);
     if (jpg.length) return jpg;
   } catch { /* below */ }
   // Few keyframes (screen recordings, some encoders): none at or after the jump point, so decode up to it instead.
-  return run('ffmpeg', ['-v', 'error', '-ss', at, '-i', file, ...tail], 20000);
+  return run('ffmpeg', ['-v', 'error', '-ss', at, ...inputArgs(file), ...tail], 20000);
 }
 
 // ---------- subtitles (PLAY-03) ----------
@@ -170,7 +170,7 @@ export async function subtitleCues(file: string, index: number | null): Promise<
     // Old .srt files are often not UTF-8 (Windows-1252 and friends).
     try { new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(file)); } catch { args.push('-sub_charenc', 'CP1252'); }
   }
-  args.push('-i', file, ...(index === null ? [] : ['-map', `0:s:${index}`]), '-f', 'webvtt', '-');
+  args.push(...(index === null ? ['-i', file] : inputArgs(file)), ...(index === null ? [] : ['-map', `0:s:${index}`]), '-f', 'webvtt', '-');
   return parseVtt((await run('ffmpeg', args, 30000)).toString('utf8'));
 }
 
