@@ -77,9 +77,21 @@ fs.writeFileSync('resources/geo/places.json', JSON.stringify({ source: 'GeoNames
 console.log(`Places: ${cities.length} cities, ${Object.keys(countries).length} countries`);
 
 // FFmpeg + FFprobe for the media library (video thumbnails and info, HEIC photos): LGPL build, shared libraries.
-const FF = WIN ? 'ffmpeg-n9.0-latest-win64-lgpl-shared-9.0' : 'ffmpeg-n9.0-latest-linux64-lgpl-shared-9.0';
-const ffArchive = `vendor/dl/${FF}${WIN ? '.zip' : '.tar.xz'}`;
-await download(`https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${FF}${WIN ? '.zip' : '.tar.xz'}`, ffArchive);
+// 1.0.9: a fixed, dated build — "latest" changes every day, and the 19 Nov 2026 one broke the libkvazaar (HEVC/HEIC)
+// encoder, so a release could have shipped a broken FFmpeg. This is the build 1.0.4–1.0.8 were made and tested with.
+// Dated builds are pruned after a while: if this one is gone, "latest" is used with a warning (pin a newer one then).
+const FF_TAG = 'autobuild-2026-11-15-12-40';
+const FF_PINNED = WIN ? 'ffmpeg-n9.0.2-57-gd838f9f9ae-win64-lgpl-shared-9.0' : 'ffmpeg-n9.0.2-57-gd838f9f9ae-linux64-lgpl-shared-9.0';
+const FF_LATEST = WIN ? 'ffmpeg-n9.0-latest-win64-lgpl-shared-9.0' : 'ffmpeg-n9.0-latest-linux64-lgpl-shared-9.0';
+const ffExt = WIN ? '.zip' : '.tar.xz';
+let FF = FF_PINNED;
+try { await download(`https://github.com/BtbN/FFmpeg-Builds/releases/download/${FF_TAG}/${FF_PINNED}${ffExt}`, `vendor/dl/${FF_PINNED}${ffExt}`); }
+catch (e) {
+  console.warn(`::warning title=FFmpeg::The pinned FFmpeg build (${FF_TAG}) is gone (${e.message}); using "latest". Pin a newer dated build in scripts/setup-engine.mjs.`);
+  FF = FF_LATEST;
+  await download(`https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${FF_LATEST}${ffExt}`, `vendor/dl/${FF_LATEST}${ffExt}`);
+}
+const ffArchive = `vendor/dl/${FF}${ffExt}`;
 if (!fs.existsSync(`vendor/ffmpeg/${FF}`)) {
   fs.mkdirSync('vendor/ffmpeg', { recursive: true });
   if (WIN) unzip(ffArchive, 'vendor/ffmpeg');

@@ -189,22 +189,25 @@ test('stars and labels written into files and sidecars, and cleaned again (TAG-0
 
 test('1.0.9: a whole drive watched: changes in AppData, Temp and the like are never read (and old strays are cleaned)', async () => {
   const { inSkipped } = await load('library/media-index');
+  // What the walk leaves out on each system: AppData and Program Files on Windows; dot-folders and node_modules on Linux.
+  const APP = process.platform === 'win32' ? ['AppData', 'Local'] : ['.cache'];
+  const PROG = process.platform === 'win32' ? 'Program Files' : 'node_modules';
   const root = path.join(tmp, 'Drive');
   put(path.join(root, 'Users', 'Me', 'Videos', 'trip.mp4'));
-  for (let i = 0; i < 30; i++) put(path.join(root, 'Users', 'Me', 'AppData', 'Local', 'Browser', 'Cache', `c${i}`, `v${i}.mp4`));
-  put(path.join(root, 'Program Files', 'App', 'intro.mp4'));
+  for (let i = 0; i < 30; i++) put(path.join(root, 'Users', 'Me', ...APP, 'Browser', 'Cache', `c${i}`, `v${i}.mp4`));
+  put(path.join(root, PROG, 'App', 'intro.mp4'));
   const ix = new MediaIndex(path.join(tmp, 'idx-drive', 'index.db'));
   const id = ix.addRoot(root);
   assert.equal(await ix.scan(id), 'done');
   const all = () => ix.query({}).items.map(e => path.relative(root, e.path)).sort();
   assert.deepEqual(all(), [path.join('Users', 'Me', 'Videos', 'trip.mp4')]);
-  assert.ok(inSkipped(path.join(root, 'Users', 'Me', 'AppData', 'Local', 'Browser'), root, false));
+  assert.ok(inSkipped(path.join(root, 'Users', 'Me', ...APP, 'Browser'), root, false));
   assert.ok(!inSkipped(path.join(root, 'Users', 'Me', 'Videos'), root, false));
   assert.ok(!inSkipped(root, root, false));
   // What the watcher reports from deep inside AppData: nothing read, nothing added
-  const deep = path.join(root, 'Users', 'Me', 'AppData', 'Local', 'Browser', 'Cache', 'c3');
+  const deep = path.join(root, 'Users', 'Me', ...APP, 'Browser', 'Cache', 'c3');
   assert.deepEqual(await ix.rescanDir(deep), { added: [], removed: [] });
-  assert.deepEqual(await ix.rescanDir(path.join(root, 'Users', 'Me', 'AppData')), { added: [], removed: [] });
+  assert.deepEqual(await ix.rescanDir(path.join(root, 'Users', 'Me', APP[0])), { added: [], removed: [] });
   assert.equal(all().length, 1);
   // an unknown folder deep down (not a new subfolder of a known one) is not walked either
   put(path.join(root, 'Users', 'Me', 'Videos', 'a', 'b', 'c', 'deep.mp4'));
