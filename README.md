@@ -253,7 +253,7 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
   1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
-- **Fixes (1.0.9):**
+- **Fixes (1.0.9, released as 1.0.10 — the v1.0.9 build failed on an FFmpeg download; FFmpeg is now pinned to a dated build):**
   - **"Not Responding" with a whole drive watched** (Videos tab → Add a drive): Windows reports every change on the
     drive, and AppData (a browser's cache, Temp, PixHaven's own thumbnails) changes all the time. Those changes were
     re-read, the unknown folders below them walked "all the way down", and Windows' "too many changes" made the whole
