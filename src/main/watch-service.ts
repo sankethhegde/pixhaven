@@ -10,7 +10,7 @@ import { app } from 'electron';
 import type { MediaKind, TaggedMedia, WatchChange, WatchedFolder, WatchQuery, WatchResult } from '@shared/types';
 import { getSettings, updateSettings } from './settings';
 import { log } from './logger';
-import { MediaIndex, isInside, type DirChange } from './library/media-index';
+import { MediaIndex, inSkipped, isInside, type DirChange } from './library/media-index';
 import * as tags from './tags-service';
 
 const IS_WIN = process.platform === 'win32';
@@ -41,6 +41,8 @@ export function init(status: (s: WatchedFolder[]) => void, change: (c: WatchChan
   const ix = idx();
   // The settings list is the truth; the index follows it (it is only a cache).
   for (const r of ix.roots()) if (!folders().some(f => key(f) === key(r.path))) ix.removeRoot(r.path);
+  // 1.0.9: what change storms put into the index from skipped parts (AppData…) goes.
+  try { const n = ix.purgeSkipped(getSettings().library.showSystem); if (n) log('info', `Removed ${n} file(s) indexed from system and app folders`); } catch (e) { log('warn', 'Cleaning the index failed', e); }
   for (const f of folders()) {
     ix.addRoot(f);
     fullScan.add(f);     // a quick check at every start finds what changed while PixHaven was closed (or resumes)
@@ -204,11 +206,15 @@ function startWatch(f: string): void {
   if (watchers.has(key(f))) return;
   try {
     const w = fs.watch(f, { recursive: true }, (_ev, name) => {
-      if (!name) { fullScan.add(f); void pump(); return; }       // too many changes at once: walk again
+      if (!name) { overflow(f); return; }                         // too many changes at once: walk again (now and then)
       const n = name.toString();
       // The watched folder itself was renamed or deleted (Windows then reports its full path).
       if (path.isAbsolute(n) || n.startsWith('\\\\?\\')) { setTimeout(checkOffline, 500); return; }
-      dirty.add(path.dirname(path.join(f, n)));
+      const d = path.dirname(path.join(f, n));
+      // 1.0.9: a change in a part never indexed (AppData, Program Files, .git…) is not ours to read. With a whole drive
+      // watched, a browser's cache and Temp change all the time: reading them kept PixHaven busy and "Not Responding".
+      if (inSkipped(d, f, getSettings().library.showSystem)) return;
+      dirty.add(d);
       if (dirtyTimer) clearTimeout(dirtyTimer);
       dirtyTimer = setTimeout(() => void flushDirty(), 1200);
     });
@@ -228,6 +234,16 @@ function startWatch(f: string): void {
   }
 }
 
+/** Windows lost track (too many changes at once): walk the folder again, but at most every 15 minutes. */
+const lastOverflow = new Map<string, number>();
+function overflow(f: string): void {
+  const t = lastOverflow.get(key(f)) ?? 0;
+  if (Date.now() - t < 15 * 60_000) return;
+  lastOverflow.set(key(f), Date.now());
+  log('info', `Many changes at once in ${f}: indexing it again`);
+  fullScan.add(f); void pump();
+}
+
 async function flushDirty(): Promise<void> {
   dirtyTimer = null;
   const list = [...dirty];
@@ -237,12 +253,15 @@ async function flushDirty(): Promise<void> {
   const all: DirChange = { added: [], removed: [] };
   const seen = new Set<string>();
   for (const d of list) {
+    if (closing) return;                                  // quitting: the index is being closed
     if (seen.has(key(d))) continue;
     seen.add(key(d));
-    if (!folders().some(f => isInside(d, f))) continue;
+    const root = folders().find(f => isInside(d, f));
+    if (!root || inSkipped(d, root, getSettings().library.showSystem)) continue;
     try {
       const c = await idx().rescanDir(d, getSettings().library.showSystem);
-      all.added.push(...c.added); all.removed.push(...c.removed);
+      for (const a of c.added) all.added.push(a);          // (not push(...): a huge list overflows the call stack)
+      for (const p of c.removed) all.removed.push(p);
     } catch (e) { log('warn', `Re-reading ${d} failed`, e); }
   }
   await changed(list, all);

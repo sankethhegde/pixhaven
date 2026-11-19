@@ -94,6 +94,7 @@ interface PlayerApi {
   positions(paths: string[]): Promise<Record<string, { position: number; duration: number }>>;
   playing(b: boolean): Promise<void>;
   recent(): Promise<RecentVideo[]>;
+  clearRecent(paths?: string[]): Promise<void>;
 }
 
 type Ref = { path: string; size: number; mtime: number };

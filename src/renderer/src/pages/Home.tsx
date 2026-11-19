@@ -93,11 +93,20 @@ function RecentVideos({ onPlay }: { onPlay: (path: string) => void }) {
   const name = (p: string) => p.split(/[\\/]/).pop();
   return (
     <div className="space-y-2" aria-label="Recently played">
-      <div className="text-sm text-muted">Recently played</div>
+      <div className="flex items-center gap-3">
+        <div className="text-sm text-muted">Recently played</div>
+        {/* 1.0.9: take them off here (where each was left is kept, so they still carry on where you stopped) */}
+        <button className="text-xs text-accent hover:underline" data-testid="clear-recent" title="Take every video off Recently played. They still carry on where you stopped."
+          onClick={() => { void api.player.clearRecent().then(() => setList([])); }}>Clear all</button>
+      </div>
       <div className="flex gap-3 overflow-x-auto pb-1">
         {list.map(v => (
-          <button key={v.path} onClick={() => onPlay(v.path)} title={v.path} className="shrink-0 w-44 text-left rounded-xl border border-line bg-panel hover:border-accent overflow-hidden">
+          <button key={v.path} onClick={() => onPlay(v.path)} title={v.path} className="group shrink-0 w-44 text-left rounded-xl border border-line bg-panel hover:border-accent overflow-hidden" data-recent={name(v.path)}>
             <div className="relative h-24 bg-panel-2 flex items-center justify-center">
+              <span role="button" tabIndex={0} aria-label={`Remove ${name(v.path)} from Recently played`} title="Remove from Recently played"
+                onClick={e => { e.stopPropagation(); void api.player.clearRecent([v.path]).then(() => setList(l => l.filter(x => x.path !== v.path))); }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); void api.player.clearRecent([v.path]).then(() => setList(l => l.filter(x => x.path !== v.path))); } }}
+                className="absolute top-1 right-1 z-10 h-6 w-6 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-black"><Icon name="x" size={12} /></span>
               {thumbs[v.path]?.thumb ? <img src={thumbs[v.path].thumb!} alt="" className="h-full w-full object-cover" /> : <Icon name="video" size={24} className="text-muted" />}
               {v.duration > 0 && v.position >= 5 && (
                 <div className="absolute bottom-0 inset-x-0 h-1 bg-black/40"><div className="h-full bg-accent" style={{ width: `${Math.min(100, (v.position / v.duration) * 100)}%` }} /></div>

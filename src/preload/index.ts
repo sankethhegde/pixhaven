@@ -148,6 +148,7 @@ const api = {
     positions: (paths: string[]) => invoke('player:positions', paths),
     playing: (b: boolean) => invoke('player:playing', b),
     recent: () => invoke('player:recent'),
+    clearRecent: (paths?: string[]) => invoke('player:clearRecent', paths),
   },
   tags: {
     labels: () => invoke('tags:labels'),

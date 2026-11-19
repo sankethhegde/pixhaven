@@ -34,6 +34,14 @@ export function isInside(p: string, dir: string): boolean {
   return IS_WIN ? p.toLowerCase().startsWith(pre.toLowerCase()) : p.startsWith(pre);
 }
 
+/** 1.0.9: is this folder inside a watched folder in a part the walk leaves out (AppData, Program Files, $Recycle.Bin,
+ * .git, node_modules…)? Changes there (a browser's cache, Temp, PixHaven's own thumbnails) must not be read at all. */
+export function inSkipped(dir: string, root: string, showSystem: boolean): boolean {
+  if (!isInside(dir, root)) return true;
+  const rel = path.relative(root, dir);
+  return !!rel && rel.split(/[\\/]/).some(seg => seg && skipDir(seg, showSystem));
+}
+
 export class MediaIndex {
   readonly db: DatabaseSync;
 
@@ -208,7 +216,10 @@ export class MediaIndex {
   async rescanDir(dir: string, showSystem = false): Promise<DirChange> {
     const r = this.rootOf(dir);
     const out: DirChange = { added: [], removed: [] };
-    if (!r) return out;
+    if (!r || inSkipped(dir, r.path, showSystem)) return out;
+    // 1.0.9: only folders the index knows (or new ones right inside a known one). An unknown folder deep in a part
+    // never walked used to be read "all the way down" on every change.
+    if (!same(dir, r.path) && !this.knowsDir(dir) && !this.knowsDir(path.dirname(dir))) return out;
     const res = await this.readDir(dir, showSystem);
     if (!res) {
       // The folder itself is gone (deleted or moved away): forget it and everything below.
@@ -221,9 +232,9 @@ export class MediaIndex {
     const fresh = res.subdirs.filter(isNew);
     const vanished = knownSubs.filter(k => !res.subdirs.some(d => same(d, k)));
     this.tx(() => this.apply(r.id, gen, dir, res, true));
-    out.added.push(...res.added);
-    out.removed.push(...res.removed);
-    for (const v of vanished) out.removed.push(...this.forgetTree(v));
+    for (const a of res.added) out.added.push(a);          // (not push(...): a huge list overflows the call stack)
+    for (const p of res.removed) out.removed.push(p);
+    for (const v of vanished) for (const p of this.forgetTree(v)) out.removed.push(p);
     // New subfolders (made, copied or moved in): index them now, all the way down.
     const stack = [...fresh];
     while (stack.length) {
@@ -231,10 +242,26 @@ export class MediaIndex {
       const sub = await this.readDir(d, showSystem);
       if (!sub) continue;
       this.tx(() => this.apply(r.id, gen, d, sub, true));
-      out.added.push(...sub.added);
-      stack.push(...sub.subdirs);
+      for (const a of sub.added) out.added.push(a);
+      for (const s2 of sub.subdirs) stack.push(s2);
     }
     return out;
+  }
+
+  private knowsDir(dir: string): boolean { return !!this.db.prepare('SELECT 1 FROM dirs WHERE path = ?').get(dir); }
+
+  /** 1.0.9: drops what earlier versions indexed inside skipped parts of a watched folder (from the change storms). */
+  purgeSkipped(showSystem: boolean): number {
+    let n = 0;
+    for (const r of this.roots()) {
+      const bad = (this.db.prepare('SELECT path FROM dirs WHERE root = ?').all(r.id) as { path: string }[]).map(x => x.path).filter(d => inSkipped(d, r.path, showSystem));
+      if (!bad.length) continue;
+      this.tx(() => {
+        const delF = this.db.prepare('DELETE FROM files WHERE dir = ?'), delD = this.db.prepare('DELETE FROM dirs WHERE path = ?');
+        for (const d of bad) { n += Number(delF.run(d).changes); delD.run(d); }
+      });
+    }
+    return n;
   }
 
   /** Removes a folder and everything below it from the index; returns the files removed. */

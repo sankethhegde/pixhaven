@@ -619,7 +619,8 @@ handle('player:frame', (p: string, t: number) => player.frame(p, t));
 handle('player:position', (p: string, t: number, d: number) => { player.savePosition(p, t, d); send('player:positions', { [p]: tags.tagStore().positions([p])[p] ?? null }); });
 handle('player:positions', (paths: string[]) => tags.tagStore().positions(paths));   // 1.0.8: the line under video thumbnails
 handle('player:playing', (b: boolean) => { player.playing(b); watch.pause('player', b); });
-handle('player:recent', () => privacy.paths(player.recent(), r => r.path));
+handle('player:recent', async () => privacy.paths(await player.recent(), r => r.path));
+handle('player:clearRecent', (paths?: string[]) => player.clearRecent(paths));   // 1.0.9
 
 // ---- labels and stars (v2.0 Phase C) ----
 type Ref = { path: string; size: number; mtime: number };
@@ -689,7 +690,7 @@ handle('privacy:hide', (items: { path: string; folder: boolean }[], on: boolean)
 handle('privacy:hideLabel', (id: number, on: boolean) => privacy.hideLabel(id, on));
 handle('tags:renameFile', (p: string, name: string) => tags.renameFile(p, name));
 // v2.5 Photos tab
-handle('photos:folders', () => privacy.paths(sort.knownFolders(), k => k.path));
+handle('photos:folders', async () => privacy.paths(await sort.knownFolders(), k => k.path));
 handle('photos:person', (pid: number) => { const r = sort.personItems(pid); return r.dir && !privacy.isVisible(r.dir) ? { dir: null, items: [] } : { ...r, items: privacy.entries(r.items) }; });
 // v2.9 merge a person into the people they really are
 handle('photos:mergeSuggest', (pid: number) => sort.mergeSuggest(pid));

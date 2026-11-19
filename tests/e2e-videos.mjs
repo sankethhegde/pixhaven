@@ -77,7 +77,7 @@ export default async function run(win, app) {
     await waitFor(async () => !!(await js(`!!${page}`)), 10000);
     check('Videos tab: with nothing added it says how to start', (await js(`${page}.innerText`)).includes('Add a drive or folder'));
     await js(`document.querySelector('[data-testid=videos-page] button[aria-expanded]').click()`);
-    await sleep(400);
+    await waitFor(async () => (await js(`document.querySelectorAll('[role=menu][aria-label="Add a drive or folder"] [data-add-drive]').length`)) > 0, 10000).catch(() => {});   // drives take a moment to list
     const menu = await js(`[...document.querySelectorAll('[role=menu][aria-label="Add a drive or folder"] [role=menuitem]')].map(b => b.innerText.trim())`);
     check('"Add a drive or folder" offers the drives and a folder chooser', menu.some(m => /\(C:\)|C:/.test(m)) && menu.includes('Choose a folder…'), menu.join(' | '));
     await key('Escape');

@@ -353,7 +353,18 @@ export function undoSortJob(sortId: number, ev: Pick<SortEvents, 'apply'>): Prom
 // ---------- v2.5 Photos tab ----------
 
 /** Folders scanned or sorted before that are still there (the Photos tab's list), most recent first. */
-export function knownFolders(): KnownFolder[] {
+/** 1.0.9: is this folder there? Asked off the main thread, at most 2 s (a sleeping or unplugged external drive used
+ * to hold the window for 1–2 s every time the Photos tab opened); answers are kept for 20 s. */
+const seenThere = new Map<string, { at: number; there: boolean }>();
+async function thereSoon(p: string): Promise<boolean> {
+  const c = seenThere.get(p.toLowerCase());
+  if (c && Date.now() - c.at < 20_000) return c.there;
+  const there = await Promise.race([fs.promises.access(p).then(() => true, () => false), new Promise<boolean>(r => setTimeout(() => r(false), 2000))]);
+  seenThere.set(p.toLowerCase(), { at: Date.now(), there });
+  return there;
+}
+
+export async function knownFolders(): Promise<KnownFolder[]> {
   const rows = getDb().prepare(`SELECT f.id, f.path, f.last_scan,
       (SELECT COUNT(*) FROM people p WHERE p.folder_id = f.id AND (p.dir IS NOT NULL OR (SELECT COUNT(DISTINCT x.image_id) FROM faces x
         WHERE x.person_id = p.id AND x.removed = 0) >= ?)) AS people,
@@ -361,7 +372,9 @@ export function knownFolders(): KnownFolder[] {
       (SELECT MAX(created) FROM sorts s WHERE s.folder_id = f.id AND s.state = 'done') AS sorted,
       (SELECT COUNT(*) FROM people p WHERE p.folder_id = f.id AND p.dir IS NOT NULL) AS dirs
     FROM folders f ORDER BY COALESCE(sorted, f.last_scan, 0) DESC`).all(getSettings().sort.minPhotos) as { id: number; path: string; last_scan: number | null; people: number; photos: number; sorted: number | null; dirs: number }[];
-  return rows.filter(r => r.people > 0 && fs.existsSync(r.path))
+  const with_ = rows.filter(r => r.people > 0);
+  const there = await Promise.all(with_.map(r => thereSoon(r.path)));
+  return with_.filter((_, i) => there[i])
     .map(r => ({ id: r.id, path: r.path, people: r.people, photos: r.photos, lastScan: r.last_scan, sorted: r.sorted, personFolders: r.dirs }));
 }
 

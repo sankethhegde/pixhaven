@@ -186,3 +186,51 @@ test('stars and labels written into files and sidecars, and cleaned again (TAG-0
   assert.equal(r3[1].ok, true);
   store.close();
 });
+
+test('1.0.9: a whole drive watched: changes in AppData, Temp and the like are never read (and old strays are cleaned)', async () => {
+  const { inSkipped } = await load('library/media-index');
+  const root = path.join(tmp, 'Drive');
+  put(path.join(root, 'Users', 'Me', 'Videos', 'trip.mp4'));
+  for (let i = 0; i < 30; i++) put(path.join(root, 'Users', 'Me', 'AppData', 'Local', 'Browser', 'Cache', `c${i}`, `v${i}.mp4`));
+  put(path.join(root, 'Program Files', 'App', 'intro.mp4'));
+  const ix = new MediaIndex(path.join(tmp, 'idx-drive', 'index.db'));
+  const id = ix.addRoot(root);
+  assert.equal(await ix.scan(id), 'done');
+  const all = () => ix.query({}).items.map(e => path.relative(root, e.path)).sort();
+  assert.deepEqual(all(), [path.join('Users', 'Me', 'Videos', 'trip.mp4')]);
+  assert.ok(inSkipped(path.join(root, 'Users', 'Me', 'AppData', 'Local', 'Browser'), root, false));
+  assert.ok(!inSkipped(path.join(root, 'Users', 'Me', 'Videos'), root, false));
+  assert.ok(!inSkipped(root, root, false));
+  // What the watcher reports from deep inside AppData: nothing read, nothing added
+  const deep = path.join(root, 'Users', 'Me', 'AppData', 'Local', 'Browser', 'Cache', 'c3');
+  assert.deepEqual(await ix.rescanDir(deep), { added: [], removed: [] });
+  assert.deepEqual(await ix.rescanDir(path.join(root, 'Users', 'Me', 'AppData')), { added: [], removed: [] });
+  assert.equal(all().length, 1);
+  // an unknown folder deep down (not a new subfolder of a known one) is not walked either
+  put(path.join(root, 'Users', 'Me', 'Videos', 'a', 'b', 'c', 'deep.mp4'));
+  assert.deepEqual((await ix.rescanDir(path.join(root, 'Users', 'Me', 'Videos', 'a', 'b'))).added, []);
+  // …but a new folder inside a known one is indexed all the way down
+  const got = await ix.rescanDir(path.join(root, 'Users', 'Me', 'Videos'));
+  assert.deepEqual(got.added.map(f => path.basename(f.path)), ['deep.mp4']);
+  // strays from an earlier version (indexed inside AppData) are cleaned
+  ix.db.prepare('INSERT INTO dirs (path, root, parent, gen) VALUES (?, ?, ?, 1)').run(deep, id, path.dirname(deep));
+  ix.db.prepare("INSERT INTO files (path, root, dir, name, kind, size, mtime, gen) VALUES (?, ?, ?, 'v3.mp4', 'video', 1, 1, 1)").run(path.join(deep, 'v3.mp4'), id, deep);
+  assert.equal(all().length, 3);
+  assert.equal(ix.purgeSkipped(false), 1);
+  assert.equal(all().length, 2);
+  ix.close();
+});
+
+test('1.0.9: a new folder full of files is indexed in one go (lists are built without push(...), which overflowed on huge ones)', async () => {
+  const root = path.join(tmp, 'Huge');
+  fs.mkdirSync(path.join(root, 'known'), { recursive: true });
+  const ix = new MediaIndex(path.join(tmp, 'idx-huge', 'index.db'));
+  const id = ix.addRoot(root);
+  await ix.scan(id);
+  const big = path.join(root, 'known', 'dump');
+  fs.mkdirSync(big, { recursive: true });
+  for (let i = 0; i < 2000; i++) fs.writeFileSync(path.join(big, `f${i}.mp4`), '');
+  const c = await ix.rescanDir(path.join(root, 'known'));
+  assert.equal(c.added.length, 2000);
+  ix.close();
+});

@@ -178,6 +178,7 @@ export function Videos({ active }: { active: boolean }) {
           {adding && (
             <div className="absolute right-0 top-10 z-30 w-80 rounded-xl bg-panel border border-line shadow-2xl p-2" role="menu" aria-label="Add a drive or folder">
               <div className="px-2 py-1.5 text-xs text-muted">Its videos are found in the background and kept up to date.</div>
+              {!drives.length && <div className="px-2 h-9 flex items-center text-sm text-muted" role="status">Looking for drives…</div>}
               {unwatchedDrives.map(d => (
                 <button key={d.path} role="menuitem" onClick={() => void addFolder(d.path)} data-add-drive={d.path}
                   className="w-full flex items-center gap-2 px-2 h-9 rounded-lg text-sm text-left hover:bg-panel-2">

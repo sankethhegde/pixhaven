@@ -36,6 +36,7 @@ npm run setup:engine     # downloads the engine, models, face models, places, FF
 | `node tests/make-media.mjs <folder>` | Builds the mixed-format test folder (17 photo formats incl. HEIC and 7 RAW, 17 video formats) |
 | `npm run e2e:sort` | Same for Sort by person: scan → review → dry run → apply (no copies, people tagged, folders checked against the photos' real names) → re-scan → undo, on ~50 public test photos (`phase0/fetch-test-photos.mjs`, or set `CLEARUP_TESTPHOTOS`) |
 | `npm run e2e:combine` | Photos → Combine people on two sorted folders made by the test (the same person in both): match, name, estimate, combine, files/face data/names/shortcuts checked, destination opened; Move to / Rename; Merge into… (by hand and by face); search and sort people in Photos and the Sort review; a second rename while a file in the folder is open; the details card in Photos; then Sort → Estimate time |
+| `npm run e2e:churn` | 1.0.9: a watched drive whose AppData changes every 30 ms for 20 s: PixHaven answers within 500 ms, tabs open quickly, nothing from AppData is indexed, no repeated full passes, no crashes; Home's Recently played × and Clear all |
 | `npm run e2e:facevideo` | 1.0.8 with real faces: public portraits scanned by the real Sort scanner, a video made from two other photos of one person; he is found (and nobody else), with his folder, photos and the right times; the Theatre panel |
 | `npm run e2e:attic` | 1.0.7, against a real Attic server from the attic repo next to this one, reached through this PC's network address: "Move to Attic" grey before set-up, address → 6-digit code → sign in (wrong password refused, password not kept), a device account's empty view, the master's files, thumbnails and details over the network, stars kept in PixHaven, an Attic video playing, Move to Attic (labels follow, original to a test recycle bin), the Videos tab's Attic source, rename and delete on Attic (its trash), Move to this PC |
 | `npm run e2e:videos` | 1.0.6: Videos tab (empty state, drives offered, a folder added, sort, search, where), paused middle controls (play, next), Labels & stars in full screen (fades while playing), who made each label (from a photo's keywords vs by you, filter) |
@@ -252,6 +253,19 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
   1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
+- **Fixes (1.0.9):**
+  - **"Not Responding" with a whole drive watched** (Videos tab → Add a drive): Windows reports every change on the
+    drive, and AppData (a browser's cache, Temp, PixHaven's own thumbnails) changes all the time. Those changes were
+    re-read, the unknown folders below them walked "all the way down", and Windows' "too many changes" made the whole
+    drive be indexed again and again. Now changes inside parts the index leaves out (AppData, Program Files,
+    `$Recycle.Bin`, dot-folders, node_modules…) are ignored, an unknown folder deep down is not walked, a full pass after
+    "too many changes" happens at most every 15 minutes, and what earlier versions indexed from those parts is removed
+    at start (`inSkipped`, `purgeSkipped`). Lists are built without `push(...)` (it overflowed the call stack).
+  - **Photos tab and Home held for 1–2 s:** whether each sorted folder (and each recently played video) is still there
+    was asked on the main thread; an external drive asleep or unplugged held the window. Now asked in the background,
+    2 s at most, answers kept 20 s.
+- **Recently played (Home, 1.0.9):** × on a video takes it off; "Clear all" empties the row. Where each was left is kept
+  (they still carry on where you stopped), and playing one again puts it back (`playback.in_recent`).
 - **People in this video (1.0.8):** in Theatre, under the video. FFmpeg hands over a frame every 2 s (wider apart on
   long videos, at most 600), the face engine finds faces and fingerprints them (in a worker), and each face is compared
   with the people of every sorted folder PixHaven knows (their best faces, as Combine does) a little more strictly than

@@ -125,15 +125,17 @@ export function savePosition(file: string, position: number, duration: number): 
   tagStore().savePosition(file, at, duration);
 }
 
-export function recent(limit = 12): RecentVideo[] {
+/** Recently played, newest first. 1.0.9: each file is looked at off the main thread, 2 s at most (a sleeping external
+ * drive used to hold Home); ones gone or out of reach are left out. */
+export async function recent(limit = 12): Promise<RecentVideo[]> {
   const rows = tagStore().recent(limit * 2);
+  const stat = (p: string) => Promise.race([fs.promises.stat(p).catch(() => null), new Promise<null>(r => setTimeout(() => r(null), 2000))]);
+  const st = await Promise.all(rows.map(r => stat(r.path)));
   const out: RecentVideo[] = [];
-  for (const r of rows) {
-    try { const st = fs.statSync(r.path); out.push({ ...r, size: st.size, mtime: st.mtimeMs }); } catch { /* moved or deleted */ }
-    if (out.length >= limit) break;
-  }
+  rows.forEach((r, i) => { const s = st[i]; if (s && out.length < limit) out.push({ ...r, size: s.size, mtime: s.mtimeMs }); });
   return out;
 }
+export const clearRecent = (paths?: string[]) => tagStore().clearRecent(paths);
 
 /** Is this file open in the player? (TAG-08 waits before writing into it.) */
 /** Quitting: every video is let go, so labels waiting for it can still be written into the file. */

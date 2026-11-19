@@ -84,6 +84,9 @@ export class TagStore {
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID`);
     const lcols = (this.db.prepare('PRAGMA table_info(labels)').all() as { name: string }[]).map(c => c.name);
     if (!lcols.includes('hidden')) this.db.exec('ALTER TABLE labels ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
+    // 1.0.9: "Clear" on Home's Recently played hides videos from it (their resume place and watched line stay).
+    const pcols = (this.db.prepare('PRAGMA table_info(playback)').all() as { name: string }[]).map(c => c.name);
+    if (!pcols.includes('in_recent')) this.db.exec('ALTER TABLE playback ADD COLUMN in_recent INTEGER NOT NULL DEFAULT 1');
     if (!lcols.includes('origin')) this.db.exec('ALTER TABLE labels ADD COLUMN origin TEXT; ALTER TABLE labels ADD COLUMN origin_file TEXT; ALTER TABLE labels ADD COLUMN origin_sure INTEGER NOT NULL DEFAULT 1');
   }
 
@@ -525,7 +528,13 @@ export class TagStore {
     this.db.prepare('INSERT OR REPLACE INTO playback (path, position, duration, updated) VALUES (?, ?, ?, ?)').run(p, position, duration, Date.now());
   }
   recent(limit: number): Omit<RecentVideo, 'size' | 'mtime'>[] {
-    return this.db.prepare('SELECT path, position, duration, updated FROM playback ORDER BY updated DESC LIMIT ?').all(limit) as unknown as RecentVideo[];
+    return this.db.prepare('SELECT path, position, duration, updated FROM playback WHERE in_recent = 1 ORDER BY updated DESC LIMIT ?').all(limit) as unknown as RecentVideo[];
+  }
+  /** Takes videos off Recently played (all of them without `paths`); playing one again puts it back. */
+  clearRecent(paths?: string[]): void {
+    if (!paths) { this.db.exec('UPDATE playback SET in_recent = 0'); return; }
+    const up = this.db.prepare('UPDATE playback SET in_recent = 0 WHERE path = ?');
+    this.tx(() => { for (const p of paths) up.run(p); });
   }
 
   // ---------- export / import (TAG-07) and backups ----------

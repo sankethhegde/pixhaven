@@ -60,7 +60,7 @@ function update(v: VideoFaces) { states.set(v.path, v); onUpdate(v); }
 export async function get(p: string, size: number, mtime: number): Promise<VideoFaces> {
   const live = states.get(p);
   if (live && running?.path === p) return live;
-  const ids = knownFolders().map(k => k.id).filter((x): x is number => typeof x === "number");
+  const ids = (await knownFolders()).map(k => k.id).filter((x): x is number => typeof x === "number");
   try {
     const c = JSON.parse(fs.readFileSync(cacheFile(keyOf(p, size, mtime)), 'utf8'));
     if (c.stamp === peopleStamp(ids)) return c.result as VideoFaces;
@@ -72,7 +72,7 @@ export async function get(p: string, size: number, mtime: number): Promise<Video
 export async function start(p: string, size: number, mtime: number): Promise<VideoFaces> {
   if (running?.path === p) return states.get(p)!;
   cancel();
-  const ids = knownFolders().map(k => k.id).filter((x): x is number => typeof x === "number");
+  const ids = (await knownFolders()).map(k => k.id).filter((x): x is number => typeof x === "number");
   if (!ids.length) {
     const none: VideoFaces = { path: p, state: 'no-people', done: 0, total: 0, folders: 0, people: [] };
     update(none);
