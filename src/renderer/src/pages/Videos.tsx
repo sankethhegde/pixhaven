@@ -19,6 +19,23 @@ const store = { get: (k: string) => { try { return localStorage.getItem(k); } ca
 const rootOf = (p: string) => (/^[a-z]:/i.test(p) ? p.slice(0, 2).toUpperCase() + '\\' : p.startsWith('\\\\') ? p.split('\\').slice(0, 4).join('\\') : '/');
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
+// 1.0.11: the same video kept in two places (same name and size) is shown once, where the first copy falls in the
+// order, with the other places in "copies". A copy on this PC plays rather than Attic's.
+const copyKey = (e: MediaEntry) => `${e.name.toLowerCase()}|${e.size}`;
+function onceEach<E extends MediaEntry>(list: E[]): E[] {
+  const at = new Map<string, number>();
+  const out: E[] = [];
+  const others: string[][] = [];
+  for (const e of list) {
+    const k = copyKey(e);
+    const i = at.get(k);
+    if (i === undefined) { at.set(k, out.length); out.push(e); others.push([]); continue; }
+    if (out[i].path.startsWith('attic://') && !e.path.startsWith('attic://')) { others[i].push(out[i].path); out[i] = e; }
+    else others[i].push(e.path);
+  }
+  return out.map((e, i) => (others[i].length ? { ...e, copies: others[i] } : e));
+}
+
 export function Videos({ active }: { active: boolean }) {
   const [watched, setWatched] = useState<WatchedFolder[]>([]);
   const [drives, setDrives] = useState<DriveInfo[]>([]);
@@ -81,7 +98,7 @@ export function Videos({ active }: { active: boolean }) {
   }, [active, attic.state, tick]);
   useTransferDone(useCallback(() => setTick(t => t + 1), []));
   const atticShown = useMemo(() => {
-    const q = query.toLowerCase().split(/s+/).filter(Boolean);
+    const q = query.toLowerCase().split(/\s+/).filter(Boolean);
     return atticItems.filter(e => q.every(w => e.name.toLowerCase().includes(w)) && (!filterActive(filter) || (() => {
       const t = T.tagsOf(e.path);
       if (!t || t.stars < filter.minStars) return false;
@@ -99,11 +116,15 @@ export function Videos({ active }: { active: boolean }) {
     const [by, dir] = order.split(':');
     const cmp = by === 'date' ? (a: MediaEntry, b: MediaEntry) => a.mtime - b.mtime : by === 'size' ? (a: MediaEntry, b: MediaEntry) => a.size - b.size
       : (a: MediaEntry, b: MediaEntry) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-    return list.sort((a, b) => (dir === 'desc' ? -cmp(a, b) : cmp(a, b)));
+    return onceEach(list.sort((a, b) => (dir === 'desc' ? -cmp(a, b) : cmp(a, b))));
   }, [items, atticShown, source, order, kindOf]);
   const counts = useMemo(() => {
     const c = { pc: 0, external: 0, network: 0, attic: 0 };
-    for (const e of [...(items ?? []), ...atticShown]) c[kindOf(e.path) as 'pc' | 'external' | 'network' | 'attic']++;
+    const seen = { pc: new Set<string>(), external: new Set<string>(), network: new Set<string>(), attic: new Set<string>() };
+    for (const e of [...(items ?? []), ...atticShown]) {
+      const k = kindOf(e.path) as 'pc' | 'external' | 'network' | 'attic';
+      if (!seen[k].has(copyKey(e))) { seen[k].add(copyKey(e)); c[k]++; }
+    }
     return c;
   }, [items, atticShown, kindOf]);
   // Selection survives a new order; what is no longer shown is no longer selected.

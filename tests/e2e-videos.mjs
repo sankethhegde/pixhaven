@@ -246,6 +246,20 @@ export default async function run(win, app) {
     check('the answer is remembered: opening the video again shows it at once', (await js(`document.querySelector('[data-testid=video-people]')?.dataset.state`)) === 'done');
     await js(`localStorage.setItem('watch.theatre', '0')`);
     await key('Escape');
+
+    // ---- 1.0.11: the same video in two folders is shown once, in the grid and in Up next ----
+    fs.mkdirSync(path.join(V, 'Copies'), { recursive: true });
+    fs.copyFileSync(path.join(V, 'c city.mp4'), path.join(V, 'Copies', 'c city.mp4'));
+    await soft(waitFor(async () => !!(await js(`${page}.querySelector('[data-testid=copies-badge]')`)), 30000));
+    const after = await names();
+    const badge = await js(`${tileOf('c city.mp4')}?.querySelector('[data-testid=copies-badge]')?.innerText ?? ''`);
+    check('a video kept in two folders is shown once, marked "2 copies"', after.length === 4 && after.filter(n => n === 'c city.mp4').length === 1 && badge === '2 copies', `${after.join(', ')} · ${badge} · ${await count()}`);
+    await js(`${tileOf('c city.mp4')}.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    await waitFor(async () => !!(await js(`document.querySelector('[data-testid=up-next]')`)), 10000);
+    const next = await js(`[...document.querySelectorAll('[data-up-next]')].map(b => b.dataset.upNext)`);
+    check('Up next lists it once too', next.length === 4 && next.filter(n => n === 'c city.mp4').length === 1, next.join(', '));
+    await shot('09-copies');
+    await key('Escape');
   } catch (e) {
     check('e2e run', false, String(e?.stack ?? e));
     await shot('zz-failure').catch(() => {});

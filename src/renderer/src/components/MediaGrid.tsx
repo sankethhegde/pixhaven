@@ -141,6 +141,8 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
               title={`Group photo: kept in “${e.taggedFrom}”, shown here too.`}>Kept in · {e.taggedFrom}</span>}
             {e.alsoIn?.length ? <span className="absolute left-1 bottom-1 max-w-[85%] truncate rounded bg-accent/85 text-accent-fg text-[10px] px-1.5 py-0.5" data-testid="alsoin-badge"
               title={`Group photo kept here, also shown in ${alsoText(e.alsoIn)}.`}>Also in · {e.alsoIn.length === 1 ? e.alsoIn[0] : `${e.alsoIn.length} folders`}</span> : null}
+            {e.copies?.length ? <span className="absolute left-1 top-1 rounded bg-black/65 text-white text-[10px] px-1.5 py-0.5" data-testid="copies-badge"
+              title={`The same video is in ${e.copies.length + 1} places:\n${[e.path, ...e.copies].join('\n')}`}>{e.copies.length + 1} copies</span> : null}
             {e.hidden && <span className="absolute right-1 top-1 rounded bg-black/65 text-white text-[10px] px-1.5 py-0.5 flex items-center gap-1" data-testid="hidden-badge"
               title="Hidden: shown only while hidden items are unlocked"><Icon name="eyeOff" size={11} />Hidden</span>}
           </div>
@@ -155,7 +157,8 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
           <div className="w-7 h-7 shrink-0"><Thumb entry={e} info={info} px={28} small /></div>
           <div className="flex-1 min-w-0 truncate">{e.name}{showFolder && <span className="text-muted text-xs ml-2">{showFolder(e)}</span>}
             {e.taggedFrom && <span className="text-muted text-xs ml-2">group photo, kept in “{e.taggedFrom}”</span>}
-            {e.alsoIn?.length ? <span className="text-muted text-xs ml-2">group photo, also in {alsoText(e.alsoIn)}</span> : null}</div>
+            {e.alsoIn?.length ? <span className="text-muted text-xs ml-2">group photo, also in {alsoText(e.alsoIn)}</span> : null}
+            {e.copies?.length ? <span className="text-muted text-xs ml-2" data-testid="copies-badge">{e.copies.length + 1} copies</span> : null}</div>
           <div className="w-16 text-xs text-muted">{e.kind === 'folder' ? 'Folder' : ext(e.name).toUpperCase()}</div>
           <div className="w-20 text-xs text-muted text-right">{e.kind === 'folder' ? '' : fmtBytes(e.size)}</div>
           <div className="w-40 text-xs text-muted">{fmtDate(e.mtime)}</div>

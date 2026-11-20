@@ -253,6 +253,10 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
   1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
+- **Copies shown once (Videos tab, 1.0.11):** the same video kept in two places (same name and size) shows once, in the
+  grid and in Up next, with a "2 copies" badge (hover: where each is); the details card lists the other places with
+  Show in Explorer. The first copy in the sort order plays, one on this PC rather than Attic's. Counts and totals count
+  it once. Also fixed: searching Attic's videos split the words at every "s" instead of at spaces.
 - **Fixes (1.0.9, released as 1.0.10 — the v1.0.9 build failed on an FFmpeg download; FFmpeg is now pinned to a dated build):**
   - **"Not Responding" with a whole drive watched** (Videos tab → Add a drive): Windows reports every change on the
     drive, and AppData (a browser's cache, Temp, PixHaven's own thumbnails) changes all the time. Those changes were

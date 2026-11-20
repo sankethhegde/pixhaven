@@ -336,6 +336,7 @@ export interface MediaEntry {
   taggedFrom?: string;        // v2.2: a group photo shown in this person's folder, kept in the folder of this name
   alsoIn?: string[];          // v2.5: a group photo kept here that these other people's folders show too
   hidden?: boolean;           // v2.10: hidden, shown only while hidden items are unlocked
+  copies?: string[];          // 1.0.11: the same video (name and size) elsewhere too: shown once, these are the others
 }
 /** v2.5 Photos tab: a folder scanned or sorted before. */
 export interface KnownFolder { path: string; people: number; photos: number; lastScan: number | null; sorted: number | null; id?: number; personFolders?: number }

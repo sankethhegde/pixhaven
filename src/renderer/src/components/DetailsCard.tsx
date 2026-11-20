@@ -126,6 +126,17 @@ function One({ e, info, d, error, labelNames, onOpen }: {
         {d?.created ? <Row label="Created">{date(d.created)}</Row> : null}
         {d?.people?.length ? <Row label="People">{d.people.join(', ')}</Row> : null}
       </dl>
+      {e.copies?.length ? (
+        <div data-testid="details-copies">
+          <div className="text-xs font-semibold mb-1">{e.copies.length + 1} copies · this one plays</div>
+          {e.copies.map(p => (
+            <div key={p} className="flex items-center gap-1 text-xs text-muted">
+              <span className="truncate flex-1" title={p}>{p.replace(/[\\/][^\\/]*$/, '')}</span>
+              {!p.startsWith('attic://') && <button className="shrink-0 hover:text-fg" onClick={() => void api.showItem(p)} title="Show in Explorer" aria-label={`Show the copy in ${p} in Explorer`}><Icon name="external" size={12} /></button>}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {/* 1.0.5: stars and labels, changed right here (written into the file like "Labels & stars") */}
       {e.kind !== 'folder' && !offline && <TagSection items={[e]} />}
       {!d && !error && !offline && e.kind !== 'folder' && <div className="text-xs text-muted" role="status">Reading details…</div>}
