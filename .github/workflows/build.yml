@@ -13,7 +13,30 @@ permissions:
   contents: write    # the release upload on tags
 
 jobs:
+  # 1.0.11: the Windows and Linux builds run at the same time; each looked for the version's draft, found none and made
+  # its own, so a release came out as two drafts (one per system). Now the draft is made once, here, first, and both
+  # builds upload into it (electron-builder finds a draft by its tag).
+  draft:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Make the version's draft release (once)
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          N=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq "[.[] | select(.tag_name == \"$TAG\")] | length")
+          if [ "$N" = "0" ]; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "${TAG#v}" --notes ""
+            echo "Made the draft for $TAG"
+          else
+            echo "$N release(s) for $TAG already there: the builds upload into it"
+          fi
+
   build:
+    needs: draft
+    # Runs on every push; "draft" is skipped when it is not a version tag.
+    if: ${{ !failure() && !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -67,3 +90,24 @@ jobs:
             dist/latest*.yml
             selftest.json
           if-no-files-found: ignore
+
+  # After both builds: exactly one draft for the version, holding the Windows and the Linux files.
+  check-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: One draft with every installer
+        run: |
+          TAG="$GITHUB_REF_NAME"; V="${TAG#v}"
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq "[.[] | select(.tag_name == \"$TAG\")]" > rel.json
+          N=$(jq length rel.json)
+          FILES=$(jq -r '.[].assets[].name' rel.json | sort)
+          echo "Releases for $TAG: $N"; echo "$FILES"
+          { echo "### $TAG: $N release(s)"; echo '```'; echo "$FILES"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$N" != "1" ]; then echo "::error title=Release::$N releases for $TAG (expected one draft)"; exit 1; fi
+          for f in "PixHaven-Setup-$V.exe" latest.yml "PixHaven-$V-x86_64.AppImage" latest-linux.yml; do
+            echo "$FILES" | grep -qx "$f" || { echo "::error title=Release::$f is missing from the $TAG draft"; exit 1; }
+          done
