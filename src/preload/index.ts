@@ -118,6 +118,7 @@ const api = {
     get: (p: string, size: number, mtime: number) => invoke('videoFaces:get', p, size, mtime),
     start: (p: string, size: number, mtime: number) => invoke('videoFaces:start', p, size, mtime),
     cancel: () => invoke('videoFaces:cancel'),
+    related: (p: string) => invoke('videoFaces:related', p),
   },
   attic: {
     status: () => invoke('attic:status'),

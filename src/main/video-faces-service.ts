@@ -54,7 +54,7 @@ function personInfo(id: number, hit: { frames: number; mean: number; times: numb
   };
 }
 
-function update(v: VideoFaces) { states.set(v.path, v); onUpdate(v); }
+function update(v: VideoFaces) { states.set(v.path, v); remember(v); onUpdate(v); }
 
 /** The answer for this video if worked out already (and still current), else where the search is. */
 export async function get(p: string, size: number, mtime: number): Promise<VideoFaces> {
@@ -125,4 +125,41 @@ export function cancel(): void {
   setTimeout(() => void w.terminate(), 3000);
   states.delete(running.path);
   running = null;
+}
+
+// ---------- 1.0.13: "More like this" in the player (full screen) ----------
+// Only what is already worked out is used (no search is started), so the answer is instant: the people found in
+// this video, and the other videos those people were found in. Answers kept from before a re-sort still count: the
+// person ids stay the same unless the person was removed.
+let byVideo: Map<string, { id: number; name: string }[]> | null = null;
+async function peopleIndex(): Promise<Map<string, { id: number; name: string }[]>> {
+  if (byVideo) return byVideo;
+  const m = new Map<string, { id: number; name: string }[]>();
+  let names: string[] = [];
+  try { names = (await fs.promises.readdir(cacheDir())).filter(n => n.endsWith('.json')); } catch { /* none yet */ }
+  await Promise.all(names.map(async n => {
+    try {
+      const c = JSON.parse(await fs.promises.readFile(path.join(cacheDir(), n), 'utf8')) as { result?: VideoFaces };
+      if (c.result?.state === 'done') m.set(norm(c.result.path), c.result.people.map(p => ({ id: p.id, name: p.name })));
+    } catch { /* unreadable: skipped */ }
+  }));
+  byVideo = m;
+  return m;
+}
+const norm = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
+/** Keeps the index in step with a new answer. */
+function remember(v: VideoFaces) { if (byVideo && v.state === 'done') byVideo.set(norm(v.path), v.people.map(p => ({ id: p.id, name: p.name }))); }
+
+export async function related(p: string): Promise<{ people: { id: number; name: string }[]; videos: { path: string; people: string[] }[] }> {
+  const idx = await peopleIndex();
+  const people = idx.get(norm(p)) ?? [];
+  if (!people.length) return { people, videos: [] };
+  const ids = new Set(people.map(x => x.id));
+  const videos: { path: string; people: string[] }[] = [];
+  for (const [k, ps] of idx) {
+    if (k === norm(p)) continue;
+    const same = ps.filter(x => ids.has(x.id)).map(x => x.name);
+    if (same.length) videos.push({ path: k, people: same });
+  }
+  return { people, videos };
 }

@@ -1,7 +1,7 @@
 {
   "name": "pixhaven",
   "productName": "PixHaven",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "Offline AI image upscaler",
   "author": "Sanketha R Hegade",
   "license": "UNLICENSED",

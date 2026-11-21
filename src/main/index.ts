@@ -584,6 +584,7 @@ handle('lib:cacheSize', () => library.cacheSize());
 handle('videoFaces:get', (p: string, size: number, mtime: number) => videoFaces.get(p, size, mtime));
 handle('videoFaces:start', (p: string, size: number, mtime: number) => videoFaces.start(p, size, mtime));
 handle('videoFaces:cancel', () => videoFaces.cancel());
+handle('videoFaces:related', (p: string) => videoFaces.related(p));   // 1.0.13: More like this
 
 // ---- 1.0.7 Attic ----
 handle('attic:status', () => attic.status());

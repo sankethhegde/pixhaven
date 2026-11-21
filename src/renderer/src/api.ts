@@ -62,6 +62,7 @@ interface VideoFacesApi {
   get(p: string, size: number, mtime: number): Promise<VideoFaces>;
   start(p: string, size: number, mtime: number): Promise<VideoFaces>;
   cancel(): Promise<void>;
+  related(p: string): Promise<{ people: { id: number; name: string }[]; videos: { path: string; people: string[] }[] }>;   // 1.0.13
 }
 
 interface AtticApi {

@@ -253,6 +253,12 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
   1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
+- **More like this (player, 1.0.13):** the i button beside × (full screen and the Library's player; key I) opens a
+  see-through panel: videos of the list with the same people (from "People in this video" answers already worked out,
+  and a person's name in the file name), then similar names (shared rare words count most, a shared pair of words
+  more). Nothing new is searched, so it opens at once. `components/MoreLikeThis.tsx`, `videoFaces:related`.
+- **Theatre keeps the video in view (1.0.13):** when the next video starts, the page goes back up to it (keeping the
+  playing one in view in Up next used to scroll the whole page down to Up next).
 - **One release per version (1.0.12):** 1.0.11 came out as two drafts (the Windows and Linux builds each made one).
   CI now makes the draft once before the builds and checks afterwards that it holds both systems' files. 1.0.12 is
   1.0.11 in one release.

@@ -6,6 +6,7 @@ import type { MediaEntry, MediaInfo, PlayerCaps, PlayInfo, PlayStream, SubtitleC
 import { api, errorText, fmtClock } from '../api';
 import { Icon } from './ui';
 import { Stars, TagEditor } from './Tags';
+import { MoreLikeThis } from './MoreLikeThis';
 import * as T from '../tags';
 
 interface Props {
@@ -65,6 +66,9 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
   const [tagsOpen, setTagsOpen] = useState(() => store.get('player.tags') === '1');
   T.useTags();
   useEffect(() => { store.set('player.tags', tagsOpen ? '1' : '0'); }, [tagsOpen]);
+  // 1.0.13: More like this (i): full screen and the window player; it and the labels panel take turns on the right.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const toggleMore = () => { setMoreOpen(o => !o); setTagsOpen(false); };
   useEffect(() => { void T.loadFor([T.ref(item)]); }, [item]);
   const frames = useRef(new Map<number, string>());
   const pendingSeek = useRef<number | null>(null);
@@ -255,7 +259,8 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
       else if (k === 'Escape') { if (menu) setMenu(null); else if (document.fullscreenElement) void document.exitFullscreen(); else onClose(); }
       else if (k === 'Home') void seekTo(0);
       else if (/^[0-5]$/.test(k)) void T.setStars([T.ref(item)], Number(k));   // PLAY-04: 1–5 stars, 0 clears
-      else if (k === 's' || k === 'S') setTagsOpen(o => !o);
+      else if (k === 's' || k === 'S') { setTagsOpen(o => !o); setMoreOpen(false); }
+      else if ((k === 'i' || k === 'I') && (full || !embedded)) toggleMore();
       else return;
       e.preventDefault();
       e.stopPropagation();
@@ -268,12 +273,12 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
   useEffect(() => {
     // The labels panel keeps the controls up beside the window player; in full screen it fades with them (1.0.6),
     // unless you are typing a label.
-    if (paused || menu || hover || (tagsOpen && !embedded && !full) || document.activeElement?.matches('[data-tags-panel] input')) { setIdle(false); return; }
+    if (paused || menu || hover || ((tagsOpen || moreOpen) && !embedded && !full) || document.activeElement?.matches('[data-tags-panel] input')) { setIdle(false); return; }
     const t = setTimeout(() => setIdle(true), 2500);
     return () => clearTimeout(t);
     // 1.0.6: restarted by the mouse (wake), not by the playing time — that changed several times a second, so the
     // controls never faded.
-  }, [paused, menu, hover, woken, tagsOpen, full]);
+  }, [paused, menu, hover, woken, tagsOpen, moreOpen, full]);
   const lastWake = useRef(0);
   const wake = () => {   // at most twice a second: a mouse move must not redraw the player on every event
     if (idle) setIdle(false);
@@ -323,6 +328,8 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
             {info ? [info.width ? `${info.width}×${info.height}` : '', info.videoCodec.toUpperCase(), stream?.reason, stream?.encoder ? `(${stream.encoder.replace('h264_', '').replace('qsv', 'Quick Sync').replace('mf', 'Media Foundation')})` : ''].filter(Boolean).join(' · ') : 'Opening…'}
           </div>
         </div>
+        {(full || !embedded) && <button onClick={toggleMore} className={`${btn} ${moreOpen ? 'bg-white/15' : ''}`} aria-label="More like this" aria-expanded={moreOpen}
+          title="More like this: the same people, similar names (I)" data-testid="more-button"><Icon name="info" /></button>}
         <button onClick={onClose} className={btn} aria-label="Close player" title="Close"><Icon name="x" /></button>
       </div>
 
@@ -375,7 +382,10 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
 
       {/* Labels and stars beside the video: the window player, and (1.0.6) full screen again, where it fades with the
           controls. The watch page shows them under the video instead. */}
-      {tagsOpen && (!embedded || full) && (
+      {moreOpen && (!embedded || full) && (
+        <MoreLikeThis items={items} index={index} infos={infos} onIndex={onIndex} onClose={() => setMoreOpen(false)} faded={idle} onWake={wake} />
+      )}
+      {tagsOpen && !moreOpen && (!embedded || full) && (
         <div className={`absolute z-20 top-16 right-3 w-80 max-h-[calc(100%-11rem)] overflow-y-auto rounded-2xl bg-black/75 backdrop-blur border border-white/10 p-4 space-y-4 transition-opacity ${idle ? 'opacity-0 pointer-events-none' : ''}`}
           onClick={e => e.stopPropagation()} onKeyDown={wake} onMouseMove={wake} aria-label="Labels and stars panel" data-tags-panel>
           <div className="flex items-center text-sm font-medium">Labels & stars
@@ -445,7 +455,7 @@ export function Player({ items, index, infos, onIndex, onClose, playlist, embedd
             <MenuItem onClick={() => void loadSubFile()}>Load subtitle file…</MenuItem>
           </Menu>
           {(!embedded || full) && (
-            <button className={`${btn} ${tagsOpen ? 'bg-white/15' : ''}`} onClick={() => setTagsOpen(!tagsOpen)} aria-label="Labels and stars" aria-expanded={tagsOpen} title="Labels and stars (S); 1–5 sets stars">
+            <button className={`${btn} ${tagsOpen ? 'bg-white/15' : ''}`} onClick={() => { setTagsOpen(!tagsOpen); setMoreOpen(false); }} aria-label="Labels and stars" aria-expanded={tagsOpen} title="Labels and stars (S); 1–5 sets stars">
               <span className="text-[#f5b301]">★</span>Labels
             </button>
           )}

@@ -48,8 +48,16 @@ export function WatchPage({ items, index, infos, title, active, playlist, onInde
     return () => { live = false; off(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videos]);
-  // The one playing stays in view in Up next.
-  useEffect(() => { list.current?.querySelector('[data-now-playing]')?.scrollIntoView({ block: 'nearest' }); }, [index, theatre]);
+  // The one playing stays in view in Up next. 1.0.13: only Up next's own list scrolls; scrollIntoView also scrolled the
+  // page, so in Theatre (Up next below the video) the next video started off screen. There the page goes back up to it.
+  const page = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (theatre) { page.current?.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    const box = list.current, el = box?.querySelector<HTMLElement>('[data-now-playing]');
+    if (!box || !el) return;
+    const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+    if (top < box.scrollTop || top + el.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = Math.max(0, top - 8);
+  }, [index, theatre]);
   // T (theatre) when no text box has the keys.
   useEffect(() => {
     if (!active) return;
@@ -131,7 +139,7 @@ export function WatchPage({ items, index, infos, title, active, playlist, onInde
       </div>
       {/* The player keeps its place in the page in both layouts, so switching does not restart the video. Square corners:
           a rounded, clipped video cannot go straight to the graphics card's overlay and drops frames at 4K. */}
-      <div className={theatre ? 'flex-1 min-h-0 overflow-y-auto' : 'flex-1 min-h-0 flex gap-5 px-5 pt-4'}>
+      <div ref={page} data-testid="watch-scroll" className={theatre ? 'flex-1 min-h-0 overflow-y-auto' : 'flex-1 min-h-0 flex gap-5 px-5 pt-4'}>
         <div className={theatre ? '' : 'flex-1 min-w-0 overflow-y-auto'}>
           <div className={theatre ? 'bg-black w-full h-[min(72vh,56.25vw)]' : 'w-full aspect-video max-h-[calc(100vh-15rem)] bg-black'}>
             <Player embedded active={active} items={items} index={index} infos={infos} onIndex={onIndex} onClose={onClose} playlist={playlist} />

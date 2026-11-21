@@ -260,6 +260,71 @@ export default async function run(win, app) {
     check('Up next lists it once too', next.length === 4 && next.filter(n => n === 'c city.mp4').length === 1, next.join(', '));
     await shot('09-copies');
     await key('Escape');
+
+    // ---- 1.0.13: More like this (i, full screen) and Theatre going back up to the next video ----
+    const M = path.join(V, 'More');
+    fs.mkdirSync(M, { recursive: true });
+    for (const n of ['Kylie Rocket beach day.mp4', 'Kylie Rocket city walk.mp4', 'random clip.mp4', 'p1 sunset.mp4', 'p2 forest.mp4']) fs.copyFileSync(path.join(V, 'a lake.mp4'), path.join(M, n));
+    // "People in this video" answers as kept on disk: the same person (id 9001) found in p1 and p2.
+    const VF = path.join(process.env.CLEARUP_USER_DATA, 'video-faces');
+    fs.mkdirSync(VF, { recursive: true });
+    for (const n of ['p1 sunset.mp4', 'p2 forest.mp4']) {
+      const p = path.join(M, n);
+      fs.writeFileSync(path.join(VF, `test-${n}.json`), JSON.stringify({ stamp: 'test', result: { path: p, state: 'done', done: 1, total: 1, folders: 1, people: [{ id: 9001, name: 'Anna Grey', sure: 90, frames: 3, times: [1], folder: null, root: OUT, face: null, photos: [] }] } }));
+    }
+    await soft(waitFor(async () => (await names()).length === 9, 30000));
+    const openFull = async n => {
+      await js(`${tileOf(n)}.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+      await waitFor(async () => (await js(`document.querySelector('[data-testid=watch-title]')?.innerText`)) === n, 10000);
+      for (let i = 0; i < 3 && !(await js('!!document.fullscreenElement')); i++) {
+        await js(`[...document.querySelectorAll('[data-testid=watch-page] button')].find(b => b.innerText.trim() === 'Full screen').click()`, true);
+        await soft(waitFor(async () => !!(await js('document.fullscreenElement')), 4000));
+      }
+    };
+    const more = kind => js(`[...(document.fullscreenElement ?? document).querySelectorAll('[data-more-kind=${kind}]')].map(b => b.dataset.more)`);
+    await openFull('p1 sunset.mp4');
+    const hasBtn = await js(`!!document.fullscreenElement?.querySelector('[data-testid=more-button]')`);
+    const t0 = Date.now();
+    await js(`document.fullscreenElement.querySelector('[data-testid=more-button]').click()`);
+    await soft(waitFor(async () => (await more('people')).length > 0, 3000));
+    const ms = Date.now() - t0;
+    const ppl2 = await more('people');
+    const label = await js(`document.fullscreenElement?.querySelector('[data-testid=more-people]')?.innerText.split('\\n')[0] ?? ''`);
+    await shot('10-more-like-this-people');
+    check('full screen: the i button beside × opens "More like this", with the videos of the same person, fast', hasBtn && JSON.stringify(ppl2) === '["p2 forest.mp4"]' && /Anna Grey/i.test(label) && ms < 1500,
+      `${ppl2.join(', ')} · ${label} · ${ms} ms (incl. the test's own polling)`);
+    await key('i');
+    const closed = !(await js(`!!document.fullscreenElement?.querySelector('[data-testid=more-like-this]')`));
+    await js('document.exitFullscreen().catch(() => {})'); await sleep(600); await key('Escape'); await sleep(400);
+    await openFull('Kylie Rocket beach day.mp4');
+    await key('i');
+    await soft(waitFor(async () => (await more('name')).length > 0, 3000));
+    const byName = await more('name');
+    const bg = await js(`getComputedStyle(document.fullscreenElement.querySelector('[data-testid=more-like-this]')).backgroundColor`);
+    await shot('11-more-like-this-names');
+    check('"More like this": similar names (a person\'s name in the file name), see-through, I opens and closes it', closed && byName[0] === 'Kylie Rocket city walk.mp4' && !byName.includes('random clip.mp4') && /(rgba\(0, 0, 0, 0\.[0-9]+\)|oklab\(0 0 0 \/ 0\.[0-9]+\))/.test(bg),
+      `${byName.join(', ')} · ${bg} · closed by I: ${closed}`);
+    await js(`document.fullscreenElement.querySelector('[data-more="Kylie Rocket city walk.mp4"]').click()`);
+    await soft(waitFor(async () => (await js(`document.querySelector('[data-testid=watch-title]')?.innerText`)) === 'Kylie Rocket city walk.mp4', 5000));
+    check('clicking one plays it', (await js(`document.querySelector('[data-testid=watch-title]')?.innerText`)) === 'Kylie Rocket city walk.mp4');
+    await js('document.exitFullscreen().catch(() => {})'); await sleep(600);
+
+    // Theatre: scrolled down to Up next, the next video starting brings the page back up to the video.
+    await js(`localStorage.setItem('watch.theatre', '1')`);
+    await key('Escape'); await sleep(400);
+    await js(`${tileOf('a lake.mp4')}.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    await waitFor(async () => !!(await js(`document.querySelector('[data-testid=watch-page][data-theatre]')`)), 10000);
+    await sleep(500);
+    const down = await js(`(s => { s.scrollTop = s.scrollHeight; return s.scrollTop; })(document.querySelector('[data-testid=watch-scroll]'))`);
+    const before = await js(`document.querySelector('[data-testid=watch-title]')?.innerText`);
+    await key('n');
+    await soft(waitFor(async () => (await js(`document.querySelector('[data-testid=watch-title]')?.innerText`)) !== before, 5000));
+    await sleep(1200);
+    const upTop = await js(`document.querySelector('[data-testid=watch-scroll]').scrollTop`);
+    await shot('12-theatre-next');
+    check('Theatre: when the next video starts, the page goes back up to the video', down > 100 && upTop < 5, `scrolled to ${down}, then ${upTop} after the next video started`);
+    await js(`localStorage.setItem('watch.theatre', '0')`);
+    await key('Escape');
   } catch (e) {
     check('e2e run', false, String(e?.stack ?? e));
     await shot('zz-failure').catch(() => {});
