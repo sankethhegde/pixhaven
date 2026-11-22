@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { mediaKind, type DriveInfo, type DriveKind, type FolderListing, type MediaEntry } from '../../shared/types';
 import { alsoShownFrom, shownIn } from '../sorter/people-manifest';
+import { dropTsCode, isTsName, isTsVideo } from './ts-video';
 
 const IS_WIN = process.platform === 'win32';
 
@@ -106,6 +107,7 @@ export async function listFolder(dir: string, showSystem: boolean): Promise<Fold
     else if (!d.isSymbolicLink()) hiddenFiles++;
     // Windows junctions ("My Music", "Application Data") are old compatibility links that loop or deny access: skipped.
   }
+  files.splice(0, files.length, ...(await dropTsCode(dir, files)));   // 1.0.14: TypeScript code is not a video
   // stat in batches: fast on a 5,000-file folder without opening thousands of handles at once.
   for (let i = 0; i < files.length; i += 128) {
     const batch = files.slice(i, i + 128);
@@ -187,6 +189,7 @@ export async function searchNames(root: string, query: string, showSystem: boole
         const kind = mediaKind(e.name);
         if (!kind || !match(e.name)) continue;
         const p = path.join(dir, e.name);
+        if (isTsName(e.name) && !(await isTsVideo(p))) continue;   // 1.0.14
         const s = await fs.promises.stat(p).catch(() => null);
         if (!s) continue;
         batch.push({ name: e.name, path: p, kind, size: s.size, mtime: s.mtimeMs });

@@ -18,6 +18,7 @@ import { manifestRootOf, movedFile as manifestMoved, remapManifest } from './sor
 import { syncGroupLinksFor } from './group-links';
 import * as fileOps from './library/file-ops';
 import { decideOrigin, readKeywords } from './library/label-origin';
+import { isTsName, isTsVideo } from './library/ts-video';
 
 const KEEP_BACKUPS = 7;
 let store: TagStore | null = null;
@@ -351,6 +352,7 @@ export async function findMoved(dir: string, onProgress?: (n: number) => void): 
       const p = path.join(d, e.name);
       if (e.isDirectory() && !e.name.startsWith('.') && !e.name.startsWith('$')) stack.push(p);
       else if (e.isFile() && mediaKind(e.name)) {
+        if (isTsName(e.name) && !(await isTsVideo(p))) continue;   // 1.0.14: TypeScript code
         const s = await fs.promises.stat(p).catch(() => null);
         if (s) refs.push({ path: p, size: s.size, mtime: s.mtimeMs });
       }

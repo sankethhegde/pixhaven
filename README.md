@@ -253,6 +253,10 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
   1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
+- **Code files are not videos (1.0.14):** ".ts" is both a video format (MPEG transport stream) and TypeScript code; with
+  a whole drive watched, programs' code showed up in Videos as "No preview". A .ts file now counts as a video only when
+  its first bytes are transport-stream packets (sync byte 0x47 every 188 bytes, or 192 for M2TS-style); code files
+  already indexed are removed at start. `library/ts-video.ts`.
 - **More like this (player, 1.0.13):** the i button beside × (full screen and the Library's player; key I) opens a
   see-through panel: videos of the list with the same people (from "People in this video" answers already worked out,
   and a person's name in the file name), then similar names (shared rare words count most, a shared pair of words

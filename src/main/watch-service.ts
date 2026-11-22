@@ -43,6 +43,12 @@ export function init(status: (s: WatchedFolder[]) => void, change: (c: WatchChan
   for (const r of ix.roots()) if (!folders().some(f => key(f) === key(r.path))) ix.removeRoot(r.path);
   // 1.0.9: what change storms put into the index from skipped parts (AppData…) goes.
   try { const n = ix.purgeSkipped(getSettings().library.showSystem); if (n) log('info', `Removed ${n} file(s) indexed from system and app folders`); } catch (e) { log('warn', 'Cleaning the index failed', e); }
+  // 1.0.14: TypeScript code indexed as ".ts video" by earlier versions goes (in the background: it reads each .ts).
+  void ix.purgeTsCode().then(gone => {
+    if (!gone.length) return;
+    log('info', `Removed ${gone.length} TypeScript code file(s) that were listed as videos`);
+    sendChange({ dirs: [...new Set(gone.map(p => path.dirname(p)))], added: 0, removed: gone.length, relinked: 0 });
+  }).catch(e => log('warn', 'Cleaning code files from the index failed', e));
   for (const f of folders()) {
     ix.addRoot(f);
     fullScan.add(f);     // a quick check at every start finds what changed while PixHaven was closed (or resumes)

@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { MediaEntry, MediaKind } from '../../shared/types';
 import { mediaKind } from '../../shared/types';
 import { skipDir } from './browse';
+import { dropTsCode, isTsVideo } from './ts-video';
 
 const IS_WIN = process.platform === 'win32';
 const CI = IS_WIN ? 'COLLATE NOCASE' : '';
@@ -178,12 +179,13 @@ export class MediaIndex {
     let list: fs.Dirent[];
     try { list = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return null; }
     const subdirs: string[] = [];
-    const media: fs.Dirent[] = [];
+    let media: fs.Dirent[] = [];
     for (const d of list) {
       if (d.isDirectory()) { if (!skipDir(d.name, showSystem)) subdirs.push(path.join(dir, d.name)); }
       else if (d.isFile() && mediaKind(d.name)) media.push(d);
     }
     const files: (FileRef & { name: string; kind: MediaKind })[] = [];
+    media = await dropTsCode(dir, media);   // 1.0.14: TypeScript code is not a video
     for (let i = 0; i < media.length; i += 64) {
       const part = media.slice(i, i + 64);
       const st = await Promise.all(part.map(d => fs.promises.stat(path.join(dir, d.name)).catch(() => null)));
@@ -262,6 +264,15 @@ export class MediaIndex {
       });
     }
     return n;
+  }
+
+  /** 1.0.14: drops .ts files earlier versions indexed as videos that are TypeScript code. Returns those removed. */
+  async purgeTsCode(): Promise<string[]> {
+    const rows = this.db.prepare("SELECT path, size, mtime FROM files WHERE kind = 'video' AND lower(path) LIKE '%.ts'").all() as unknown as FileRef[];
+    const bad: string[] = [];
+    for (const r of rows) if (!(await isTsVideo(r.path, r.size, r.mtime))) bad.push(r.path);
+    if (bad.length) this.tx(() => { const del = this.db.prepare('DELETE FROM files WHERE path = ?'); for (const p of bad) del.run(p); });
+    return bad;
   }
 
   /** Removes a folder and everything below it from the index; returns the files removed. */

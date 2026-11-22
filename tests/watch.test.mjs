@@ -237,3 +237,33 @@ test('1.0.9: a new folder full of files is indexed in one go (lists are built wi
   assert.equal(c.added.length, 2000);
   ix.close();
 });
+
+test('1.0.14: a .ts file is a video only when it is one (TypeScript code is left out of the index and the Library)', { skip: !fs.existsSync(ffmpeg) && 'FFmpeg not set up' }, async () => {
+  const { listFolder } = await load('library/browse');
+  const { looksLikeTs } = await load('library/ts-video');
+  const root = path.join(tmp, 'TsMix');
+  fs.mkdirSync(root, { recursive: true });
+  execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=10:duration=1', '-c:v', 'mpeg2video', '-f', 'mpegts', path.join(root, 'recording.ts')]);
+  execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=10:duration=1', '-c:v', 'mpeg2video', '-f', 'mpegts', '-mpegts_m2ts_mode', '1', path.join(root, 'camcorder.ts')]);
+  fs.writeFileSync(path.join(root, 'attic-service.ts'), "import fs from 'node:fs';\nexport const x = 1;\n".repeat(40));
+  fs.writeFileSync(path.join(root, 'tiny.ts'), 'export {};\n');
+  put(path.join(root, 'b.mp4'));
+  assert.ok(!looksLikeTs(Buffer.from("import fs from 'node:fs';\n".repeat(40))));
+
+  const ix = new MediaIndex(path.join(tmp, 'idx-ts', 'index.db'));
+  const id = ix.addRoot(root);
+  assert.equal(await ix.scan(id, {}), 'done');
+  const vids = ix.query({ kind: 'video' }).items.map(e => e.name).sort();
+  assert.deepEqual(vids, ['b.mp4', 'camcorder.ts', 'recording.ts']);
+  const listed = (await listFolder(root, false)).entries.map(e => e.name).sort();
+  assert.deepEqual(listed, ['b.mp4', 'camcorder.ts', 'recording.ts']);
+
+  // Code files indexed by an earlier version are cleaned at start.
+  const code = path.join(root, 'attic-service.ts');
+  const st = fs.statSync(code);
+  ix.db.prepare('INSERT INTO files (path, root, dir, name, kind, size, mtime, gen) VALUES (?, ?, ?, ?, ?, ?, ?, 0)').run(code, id, root, 'attic-service.ts', 'video', st.size, Math.floor(st.mtimeMs));
+  assert.equal(ix.query({ kind: 'video' }).total, 4);
+  assert.deepEqual(await ix.purgeTsCode(), [code]);
+  assert.equal(ix.query({ kind: 'video' }).total, 3);
+  ix.close();
+});
