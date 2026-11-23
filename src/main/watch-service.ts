@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
-import type { MediaKind, TaggedMedia, WatchChange, WatchedFolder, WatchQuery, WatchResult } from '@shared/types';
+import type { MediaEntry, MediaKind, TaggedMedia, WatchChange, WatchedFolder, WatchQuery, WatchResult } from '@shared/types';
 import { getSettings, updateSettings } from './settings';
 import { log } from './logger';
 import { MediaIndex, inSkipped, isInside, type DirChange } from './library/media-index';
@@ -331,3 +331,6 @@ export function query(q: WatchQuery): WatchResult {
     total: r.total, truncated: r.total > limit, tags: t,
   };
 }
+
+/** 1.1.0 Duplicate videos: every video in the watched folders. */
+export const allVideos = (): MediaEntry[] => idx().query({ kind: 'video' }).items;

@@ -253,6 +253,15 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
   1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
+- **Duplicate videos (Tidy up, 1.1.0):** every video in the Videos tab gets a fingerprint (a 9×8 picture hash every
+  second, read once with FFmpeg and kept until the file changes; ~0.7 s per minute of 480p video, two at a time).
+  Videos sharing hash bands are lined up in full to find: the same video (exact copies by SHA-1, renamed, another
+  size or quality: the clearly better copy is kept, same quality = you choose), longer versions (one holds all of
+  another), and two parts that overlap (put together as "<first> (combined).mp4", the join refined to ¼ s). Nothing
+  happens until Apply: copies are moved to "Removed duplicates" at the top of their drive (folders kept; never
+  indexed), stars, labels and the place left go to the copy kept. `dupes/video-match.ts`, `dupes/fingerprint.ts`,
+  `video-dupes-service.ts`, `pages/VideoDupes.tsx`. Also: files still being written (".part.mp4") are not indexed,
+  and the Video editor tells the index its finished file at once.
 - **Code files are not videos (1.0.14):** ".ts" is both a video format (MPEG transport stream) and TypeScript code; with
   a whole drive watched, programs' code showed up in Videos as "No preview". A .ts file now counts as a video only when
   its first bytes are transport-stream packets (sync byte 0x47 every 188 bytes, or 192 for M2TS-style); code files

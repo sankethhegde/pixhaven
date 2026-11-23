@@ -553,3 +553,37 @@ export interface VideoFaces {
   error?: string;
   at?: number;                                         // when it was worked out
 }
+
+// ---------- 1.1.0 Duplicate videos (Tidy up) ----------
+
+/** The folder (at the top of each drive) that removed duplicates are moved into, keeping their folders. */
+export const REMOVED_DUPLICATES = 'Removed duplicates';
+
+export interface DupeVideo { path: string; name: string; size: number; mtime: number; duration: number; width: number; height: number }
+/** The same video more than once: keep one (null = you choose: the copies are of the same quality). */
+export interface DupeSameGroup { id: string; videos: DupeVideo[]; keep: string | null; exact: boolean }
+/** One video holds all of another (from `at` seconds). */
+export interface DupeLonger { id: string; longer: DupeVideo; shorter: DupeVideo; at: number }
+/** The end of `first` is the start of `second`: play `first`, then `second` from `cut` seconds. */
+export interface DupeCombine { id: string; first: DupeVideo; second: DupeVideo; cut: number; overlapSec: number }
+
+export interface DupeScanState {
+  state: 'idle' | 'scanning' | 'matching' | 'done' | 'error' | 'cancelled';
+  done: number; total: number; current?: string; error?: string;
+  failed?: number;                       // videos that could not be read
+  at?: number;                           // when the results were made
+  same: DupeSameGroup[]; longer: DupeLonger[]; combine: DupeCombine[];
+}
+
+/** What you chose: the videos to set aside (each with the one it is a copy of) and the pairs to put together. */
+export interface DupeChoices {
+  remove: { path: string; keptAs: string }[];
+  combine: { first: string; second: string; cut: number }[];
+}
+export interface DupeApplyProgress { state: 'running' | 'done' | 'failed'; step: string; done: number; total: number; percent?: number }
+export interface DupeApplyResult {
+  moved: { from: string; to: string }[];
+  combined: { first: string; second: string; out: string }[];
+  failed: { path: string; reason: string }[];
+  freed: number;                          // bytes moved out of the way
+}

@@ -120,6 +120,12 @@ const api = {
     cancel: () => invoke('videoFaces:cancel'),
     related: (p: string) => invoke('videoFaces:related', p),
   },
+  vdupes: {
+    status: () => invoke('vdupes:status'),
+    scan: () => invoke('vdupes:scan'),
+    cancel: () => invoke('vdupes:cancel'),
+    apply: (c: unknown) => invoke('vdupes:apply', c),
+  },
   attic: {
     status: () => invoke('attic:status'),
     current: () => invoke('attic:current'),
@@ -199,6 +205,8 @@ const api = {
   onAtticStatus: listen('attic:status'),
   onPositions: listen('player:positions'),
   onVideoFaces: listen('videoFaces:update'),
+  onDupesState: listen('vdupes:state'),
+  onDupesApply: listen('vdupes:apply'),
   onAtticTransfer: listen('attic:transfer'),
   onLibSearch: listen('lib:search'),
   onTidyProgress: listen('tidy:progress'),

@@ -17,6 +17,7 @@ import { onlyCuts, outputsOf, planEdit, planJoin, type Run } from './convert/edi
 import { ENCODERS, TARGETS, outputName, pixFmt, planConvert, progressSeconds, type Codec } from './convert/plan';
 import { exiftool } from './tags-service';
 import { queue } from './queue';
+import { moved as watchMoved } from './watch-service';
 import { log } from './logger';
 
 const HEIF = /\.(heic|heif|hif|avif)$/i;
@@ -220,6 +221,7 @@ function runOutputs(label: string, prepare: () => Promise<{ runs: Run[]; source:
           }, signal);
           if (cancelled) throw new Error('Stopped');
           fs.renameSync(part, r.out);
+          watchMoved(part, r.out);   // 1.1.0: the index follows at once (the watcher may have seen the half-written file)
           const st = fs.statSync(source);
           await fs.promises.utimes(r.out, st.atime, st.mtime).catch(() => {});
           const size = fs.statSync(r.out).size;
@@ -312,4 +314,21 @@ export async function saveFrames(file: string, at: number | null, every: number 
   fs.mkdirSync(dir, { recursive: true });
   await run('ffmpeg', ['-v', 'error', '-y', '-i', file, '-vf', `fps=1/${Math.max(0.1, every ?? 1)}`, ...q, path.join(dir, `${stem} %04d.${format}`)], 600000);
   return { files: fs.readdirSync(dir).map(f => path.join(dir, f)), dir };
+}
+
+/**
+ * 1.1.0 Duplicate videos: two overlapping parts made one: `first` whole, then `second` from `from` seconds, as an MP4
+ * (H.264) next to `first`, named "<first> (combined)". Converted, so two parts of different sizes join cleanly.
+ */
+export function combineParts(first: string, second: string, from: number, onProgress: (p: ConvertProgress) => void): { jobId: string; done: Promise<ConvertResult> } {
+  return runOutputs(`Duplicate videos: combine ${path.basename(first)}`, async () => {
+    const enc = await encoders();
+    const target: ConvertTarget = enc.h264 ? 'mp4-h264' : 'webm-vp9';
+    const codec = TARGETS[target].video as Codec;
+    if (!enc[codec]) throw new Error('No video encoder on this computer.');
+    const [a, b] = await Promise.all([probeMedia(first), probeMedia(second)]);
+    const stem = path.basename(first, path.extname(first));
+    const out = freeName(path.dirname(first), `${stem} (combined)`, TARGETS[target].ext);
+    return { runs: [planJoin([{ path: first, probe: a }, { path: second, probe: b, start: from }], out, { target, quality: 'best' }, enc[codec]!)], source: first };
+  }, onProgress);
 }

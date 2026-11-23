@@ -30,6 +30,7 @@ import { moveAppData } from './app-data-move';
 import { fileDetails } from './library/details';
 import * as attic from './attic-service';
 import * as videoFaces from './video-faces-service';
+import * as videoDupes from './video-dupes-service';
 import { isAttic } from './attic/client';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'clearup', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
@@ -585,6 +586,11 @@ handle('videoFaces:get', (p: string, size: number, mtime: number) => videoFaces.
 handle('videoFaces:start', (p: string, size: number, mtime: number) => videoFaces.start(p, size, mtime));
 handle('videoFaces:cancel', () => videoFaces.cancel());
 handle('videoFaces:related', (p: string) => videoFaces.related(p));   // 1.0.13: More like this
+// 1.1.0 Duplicate videos (Tidy up)
+handle('vdupes:status', () => videoDupes.status());
+handle('vdupes:scan', () => { videoDupes.scan(s => send('vdupes:state', s)); return videoDupes.status(); });
+handle('vdupes:cancel', () => videoDupes.cancel());
+handle('vdupes:apply', (c: import('@shared/types').DupeChoices) => videoDupes.apply(c, p => send('vdupes:apply', p)));
 
 // ---- 1.0.7 Attic ----
 handle('attic:status', () => attic.status());

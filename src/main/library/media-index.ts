@@ -8,7 +8,10 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { MediaEntry, MediaKind } from '../../shared/types';
 import { mediaKind } from '../../shared/types';
-import { skipDir } from './browse';
+import { skipDir as browseSkip } from './browse';
+import { REMOVED_DUPLICATES } from '../../shared/types';
+/** 1.1.0: what Duplicate videos set aside is not indexed again (it would be found as a duplicate once more). */
+const skipDir = (name: string, showSystem: boolean) => browseSkip(name, showSystem) || name.toLowerCase() === REMOVED_DUPLICATES.toLowerCase();
 import { dropTsCode, isTsVideo } from './ts-video';
 
 const IS_WIN = process.platform === 'win32';
@@ -182,7 +185,7 @@ export class MediaIndex {
     let media: fs.Dirent[] = [];
     for (const d of list) {
       if (d.isDirectory()) { if (!skipDir(d.name, showSystem)) subdirs.push(path.join(dir, d.name)); }
-      else if (d.isFile() && mediaKind(d.name)) media.push(d);
+      else if (d.isFile() && mediaKind(d.name) && !/\.part\.[^.]+$/i.test(d.name)) media.push(d);   // 1.1.0: a video still being written (Video editor, combine) is not indexed
     }
     const files: (FileRef & { name: string; kind: MediaKind })[] = [];
     media = await dropTsCode(dir, media);   // 1.0.14: TypeScript code is not a video

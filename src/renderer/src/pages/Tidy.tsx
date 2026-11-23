@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ApplyProgress, ApplyResult, ScanProgress, Settings, SortHistory, SortPlan, TidyPhotoRef, TidyResults } from '@shared/types';
 import { api, binName, errorText, fmtBytes, fmtDuration, isIn } from '../api';
 import { Button, Icon, Notice, ProgressBar, Segmented, Toggle } from '../components/ui';
+import { VideoDupes } from './VideoDupes';
 
-export type TidyTab = 'dupes' | 'organize';
+export type TidyTab = 'dupes' | 'organize' | 'videos';
 type Step = 'pick' | 'scanning' | 'results' | 'preview' | 'applying' | 'done';
 
 interface Props {
@@ -123,12 +124,14 @@ export function Tidy({ settings, onSettings, tab, onTab, initialFolder, onConsum
     <div className="flex items-end gap-3 flex-wrap">
       <div className="mr-auto">
         <h1 className="text-2xl font-semibold">Tidy up</h1>
-        <p className="text-sm text-muted mt-1">Find duplicate and blurry photos, or sort a folder by date or place.</p>
+        <p className="text-sm text-muted mt-1">Find duplicate and blurry photos, duplicate videos, or sort a folder by date or place.</p>
       </div>
       <Segmented<TidyTab> label="Tool" value={tab} onChange={onTab}
-        options={[{ value: 'dupes', label: 'Duplicates & blurry' }, { value: 'organize', label: 'By date or place' }]} />
+        options={[{ value: 'dupes', label: 'Duplicates & blurry' }, { value: 'videos', label: 'Duplicate videos' }, { value: 'organize', label: 'By date or place' }]} />
     </div>
   );
+  // 1.1.0: duplicate videos work on the whole Videos list, not a chosen folder.
+  if (tab === 'videos') return <VideoDupes header={header} />;
 
   // ---------- pick ----------
   if (step === 'pick') {

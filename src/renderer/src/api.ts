@@ -1,5 +1,5 @@
 // Typed access to the preload bridge (window.clearup).
-import type {
+import type { DupeApplyProgress, DupeApplyResult, DupeChoices, DupeScanState,
   ApplyProgress, ApplyResult, FolderStatus, GpuStatus, ImageInfo, JobItem, JobUpdate, ModelDownload, ModelId, PhotoRef,
   PowerStatus, QueueItem, ReviewData, SaveResult, ScanProgress, Settings, SortHistory, SortPlan, TidyResults, UpdateStatus, UpscaleOptions,
   FileWriteStatus, Playlist, WatchChange, WatchedFolder, WatchQuery, WatchResult,
@@ -189,9 +189,17 @@ interface Api {
   player: PlayerApi;
   attic: AtticApi;
   videoFaces: VideoFacesApi;
+  vdupes: {   // 1.1.0 Duplicate videos
+    status(): Promise<DupeScanState>;
+    scan(): Promise<DupeScanState>;
+    cancel(): Promise<void>;
+    apply(c: DupeChoices): Promise<DupeApplyResult>;
+  };
   onLibThumb(cb: (i: MediaInfo) => void): Off;
   onAtticStatus(cb: (s: AtticStatus) => void): Off;
   onVideoFaces(cb: (v: VideoFaces) => void): Off;
+  onDupesState(cb: (s: DupeScanState) => void): Off;
+  onDupesApply(cb: (p: DupeApplyProgress) => void): Off;
   onPositions(cb: (p: Record<string, { position: number; duration: number } | null>) => void): Off;
   onAtticTransfer(cb: (t: AtticTransfer) => void): Off;
   onLibSearch(cb: (u: SearchUpdate) => void): Off;

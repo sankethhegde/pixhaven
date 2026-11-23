@@ -120,8 +120,11 @@ export function planEdit(file: string, outs: string[], p: MediaProbe, e: EditSpe
 
 // ---------- join ----------
 
-/** Clips one after another, all made the size of the first (letterboxed), silent ones given silence. */
-export function planJoin(files: { path: string; probe: MediaProbe }[], out: string, o: Pick<ConvertOptions, 'target' | 'quality'>, enc: string): Run {
+/**
+ * Clips one after another, all made the size of the first (letterboxed), silent ones given silence. 1.1.0: a clip can
+ * start later (`start` seconds): Duplicate videos puts two overlapping parts together that way.
+ */
+export function planJoin(files: { path: string; probe: MediaProbe; start?: number }[], out: string, o: Pick<ConvertOptions, 'target' | 'quality'>, enc: string): Run {
   if (files.length < 2) throw new Error('Choose at least two videos to join.');
   const first = files[0].probe.video;
   if (!first) throw new Error(`${path.basename(files[0].path)} has no video picture.`);
@@ -132,16 +135,18 @@ export function planJoin(files: { path: string; probe: MediaProbe }[], out: stri
   files.forEach((f, i) => {
     inputs.push('-i', f.path);
     if (!f.probe.video) throw new Error(`${path.basename(f.path)} has no video picture.`);
-    fc.push(`[${i}:V:0]scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},format=yuv420p[v${i}]`);
+    const trim = f.start ? `trim=start=${r3(f.start)},setpts=PTS-STARTPTS,` : '';
+    fc.push(`[${i}:V:0]${trim}scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},format=yuv420p[v${i}]`);
   });
   files.forEach((f, i) => {
-    if (f.probe.audio.length) fc.push(`[${i}:a:0]aresample=48000,aformat=channel_layouts=stereo[a${i}]`);
-    else { inputs.push('-f', 'lavfi', '-t', String(r3(f.probe.duration)), '-i', 'anullsrc=r=48000:cl=stereo'); fc.push(`[${silent++}:a]anull[a${i}]`); }
+    const atrim = f.start ? `atrim=start=${r3(f.start)},asetpts=PTS-STARTPTS,` : '';
+    if (f.probe.audio.length) fc.push(`[${i}:a:0]${atrim}aresample=48000,aformat=channel_layouts=stereo[a${i}]`);
+    else { inputs.push('-f', 'lavfi', '-t', String(r3(f.probe.duration - (f.start ?? 0))), '-i', 'anullsrc=r=48000:cl=stereo'); fc.push(`[${silent++}:a]anull[a${i}]`); }
   });
   fc.push(`${files.map((_, i) => `[v${i}][a${i}]`).join('')}concat=n=${files.length}:v=1:a=1[vj][aj]`, `[vj]format=${pixFmt(enc)}[vout]`);
   const t = TARGETS[o.target];
   const q = ['small', 'balanced', 'best'].indexOf(o.quality) as 0 | 1 | 2;
-  const D = files.reduce((n, f) => n + f.probe.duration, 0);
+  const D = files.reduce((n, f) => n + f.probe.duration - (f.start ?? 0), 0);
   return {
     out, duration: D,
     args: ['-hide_banner', '-v', 'error', '-y', ...inputs, '-filter_complex', fc.join(';'), '-map', '[vout]', '-map', '[aj]', '-c:v', enc, ...qualityArgs(enc, q, W, H, fps),
