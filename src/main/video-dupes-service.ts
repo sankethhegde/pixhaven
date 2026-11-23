@@ -13,12 +13,17 @@ import { REMOVED_DUPLICATES } from '@shared/types';
 import { fingerprint, fileHash, refineCut } from './dupes/fingerprint';
 import { findPairs, planDupes, type Fingerprint } from './dupes/video-match';
 import { allVideos } from './watch-service';
+import { videos as atticVideos, move as atticMove, newFolder as atticNewFolder } from './attic-service';
+import type { MediaEntry } from '@shared/types';
 import * as tags from './tags-service';
 import { combineParts } from './convert-service';
 import { queue } from './queue';
 import { log } from './logger';
 
 const IS_WIN = process.platform === 'win32';
+const isAttic = (p: string) => p.startsWith('attic://');
+/** Inside a "Removed duplicates" folder (on Attic its index still lists them). */
+const inRemoved = (p: string) => p.split(/[\\/]/).some(seg => seg.toLowerCase() === REMOVED_DUPLICATES.toLowerCase());
 const key = (p: string) => (IS_WIN ? p.toLowerCase() : p);
 const empty = (): DupeScanState => ({ state: 'idle', done: 0, total: 0, same: [], longer: [], combine: [] });
 let state: DupeScanState = empty();
@@ -30,8 +35,8 @@ function store(): DatabaseSync {
   if (db) return db;
   db = new DatabaseSync(path.join(app.getPath('userData'), 'video-dupes.db'));
   db.exec(`PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS fp (path TEXT PRIMARY KEY, size INTEGER, mtime INTEGER, duration REAL, width INTEGER, height INTEGER,
-      hashes BLOB, blank BLOB, error TEXT);
+    CREATE TABLE IF NOT EXISTS fp2 (path TEXT PRIMARY KEY, size INTEGER, mtime INTEGER, duration REAL, width INTEGER, height INTEGER,
+      hashes BLOB, centre BLOB, mirror BLOB, blank BLOB, error TEXT);
     CREATE TABLE IF NOT EXISTS sha (path TEXT PRIMARY KEY, size INTEGER, mtime INTEGER, hash TEXT);`);
   return db;
 }
@@ -46,11 +51,12 @@ export function status(): DupeScanState {
 }
 function save() { try { fs.writeFileSync(stateFile(), JSON.stringify(state)); } catch { /* not kept */ } }
 
-type Row = { path: string; size: number; mtime: number; duration: number; width: number; height: number; hashes: Uint8Array | null; blank: Uint8Array | null; error: string | null };
+type Row = { path: string; size: number; mtime: number; duration: number; width: number; height: number; hashes: Uint8Array | null; centre: Uint8Array | null; mirror: Uint8Array | null; blank: Uint8Array | null; error: string | null };
+const u32 = (h: Uint8Array) => new Uint32Array(h.buffer.slice(h.byteOffset, h.byteOffset + h.byteLength));
+const bytes = (h: Uint32Array) => new Uint8Array(h.buffer, h.byteOffset, h.byteLength);
 const toFp = (r: Row): Fingerprint => {
-  const h = r.hashes!;
   return { path: r.path, size: r.size, mtime: r.mtime, duration: r.duration, width: r.width, height: r.height,
-    hashes: new Uint32Array(h.buffer.slice(h.byteOffset, h.byteOffset + h.byteLength)), blank: new Uint8Array(r.blank!) };
+    hashes: u32(r.hashes!), centre: u32(r.centre!), mirror: u32(r.mirror!), blank: new Uint8Array(r.blank!) };
 };
 
 /** Checks every video (new and changed ones are read; the rest come from before), then finds the duplicates. */
@@ -64,12 +70,13 @@ export function scan(send: (s: DupeScanState) => void): void {
   queue.add('scan', 'Duplicate videos: check videos', async () => {
     try {
       const d = store();
-      const videos = allVideos().filter(v => !v.path.startsWith('attic://'));
-      const get = d.prepare('SELECT size, mtime, error FROM fp WHERE path = ?');
+      const attic = await atticVideos().catch(() => [] as MediaEntry[]);
+      const videos = [...allVideos(), ...attic.filter(v => !inRemoved(v.path))];
+      const get = d.prepare('SELECT size, mtime, error FROM fp2 WHERE path = ?');
       const todo = videos.filter(v => { const r = get.get(v.path) as { size: number; mtime: number } | undefined; return !r || r.size !== v.size || r.mtime !== Math.floor(v.mtime); });
       state = { ...state, total: todo.length, done: 0 };
       send(state);
-      const put = d.prepare('INSERT OR REPLACE INTO fp (path, size, mtime, duration, width, height, hashes, blank, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      const put = d.prepare('INSERT OR REPLACE INTO fp2 (path, size, mtime, duration, width, height, hashes, centre, mirror, blank, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
       let next = 0, last = 0;
       const t0 = Date.now();
       const worker = async () => {
@@ -78,10 +85,10 @@ export function scan(send: (s: DupeScanState) => void): void {
           const signal: { kill?: () => void } = {};
           kills.add(signal);
           try {
-            const f = await fingerprint(v.path, signal);
-            put.run(v.path, v.size, Math.floor(v.mtime), f.duration, f.width, f.height, new Uint8Array(f.hashes.buffer), f.blank, null);
+            const f = await fingerprint(v.path, signal, isAttic(v.path) ? { size: v.size, mtime: v.mtime } : undefined);
+            put.run(v.path, v.size, Math.floor(v.mtime), f.duration, f.width, f.height, bytes(f.hashes), bytes(f.centre), bytes(f.mirror), f.blank, null);
           } catch (e) {
-            if (!cancelled) put.run(v.path, v.size, Math.floor(v.mtime), 0, 0, 0, null, null, String((e as Error).message).slice(0, 300));
+            if (!cancelled) put.run(v.path, v.size, Math.floor(v.mtime), 0, 0, 0, null, null, null, null, String((e as Error).message).slice(0, 300));
           } finally { kills.delete(signal); }
           state.done++;
           if (Date.now() - last > 300) { last = Date.now(); send({ ...state, current: v.name }); }
@@ -112,8 +119,8 @@ async function match(paths: string[]): Promise<void> {
   const t0 = Date.now();
   const d = store();
   const want = new Set(paths.map(key));
-  const rows = (d.prepare('SELECT * FROM fp').all() as unknown as Row[]).filter(r => want.has(key(r.path)));
-  const fps = rows.filter(r => !r.error && r.hashes && fs.existsSync(r.path)).map(toFp);
+  const rows = (d.prepare('SELECT * FROM fp2').all() as unknown as Row[]).filter(r => want.has(key(r.path)));
+  const fps = rows.filter(r => !r.error && r.hashes && r.centre && (isAttic(r.path) || fs.existsSync(r.path))).map(toFp);
   // Exact copies: same size, then the same bytes (hashes kept until the file changes).
   const bySize = new Map<number, number[]>();
   fps.forEach((f, i) => bySize.set(f.size, [...(bySize.get(f.size) ?? []), i]));
@@ -121,7 +128,7 @@ async function match(paths: string[]): Promise<void> {
   const putSha = d.prepare('INSERT OR REPLACE INTO sha (path, size, mtime, hash) VALUES (?, ?, ?, ?)');
   const exact: [number, number][] = [];
   for (const g of bySize.values()) {
-    if (g.length < 2) continue;
+    if (g.length < 2 || g.some(i => isAttic(fps[i].path))) continue;   // Attic files would have to be downloaded: same picture is enough
     const h: string[] = [];
     for (const i of g) {
       const f = fps[i];
@@ -135,8 +142,9 @@ async function match(paths: string[]): Promise<void> {
   const plan = planDupes(fps, pairs, exact);
   state = {
     ...state, state: 'done', at: Date.now(), current: undefined, failed: rows.filter(r => r.error).length,
-    same: plan.same.map((g, i) => ({ id: `s${i}`, videos: g.members.map(m => video(fps[m])), keep: g.keep === null ? null : fps[g.keep].path, exact: g.exact })),
-    longer: plan.longer.map((l, i) => ({ id: `l${i}`, longer: video(fps[l.longer]), shorter: video(fps[l.shorter]), at: l.at })),
+    same: plan.same.map((g, i) => ({ id: `s${i}`, videos: g.members.map(m => video(fps[m])), keep: g.keep === null ? null : fps[g.keep].path, exact: g.exact,
+      notes: Object.fromEntries(Object.entries(g.notes).map(([m, n]) => [fps[Number(m)].path, n])) })),
+    longer: plan.longer.map((l, i) => ({ id: `l${i}`, longer: video(fps[l.longer]), shorter: video(fps[l.shorter]), at: l.at, how: l.how })),
     combine: plan.combine.map((c, i) => ({ id: `c${i}`, first: video(fps[c.first]), second: video(fps[c.second]), cut: c.cut, overlapSec: c.overlapSec })),
   };
   save();
@@ -153,7 +161,25 @@ export function removedDir(file: string): string {
   return path.join(root, REMOVED_DUPLICATES, rel);
 }
 
-const ref = async (p: string): Promise<FileRef | null> => { const s = await fs.promises.stat(p).catch(() => null); return s ? { path: p, size: s.size, mtime: s.mtimeMs } : null; };
+const ref = async (p: string): Promise<FileRef | null> => {
+  if (isAttic(p)) { const r = store().prepare('SELECT size, mtime FROM fp2 WHERE path = ?').get(p) as { size: number; mtime: number } | undefined; return r ? { path: p, size: r.size, mtime: r.mtime } : null; }
+  const s = await fs.promises.stat(p).catch(() => null);
+  return s ? { path: p, size: s.size, mtime: s.mtimeMs } : null;
+};
+
+/** An Attic copy is set aside on Attic: "attic://<share>/Removed duplicates/<its folder>" (made as needed). */
+async function moveOnAttic(p: string): Promise<string> {
+  const m = /^attic:\/\/([^/]+)\/(.*)$/.exec(p);
+  if (!m) throw new Error('Not an Attic path');
+  const folders = [REMOVED_DUPLICATES, ...m[2].split('/').slice(0, -1)];
+  let at = `attic://${m[1]}`;
+  for (const name of folders) {
+    const next = `${at}/${name}`;
+    await atticNewFolder(at, name).catch(() => { /* there already */ });
+    at = next;
+  }
+  return atticMove(p, at);
+}
 
 /** Stars (the highest), labels (all of them) and the place it was left go from `from` to `to`. */
 async function carryOver(from: string[], to: string): Promise<void> {
@@ -172,7 +198,7 @@ async function carryOver(from: string[], to: string): Promise<void> {
   const pos = store_.positions([to, ...from]);
   if (!pos[to]) {
     const best = from.map(p => pos[p]).filter(Boolean).sort((a, b) => b!.position - a!.position)[0];
-    const dur = (store().prepare('SELECT duration FROM fp WHERE path = ?').get(to) as { duration: number } | undefined)?.duration ?? 0;
+    const dur = (store().prepare('SELECT duration FROM fp2 WHERE path = ?').get(to) as { duration: number } | undefined)?.duration ?? 0;
     if (best && dur && Math.abs(best.duration - dur) < 3) store_.savePosition(to, best.position, best.duration);
   }
 }
@@ -192,7 +218,7 @@ export function apply(choices: DupeChoices, send: (p: DupeApplyProgress) => void
       const name = path.basename(c.first);
       send({ state: 'running', step: `Putting together ${name}`, done, total, percent: 0 });
       try {
-        const dur = (store().prepare('SELECT duration FROM fp WHERE path = ?').get(c.first) as { duration: number } | undefined)?.duration ?? 0;
+        const dur = (store().prepare('SELECT duration FROM fp2 WHERE path = ?').get(c.first) as { duration: number } | undefined)?.duration ?? 0;
         const from = dur ? await refineCut(c.first, dur, c.second, c.cut) : c.cut;
         const r = await combineParts(c.first, c.second, from, p => { if (p.state === 'running') send({ state: 'running', step: `Putting together ${name}`, done, total, percent: p.percent }); }).done;
         const out = r.done[0]?.to;
@@ -213,13 +239,16 @@ export function apply(choices: DupeChoices, send: (p: DupeApplyProgress) => void
       seen.add(key(r.path));
       send({ state: 'running', step: `Moving ${path.basename(r.path)}`, done, total });
       try {
-        const size = (await fs.promises.stat(r.path)).size;
+        const size = (await ref(r.path))?.size ?? 0;
         if (key(r.keptAs) !== key(r.path)) await carryOver([r.path], r.keptAs).catch(e => log('warn', 'Duplicate videos: labels not carried over', e));
-        let dest = removedDir(r.path);
-        try { fs.mkdirSync(dest, { recursive: true }); } catch { dest = path.join(path.dirname(r.path), REMOVED_DUPLICATES); fs.mkdirSync(dest, { recursive: true }); }
-        const m = await tags.moveFiles([r.path], dest);
-        if (m.failed.length) throw new Error(m.failed[0].reason);
-        res.moved.push(...m.moved);
+        if (isAttic(r.path)) res.moved.push({ from: r.path, to: await moveOnAttic(r.path) });
+        else {
+          let dest = removedDir(r.path);
+          try { fs.mkdirSync(dest, { recursive: true }); } catch { dest = path.join(path.dirname(r.path), REMOVED_DUPLICATES); fs.mkdirSync(dest, { recursive: true }); }
+          const m = await tags.moveFiles([r.path], dest);
+          if (m.failed.length) throw new Error(m.failed[0].reason);
+          res.moved.push(...m.moved);
+        }
         res.freed += size;
       } catch (e) {
         res.failed.push({ path: r.path, reason: (e as Error).message });

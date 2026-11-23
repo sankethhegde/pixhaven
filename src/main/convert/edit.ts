@@ -9,6 +9,7 @@ import { cropBox, outputsOf } from '../../shared/edit-math';
 export { cropBox, outputsOf };
 import type { MediaProbe } from '../library/player';
 import { TARGETS, outSize, pixFmt, qualityArgs } from './plan';
+import { inputArgs } from '../library/ffmpeg';
 
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const even = (n: number) => Math.max(2, Math.floor(n / 2) * 2);
@@ -133,7 +134,7 @@ export function planJoin(files: { path: string; probe: MediaProbe; start?: numbe
   const fc: string[] = [];
   let silent = files.length;
   files.forEach((f, i) => {
-    inputs.push('-i', f.path);
+    inputs.push(...inputArgs(f.path));   // 1.1.0: an Attic part is read over the network
     if (!f.probe.video) throw new Error(`${path.basename(f.path)} has no video picture.`);
     const trim = f.start ? `trim=start=${r3(f.start)},setpts=PTS-STARTPTS,` : '';
     fc.push(`[${i}:V:0]${trim}scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},format=yuv420p[v${i}]`);

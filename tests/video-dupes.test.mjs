@@ -20,7 +20,7 @@ const master = (out, seed) => ff('-f', 'lavfi', '-i', `mandelbrot=size=160x120:r
   '-vf', 'rotate=a=t*0.06', '-t', '90', '-c:v', 'mpeg4', '-q:v', '4', out);
 const cut = (from, to, src, out, extra = []) => ff('-ss', String(from), '-to', String(to), '-i', src, ...extra, '-c:v', 'mpeg4', '-q:v', '4', out);
 
-test('the same video under another name or in a lower quality, a longer version, and two overlapping parts', { skip, timeout: 600000 }, async () => {
+test('the same video renamed, smaller, mirrored, cropped, with black bars or faster; longer versions; two overlapping parts', { skip, timeout: 600000 }, async () => {
   const { fingerprint, fileHash, refineCut, setFfmpegDir } = await load('dupes/fingerprint');
   setFfmpegDir(FFMPEG_DIR);
   const { findPairs, planDupes } = await load('dupes/video-match');
@@ -29,6 +29,11 @@ test('the same video under another name or in a lower quality, a longer version,
   fs.copyFileSync(p('trip.mp4'), p('trip copy renamed.mp4'));                     // exact copy, other name
   cut(0, 90, p('trip.mp4'), p('trip small.mp4'), ['-vf', 'scale=96:72']);           // same video, smaller
   cut(20, 50, p('trip.mp4'), p('trip clip.mp4'));                                    // a piece of it
+  cut(0, 90, p('trip.mp4'), p('trip mirrored.mp4'), ['-vf', 'hflip']);                // mirrored
+  cut(0, 90, p('trip.mp4'), p('trip cropped.mp4'), ['-vf', 'crop=iw*0.75:ih*0.75,scale=160:120']);   // zoomed in
+  cut(0, 90, p('trip.mp4'), p('trip letterbox.mp4'), ['-vf', 'scale=160:90,pad=160:120:0:15:black']); // black bars added
+  cut(0, 90, p('trip.mp4'), p('trip fast.mp4'), ['-vf', 'setpts=PTS/1.5', '-r', '5']);  // played 1.5× faster
+  cut(20, 50, p('trip.mp4'), p('trip clip mirrored.mp4'), ['-vf', 'hflip']);          // a mirrored piece
   master(p('party.mp4'), 1);
   cut(0, 60, p('party.mp4'), p('party part 1.mp4'));                                 // 0–60 s
   cut(25, 90, p('party.mp4'), p('party part 2.mp4'));                                // 25–90 s: 35 s overlap
@@ -51,16 +56,22 @@ test('the same video under another name or in a lower quality, a longer version,
   }
   const plan = planDupes(fps.map(f => ({ path: f.path, size: f.size, duration: f.duration, width: f.width, height: f.height })), pairs, exact);
 
-  assert.equal(plan.same.length, 1, JSON.stringify(plan.same.map(g => g.members.map(name))));
-  const g = plan.same[0];
-  assert.deepEqual(g.members.map(name).sort(), ['trip copy renamed.mp4', 'trip small.mp4', 'trip.mp4']);
-  assert.equal(g.keep, null, 'two copies of the same quality: you choose');
+  assert.equal(plan.same.length, 2, JSON.stringify(plan.same.map(g => g.members.map(name))));
+  const g = plan.same.find(x => x.members.length > 2);
+  const clips = plan.same.find(x => x.members.length === 2);
+  assert.deepEqual(clips.members.map(name).sort(), ['trip clip mirrored.mp4', 'trip clip.mp4'], 'the piece and its mirrored copy are the same video');
+  assert.deepEqual(g.members.map(name).sort(), ['trip copy renamed.mp4', 'trip cropped.mp4', 'trip fast.mp4', 'trip letterbox.mp4', 'trip mirrored.mp4', 'trip small.mp4', 'trip.mp4']);
+  assert.equal(g.keep, null, 'copies of the same quality, mirrored, cropped or faster: you choose');
   assert.equal(g.exact, false);
+  const noteOf = n => g.notes[files.indexOf(n)] ?? [];
+  assert.ok(noteOf('trip mirrored.mp4').includes('Mirrored'), JSON.stringify(Object.fromEntries(Object.entries(g.notes).map(([i, v]) => [name(Number(i)), v]))));
+  assert.ok(noteOf('trip cropped.mp4').includes('Cropped'), 'the zoomed-in copy says Cropped');
+  assert.ok(noteOf('trip fast.mp4').some(t => /^1.5× speed$/.test(t)), 'the faster copy says 1.5× speed');
 
-  assert.equal(plan.longer.length, 1, JSON.stringify(plan.longer.map(l => [name(l.longer), name(l.shorter)])));
+  assert.equal(plan.longer.length, 1, JSON.stringify(plan.longer.map(l => [name(l.longer), name(l.shorter), l.how])));
+  assert.equal(name(plan.longer[0].shorter), 'trip clip.mp4', 'the plain piece stands for its group');
   assert.ok(['trip.mp4', 'trip copy renamed.mp4'].includes(name(plan.longer[0].longer)));
-  assert.equal(name(plan.longer[0].shorter), 'trip clip.mp4');
-  assert.ok(Math.abs(plan.longer[0].at - 20) <= 4, `found at ${plan.longer[0].at} s`);
+  assert.ok(Math.abs(plan.longer[0].at - 20) <= 2, `found at ${plan.longer[0].at} s`);
 
   assert.equal(plan.combine.length, 1, JSON.stringify(plan.combine));
   const c = plan.combine[0];
@@ -75,6 +86,6 @@ test('the same video under another name or in a lower quality, a longer version,
 
   // Exact copies only: the copy and the original, and a smaller copy is clearly worse, so the bigger is kept.
   const two = planDupes([fps[files.indexOf('trip.mp4')], fps[files.indexOf('trip small.mp4')]].map(f => ({ path: f.path, size: f.size, duration: f.duration, width: f.width, height: f.height })),
-    [{ a: 0, b: 1, rel: { kind: 'same' }, ratio: 1 }], []);
+    [{ a: 0, b: 1, rel: { kind: 'same', how: { view: 'plain', speed: 1 } }, ratio: 1 }], []);
   assert.equal(two.same[0].keep, 0, 'the bigger copy is kept over the smaller one');
 });

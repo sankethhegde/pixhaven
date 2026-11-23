@@ -81,7 +81,7 @@ export function VideoDupes({ header }: { header: ReactNode }) {
   const found = s ? s.same.length + s.longer.length + s.combine.length : 0;
   const thumb = (v: DupeVideo) => infos.get(v.path)?.thumb ?? undefined;
 
-  const Row = ({ v, tag, tone, radio }: { v: DupeVideo; tag?: string; tone?: 'keep' | 'remove' | 'new'; radio?: { name: string; checked: boolean; onChange: () => void } }) => (
+  const Row = ({ v, tag, tone, radio, notes }: { v: DupeVideo; tag?: string; tone?: 'keep' | 'remove' | 'new'; radio?: { name: string; checked: boolean; onChange: () => void }; notes?: string[] }) => (
     <div className={`flex items-center gap-3 p-2 rounded-lg ${tone === 'remove' ? 'opacity-70' : ''}`} data-dupe-video={v.name} data-tone={tone}>
       {radio && <input type="radio" name={radio.name} checked={radio.checked} onChange={radio.onChange} aria-label={`Keep ${v.name}`} className="accent-[var(--color-accent)]" />}
       <div className="w-32 shrink-0 aspect-video rounded-md overflow-hidden bg-panel-2 flex items-center justify-center relative">
@@ -89,7 +89,8 @@ export function VideoDupes({ header }: { header: ReactNode }) {
         {v.duration ? <span className="absolute bottom-1 right-1 text-[10px] px-1 rounded bg-black/75 text-white">{fmtClock(v.duration)}</span> : null}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-sm truncate" title={v.path}>{v.name}</div>
+        <div className="text-sm truncate flex items-center gap-1.5" title={v.path}>{v.path.startsWith('attic://') && <span className="text-[10px] px-1.5 rounded bg-panel-2 text-muted shrink-0">Attic</span>}<span className="truncate">{v.name}</span>
+          {notes?.map(n => <span key={n} className="text-[10px] px-1.5 rounded bg-[#f5b301]/20 text-[#b88400] shrink-0" data-dupe-note={n}>{n}</span>)}</div>
         <div className="text-xs text-muted truncate" title={folderOf(v.path)}>{folderOf(v.path)}</div>
         <div className="text-xs text-muted">{[quality(v), fmtBytes(v.size)].filter(Boolean).join(' · ')}</div>
       </div>
@@ -121,7 +122,7 @@ export function VideoDupes({ header }: { header: ReactNode }) {
               <div className="font-semibold">Duplicate videos</div>
               <p className="text-sm text-muted">PixHaven looks at what is in each video, so it also finds renamed copies, the same video in a lower quality,
                 longer versions, and two parts that overlap. You choose what happens; copies are moved to a “{REMOVED_DUPLICATES}” folder, not deleted.</p>
-              <p className="text-xs text-muted">It checks the videos in the Videos tab. The first check reads every video once; later checks only read new ones.</p>
+              <p className="text-xs text-muted">It checks the videos in the Videos tab, and Attic's when Attic is connected (read over the network, so slower). Mirrored, cropped and sped-up copies are found too. The first check reads every video once; later checks only read new ones.</p>
             </div>
             {busy ? <Button onClick={() => void api.vdupes.cancel()}><Icon name="x" size={15} />Stop</Button>
               : <Button variant="primary" onClick={() => void api.vdupes.scan().then(setS)} disabled={!!applyP} data-testid="dupes-check"><Icon name="search" size={15} />{s?.at ? 'Check again' : 'Check my videos'}</Button>}
@@ -161,9 +162,9 @@ export function VideoDupes({ header }: { header: ReactNode }) {
                   const kp = keep[g.id];
                   return (
                     <Card key={g.id} id={g.id} title={`${g.videos.length} copies${g.exact ? ' (exactly the same files)' : ''}`}
-                      note={kp ? 'The best quality is chosen to keep; you can change it.' : 'Same quality: choose the one to keep.'} needsChoice={!kp}>
+                      note={kp ? 'The best quality is chosen to keep; you can change it.' : Object.keys(g.notes ?? {}).length ? 'Some copies are mirrored, cropped or at another speed: choose the one to keep.' : 'Same quality: choose the one to keep.'} needsChoice={!kp}>
                       {g.videos.map(v => <Row key={v.path} v={v} tone={kp === v.path ? 'keep' : kp ? 'remove' : undefined} tag={kp === v.path ? 'Keep' : kp ? 'Move' : undefined}
-                        radio={{ name: g.id, checked: kp === v.path, onChange: () => setKeep(m => ({ ...m, [g.id]: v.path })) }} />)}
+                        radio={{ name: g.id, checked: kp === v.path, onChange: () => setKeep(m => ({ ...m, [g.id]: v.path })) }} notes={g.notes?.[v.path]} />)}
                     </Card>
                   );
                 })}
@@ -173,7 +174,7 @@ export function VideoDupes({ header }: { header: ReactNode }) {
               <section className="space-y-2" data-testid="dupes-longer">
                 <h2 className="font-semibold">Longer versions <span className="text-sm text-muted font-normal">· the longer video holds all of the shorter one</span></h2>
                 {s.longer.map(l => (
-                  <Card key={l.id} id={l.id} title={`${l.longer.name} holds all of ${l.shorter.name}`} note={`from ${fmtClock(l.at)}`}>
+                  <Card key={l.id} id={l.id} title={`${l.longer.name} holds all of ${l.shorter.name}`} note={`from ${fmtClock(l.at)}${l.how ? ` (${l.how})` : ''}`}>
                     <Row v={l.longer} tone="keep" tag="Keep" />
                     <Row v={l.shorter} tone="remove" tag="Move" />
                   </Card>

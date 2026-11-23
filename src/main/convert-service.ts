@@ -327,8 +327,10 @@ export function combineParts(first: string, second: string, from: number, onProg
     const codec = TARGETS[target].video as Codec;
     if (!enc[codec]) throw new Error('No video encoder on this computer.');
     const [a, b] = await Promise.all([probeMedia(first), probeMedia(second)]);
-    const stem = path.basename(first, path.extname(first));
-    const out = freeName(path.dirname(first), `${stem} (combined)`, TARGETS[target].ext);
+    const stem = path.posix.basename(first.replace(/\\/g, '/'), path.extname(first));
+    const local = [first, second].find(p => !p.startsWith('attic://'));
+    const dir = local ? path.dirname(local) : app.getPath('videos');   // an Attic part: the new video is made on this PC
+    const out = freeName(dir, `${stem} (combined)`, TARGETS[target].ext);
     return { runs: [planJoin([{ path: first, probe: a }, { path: second, probe: b, start: from }], out, { target, quality: 'best' }, enc[codec]!)], source: first };
   }, onProgress);
 }

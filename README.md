@@ -255,8 +255,11 @@ phase0/              proof of concept + PHASE0-RESULTS.md
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
 - **Duplicate videos (Tidy up, 1.1.0):** every video in the Videos tab gets a fingerprint (a 9×8 picture hash every
   second, read once with FFmpeg and kept until the file changes; ~0.7 s per minute of 480p video, two at a time).
-  Videos sharing hash bands are lined up in full to find: the same video (exact copies by SHA-1, renamed, another
-  size or quality: the clearly better copy is kept, same quality = you choose), longer versions (one holds all of
+  Each sample is hashed three ways (black bars left out; its middle 75 %, for cropped copies; mirrored), and videos
+  are also lined up at 0.5–2× speed. Videos sharing hash bands are lined up in full to find: the same video (exact
+  copies by SHA-1, renamed, another size or quality, mirrored, cropped, with bars, faster: the clearly better copy is
+  kept; same quality or an altered copy = you choose, notes say how each differs), Attic videos too (read over the
+  network; an Attic copy is moved into Removed duplicates on Attic), longer versions (one holds all of
   another), and two parts that overlap (put together as "<first> (combined).mp4", the join refined to ¼ s). Nothing
   happens until Apply: copies are moved to "Removed duplicates" at the top of their drive (folders kept; never
   indexed), stars, labels and the place left go to the copy kept. `dupes/video-match.ts`, `dupes/fingerprint.ts`,

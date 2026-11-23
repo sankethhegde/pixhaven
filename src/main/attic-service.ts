@@ -8,7 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { app, safeStorage, shell } from 'electron';
 import type { AtticListing, AtticShareInfo, AtticStatus, AtticTransfer, MediaEntry } from '@shared/types';
-import { mediaKind } from '@shared/types';
+import { mediaKind, REMOVED_DUPLICATES } from '@shared/types';
 import { log } from './logger';
 import { AtticClient, AtticError, atticPath, findServers, isAttic, parseAttic, type AtticConn, type AtticEntry } from './attic/client';
 import { setInputResolver } from './library/ffmpeg';
@@ -136,7 +136,9 @@ export async function videos(fresh = false): Promise<MediaEntry[]> {
   if (!client || last.state !== 'connected') return [];
   if (!fresh && videoCache && Date.now() - videoCache.at < 60_000) return videoCache.list;
   const idx = await need().index(fresh);
-  const list = idx.entries.filter(e => mediaKind(e.name) === 'video').map(toEntry).filter((e): e is MediaEntry => !!e);
+  // 1.1.0: what Duplicate videos set aside on Attic is not listed again.
+  const list = idx.entries.filter(e => mediaKind(e.name) === 'video').map(toEntry).filter((e): e is MediaEntry => !!e)
+    .filter(e => !e.path.split('/').some(seg => seg.toLowerCase() === REMOVED_DUPLICATES.toLowerCase()));
   videoCache = { at: Date.now(), list };
   return list;
 }

@@ -561,9 +561,9 @@ export const REMOVED_DUPLICATES = 'Removed duplicates';
 
 export interface DupeVideo { path: string; name: string; size: number; mtime: number; duration: number; width: number; height: number }
 /** The same video more than once: keep one (null = you choose: the copies are of the same quality). */
-export interface DupeSameGroup { id: string; videos: DupeVideo[]; keep: string | null; exact: boolean }
+export interface DupeSameGroup { id: string; videos: DupeVideo[]; keep: string | null; exact: boolean; notes: Record<string, string[]> }   // notes by path: Mirrored, Cropped, 1.5× speed
 /** One video holds all of another (from `at` seconds). */
-export interface DupeLonger { id: string; longer: DupeVideo; shorter: DupeVideo; at: number }
+export interface DupeLonger { id: string; longer: DupeVideo; shorter: DupeVideo; at: number; how?: string | null }   // how: "mirrored", "cropped", "at another speed"
 /** The end of `first` is the start of `second`: play `first`, then `second` from `cut` seconds. */
 export interface DupeCombine { id: string; first: DupeVideo; second: DupeVideo; cut: number; overlapSec: number }
 
