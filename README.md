@@ -253,7 +253,7 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
   1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
-- **Duplicate videos (Tidy up, 1.1.0):** every video in the Videos tab gets a fingerprint (a 9×8 picture hash every
+- **Duplicate videos (Tidy up, 1.1.0; Attic and altered copies 1.1.1):** every video in the Videos tab gets a fingerprint (a 9×8 picture hash every
   second, read once with FFmpeg and kept until the file changes; ~0.7 s per minute of 480p video, two at a time).
   Each sample is hashed three ways (black bars left out; its middle 75 %, for cropped copies; mirrored), and videos
   are also lined up at 0.5–2× speed. Videos sharing hash bands are lined up in full to find: the same video (exact
