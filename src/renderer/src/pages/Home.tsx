@@ -2,7 +2,8 @@
 import { useEffect, useState } from 'react';
 import { api, fmtClock } from '../api';
 import { DropZone } from '../components/DropZone';
-import { Button, Icon } from '../components/ui';
+import { Button, Icon, Toggle } from '../components/ui';
+import { liteOff } from '@shared/types';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import type { MediaInfo, RecentVideo, Settings } from '@shared/types';
 
@@ -14,10 +15,14 @@ interface Props {
   onTidy: (tab: 'dupes' | 'organize') => void;
   onLibrary: () => void;
   onPlay: (path: string) => void;
+  onSettingsPage: () => void;   // 1.1.2: Light mode's choices
 }
 
-export function Home({ settings, onSettings, onUpscale, onSort, onTidy, onLibrary, onPlay }: Props) {
+export function Home({ settings, onSettings, onUpscale, onSort, onTidy, onLibrary, onPlay, onSettingsPage }: Props) {
   const [over, setOver] = useState(false);
+  const off = (f: Parameters<typeof liteOff>[1]) => liteOff(settings, f);
+  const lite = settings.lite ?? { on: false, keep: [] };
+  const setLite = async (on: boolean) => onSettings(await api.setSettings({ lite: { ...lite, on } }));
   return (
     <div className="h-full overflow-auto p-8">
       <div className="max-w-5xl mx-auto space-y-6">
@@ -28,12 +33,24 @@ export function Home({ settings, onSettings, onUpscale, onSort, onTidy, onLibrar
           </div>
           <ThemeSwitch settings={settings} onSettings={onSettings} />
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr] gap-5">
-          <section className="space-y-3">
+        {/* 1.1.2 Light mode: only what you chose in Settings runs, so PixHaven uses less of the computer. */}
+        <div className={`rounded-2xl border p-4 flex items-center gap-4 ${lite.on ? 'border-accent bg-accent-soft' : 'border-line bg-panel'}`} data-testid="lite-card">
+          <Icon name="sparkle" size={20} className={lite.on ? 'text-accent' : 'text-muted'} />
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold">Light mode {lite.on ? 'is on' : 'is off'}</div>
+            <div className="text-sm text-muted">{lite.on
+              ? `Only what you chose runs: ${lite.keep.length ? `${lite.keep.length} feature${lite.keep.length === 1 ? '' : 's'} besides browsing and playing` : 'browsing and playing only'}. The rest is switched off and uses nothing.`
+              : 'Everything works. Switch it on to run only the features you choose, so PixHaven uses less of the computer.'}
+              {' '}<button className="text-accent hover:underline" onClick={onSettingsPage}>Choose features</button></div>
+          </div>
+          <Toggle checked={lite.on} onChange={v => void setLite(v)} label="Light mode" />
+        </div>
+        {(!off('upscale') || !off('sort')) && <div className={`grid grid-cols-1 ${!off('upscale') && !off('sort') ? 'lg:grid-cols-[1.6fr_1fr]' : ''} gap-5`}>
+          {!off('upscale') && <section className="space-y-3">
             <div className="flex items-center gap-2 font-semibold"><Icon name="sparkle" size={18} className="text-accent" />Upscale images</div>
             <DropZone onPaths={onUpscale} />
-          </section>
-          <section className="space-y-3">
+          </section>}
+          {!off('sort') && <section className="space-y-3">
             <div className="flex items-center gap-2 font-semibold"><Icon name="people" size={18} className="text-accent" />Sort photos by person</div>
             <div onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
               onDrop={e => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files[0]; if (f) onSort(api.pathForFile(f)); }}
@@ -45,20 +62,20 @@ export function Home({ settings, onSettings, onUpscale, onSort, onTidy, onLibrar
                 <Icon name="folder" size={16} />Choose folder
               </Button>
             </div>
-          </section>
-        </div>
+          </section>}
+        </div>}
         <section className="space-y-3">
           <div className="flex items-center gap-2 font-semibold"><Icon name="library" size={18} className="text-accent" />Browse my media</div>
           <ToolCard icon="library" title="Browse my media" text="Every drive and folder, showing only photos and videos (phone HEIC, camera RAW, MP4, MKV, AVI…) with thumbnails." onClick={onLibrary} />
           <RecentVideos onPlay={onPlay} />
         </section>
-        <section className="space-y-3">
+        {!off('tidy') && <section className="space-y-3">
           <div className="flex items-center gap-2 font-semibold"><Icon name="broom" size={18} className="text-accent" />Tidy up</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <ToolCard icon="copy" title="Find duplicates & blurry photos" text="Identical files, resized copies and blurry shots. You pick what to set aside." onClick={() => onTidy('dupes')} />
             <ToolCard icon="calendar" title="Sort by date or place" text="Year / Month or Country / City folders, from the date and GPS saved in each photo." onClick={() => onTidy('organize')} />
           </div>
-        </section>
+        </section>}
       </div>
     </div>
   );

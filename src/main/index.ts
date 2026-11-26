@@ -4,7 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, net, Notification, powerMonitor, protocol, shell } from 'electron';
 import type { JobItem, JobUpdate, ModelDownload, PlayerCaps, Settings, TagFilter, UpscaleOptions, WatchQuery, GenRequest, CombineRequest, LabelInfo, MediaTags, ConvertOptions, ConvertResult, EditSpec } from '@shared/types';
-import { IMAGE_EXTENSIONS } from '@shared/types';
+import { IMAGE_EXTENSIONS, liteOff } from '@shared/types';
 import { getSettings, updateSettings, writeTurnedOn } from './settings';
 import { detectGpu, hasDedicatedGpu } from './gpu-detect';
 import { cleanTemp, inspectImage, quickSize, saveResult, scanFolder, UpscaleJob, friendlyError, isImageFile, setGpuWorks } from './upscale-job';
@@ -260,6 +260,9 @@ app.whenReady().then(async () => {
   queue.onChange(items => send('queue:update', items));
   powerMonitor.on('on-battery', () => send('power:update', { onBattery: true }));
   powerMonitor.on('on-ac', () => send('power:update', { onBattery: false }));
+  // 1.1.2: on battery the daily full check of a watched drive and the face search by itself wait (the rest runs at low
+  // priority, so a folder you add is still checked).
+  applyLite();
   initUpdater(s => send('update:status', s));
   // Phase C: one backup of library.db a day (last 7 kept).
   setTimeout(() => tags.dailyBackup(), 20_000);
@@ -322,6 +325,15 @@ handle('gpu:detect', async () => {
   return { gpu, dedicated: hasDedicatedGpu(gpu) };
 });
 handle('settings:get', () => getSettings());
+/** 1.1.2 Light mode: what is switched off stops its background work. */
+function applyLite(): void {
+  const s = getSettings();
+  watch.setEnabled(!liteOff(s, 'watch'));
+  attic.setEnabled(!liteOff(s, 'attic'));
+  tags.holdWrites(liteOff(s, 'writeTags'));
+}
+handle('watch:pauseUser', (on: boolean) => watch.pause('user', on));
+handle('watch:pausedBy', () => watch.pausedReasons());   // 1.1.2: "Pause" on the background note
 handle('settings:set', (patch: Partial<Settings>) => {
   if (patch.theme) nativeTheme.themeSource = patch.theme;
   // These are changed only through their own actions (location, watched folders, write-into-files); the UI's copy of
@@ -330,7 +342,9 @@ handle('settings:set', (patch: Partial<Settings>) => {
     const cur = getSettings().library;
     patch = { ...patch, library: { ...patch.library, dbPath: cur.dbPath, watched: cur.watched, writeToFiles: cur.writeToFiles } };
   }
-  return updateSettings(patch);
+  const s = updateSettings(patch);
+  if (patch.lite) applyLite();
+  return s;
 });
 handle('power:get', () => ({ onBattery: powerMonitor.isOnBatteryPower() }));
 

@@ -267,3 +267,14 @@ test('1.0.14: a .ts file is a video only when it is one (TypeScript code is left
   assert.equal(ix.query({ kind: 'video' }).total, 3);
   ix.close();
 });
+
+test('1.1.2: after "too many changes", only the folders holding photos or videos are read again', async () => {
+  const root = path.join(tmp, 'QuickDrive');
+  put(path.join(root, 'Videos', 'a.mp4')); put(path.join(root, 'Phone', 'Camera', 'b.jpg'));
+  for (let i = 0; i < 30; i++) put(path.join(root, 'Code', `p${i}`, 'notes.txt'));
+  const ix = new MediaIndex(path.join(tmp, 'idx-quick', 'index.db'));
+  ix.addRoot(root);
+  assert.equal(await ix.scan(ix.rootOf(root).id, {}), 'done');
+  assert.deepEqual(ix.mediaDirs(root).map(d => path.relative(root, d)).sort(), [path.join('Phone', 'Camera'), 'Videos']);
+  ix.close();
+});

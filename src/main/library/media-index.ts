@@ -319,6 +319,12 @@ export class MediaIndex {
     return this.db.prepare('SELECT path, size, mtime FROM files WHERE size = ?').all(size) as unknown as FileRef[];
   }
 
+  /** 1.1.2: the folders of a watched folder that hold photos or videos (what a quick re-check reads). */
+  mediaDirs(root: string): string[] {
+    const r = this.rootOf(root);
+    return r ? (this.db.prepare('SELECT DISTINCT dir FROM files WHERE root = ?').all(r.id) as { dir: string }[]).map(x => x.dir) : [];
+  }
+
   has(p: string): boolean { return !!this.db.prepare('SELECT 1 FROM files WHERE path = ?').get(p); }
 
   /** The app renamed or moved a file inside watched folders: keep the index in step without waiting for the watcher. */

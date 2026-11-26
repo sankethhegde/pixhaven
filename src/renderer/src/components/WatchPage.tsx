@@ -11,6 +11,7 @@ import { Stars, TagEditor } from './Tags';
 import { Button, Icon } from './ui';
 import * as T from '../tags';
 import * as P from '../positions';
+import { useLite } from '../lite';
 
 const store = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 
@@ -30,6 +31,7 @@ export function WatchPage({ items, index, infos, title, active, playlist, onInde
   const setTheatre = (t: boolean) => { setTheatreState(t); store.set('watch.theatre', t ? '1' : '0'); };
   const [, setTick] = useState(0);
   T.useTags();
+  const lite = useLite();   // 1.1.2: Light mode / on battery: no face search by itself
   const item = items[index];
   const info = infos.get(item.path);
   const videos = useMemo(() => items.map((e, i) => ({ e, i })).filter(x => x.e.kind === 'video'), [items]);
@@ -146,7 +148,7 @@ export function WatchPage({ items, index, infos, title, active, playlist, onInde
           </div>
           {theatre ? (
             <div className="flex gap-6 px-6 max-w-[1400px] mx-auto">
-              <div className="flex-1 min-w-0">{about}<div className="pb-6"><VideoPeople item={item} auto /></div></div>
+              <div className="flex-1 min-w-0">{about}{!lite.off('people') && <div className="pb-6"><VideoPeople item={item} auto={!lite.battery} /></div>}</div>
               <div className="w-[380px] shrink-0 py-3">{upNext}</div>
             </div>
           ) : about}

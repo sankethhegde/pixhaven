@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { inputArgs, probeVideo, tool } from '../library/ffmpeg';
+import { inputArgs, lowPriority, probeVideo, tool } from '../library/ffmpeg';
 export { setFfmpegDir } from '../library/ffmpeg';   // for tests: the bundled copy of the module
 import { GRID_H, GRID_W, STEP, hashFrames, type Fingerprint } from './video-match';
 
@@ -25,6 +25,7 @@ function frames(file: string, duration: number, signal: { kill?: () => void }, s
     // (a 9×8 picture does not change).
     const p = spawn(tool('ffmpeg'), ['-v', 'error', '-nostdin', ...(skip ? ['-skip_frame', 'noref', '-skip_loop_filter', 'all'] : []), ...inputArgs(file), '-map', '0:V:0', '-an', '-sn', '-dn',
       '-vf', `fps=1/${STEP},scale=${GRID_W}:${GRID_H}:flags=area,format=gray`, '-f', 'rawvideo', '-'], { windowsHide: true });
+    lowPriority(p);
     const out: Buffer[] = [];
     let err = '';
     const limit = setTimeout(() => { p.kill(); reject(new Error('Reading the video took too long')); }, Math.max(120, duration * 2) * 1000);
@@ -68,6 +69,7 @@ async function hashesAt(file: string, from: number, seconds: number, rate: numbe
   const raw = await new Promise<Uint8Array>((resolve, reject) => {
     const p = spawn(tool('ffmpeg'), ['-v', 'error', '-nostdin', '-ss', Math.max(0, from).toFixed(3), '-t', seconds.toFixed(3), ...inputArgs(file), '-map', '0:V:0', '-an', '-sn', '-dn',
       '-vf', `fps=${rate},scale=${GRID_W}:${GRID_H}:flags=area,format=gray`, '-f', 'rawvideo', '-'], { windowsHide: true });
+    lowPriority(p);
     const out: Buffer[] = [];
     p.stdout.on('data', d => out.push(d));
     p.on('error', reject);

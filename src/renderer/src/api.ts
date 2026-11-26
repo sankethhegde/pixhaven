@@ -137,6 +137,8 @@ interface WatchApi {
   remove(dir: string): Promise<WatchedFolder[]>;
   reindex(dir: string): Promise<WatchedFolder[]>;
   query(q: WatchQuery): Promise<WatchResult>;
+  pauseUser(on: boolean): Promise<void>;    // 1.1.2
+  pausedBy(): Promise<string[]>;
 }
 
 interface GenApi {

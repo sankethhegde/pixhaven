@@ -1,7 +1,7 @@
 {
   "name": "pixhaven",
   "productName": "PixHaven",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Offline AI image upscaler",
   "author": "Sanketha R Hegade",
   "license": "UNLICENSED",
@@ -29,6 +29,7 @@
     "e2e:churn": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-churn.mjs e2e-output/churn",
     "e2e:facevideo": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-face-video.mjs e2e-output/facevideo",
     "e2e:attic": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-attic.mjs e2e-output/attic",
+    "e2e:lite": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-lite.mjs e2e-output/lite",
     "e2e:dupes": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-dupes.mjs e2e-output/dupes",
     "e2e:videos": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-videos.mjs e2e-output/videos",
     "e2e:tabs": "electron-vite build && node scripts/run-e2e.mjs tests/e2e-tabs.mjs e2e-output/tabs",

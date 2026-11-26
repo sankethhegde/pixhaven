@@ -234,6 +234,12 @@ export default async function run(win, app) {
     await js(`${tileOf('a lake.mp4')}.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
     await waitFor(async () => !!(await js(`document.querySelector('[data-testid=watch-page][data-theatre] [data-testid=video-people]')`)), 10000);
     const states = new Set();
+    // 1.1.2: on battery the search does not start by itself: then it is started with its button.
+    await sleep(1500);
+    if ((await js(`document.querySelector('[data-testid=video-people]')?.dataset.state`)) === 'none') {
+      states.add('none (on battery)');
+      await js(`[...document.querySelectorAll('[data-testid=video-people] button')].find(b => b.innerText.includes('Find people'))?.click()`);
+    }
     await soft(waitFor(async () => { const s = await js(`document.querySelector('[data-testid=video-people]')?.dataset.state`); states.add(s); return s === 'done' || s === 'error'; }, 60000));
     const ppl = await js(`document.querySelector('[data-testid=video-people]')?.innerText ?? ''`);
     check('Theatre: "People in this video" searches the sorted folders by itself (worker, face models, frames)', states.has('done') && /frames looked at, in 1 sorted folder/.test(ppl) && /No faces clear enough/.test(ppl),

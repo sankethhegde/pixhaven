@@ -82,6 +82,7 @@ export interface Settings {
   tidy: TidySettings;
   library: LibrarySettings;
   generator: GeneratorSettings;
+  lite: LiteSettings;        // 1.1.2 Light mode
   version: number;           // settings format (migrations in settings.ts)
 }
 
@@ -587,3 +588,25 @@ export interface DupeApplyResult {
   failed: { path: string; reason: string }[];
   freed: number;                          // bytes moved out of the way
 }
+
+// ---------- 1.1.2 Light mode ----------
+
+/** What can be kept on in Light mode; everything not kept is switched off (its tab hidden, its background work stopped). */
+export type LiteFeature = 'watch' | 'attic' | 'people' | 'hover' | 'writeTags' | 'updates' | 'wallpaper' | 'editor' | 'upscale' | 'generator' | 'sort' | 'tidy';
+export interface LiteSettings { on: boolean; keep: LiteFeature[] }
+export const LITE_FEATURES: { id: LiteFeature; label: string; note: string }[] = [
+  { id: 'watch', label: 'Keep the Videos list up to date', note: 'Watches the added drives and folders for new and removed videos.' },
+  { id: 'attic', label: 'Attic', note: 'The Attic tab, and Attic videos in Videos (checks the connection every 30 seconds).' },
+  { id: 'people', label: 'People in this video', note: 'Looks for faces in the video playing in Theatre.' },
+  { id: 'hover', label: 'Play videos when you rest on a thumbnail', note: 'Starts a muted preview under the mouse.' },
+  { id: 'writeTags', label: 'Write stars and labels into files', note: 'Saves them inside each file in the background (kept and written later when off).' },
+  { id: 'updates', label: 'Check for updates', note: 'Looks for a new version when PixHaven starts.' },
+  { id: 'wallpaper', label: 'Wallpaper recommended', note: 'The Wallpaper recommended tab.' },
+  { id: 'editor', label: 'Video editor', note: 'The Video editor tab.' },
+  { id: 'upscale', label: 'Upscale', note: 'The Upscale tab.' },
+  { id: 'generator', label: 'Image Generator', note: 'The Image Generator tab.' },
+  { id: 'sort', label: 'Sort by person', note: 'The Sort by person tab.' },
+  { id: 'tidy', label: 'Tidy up', note: 'The Tidy up tab (duplicates, blurry photos, duplicate videos).' },
+];
+/** Is this feature switched off by Light mode? */
+export const liteOff = (s: Pick<Settings, 'lite'> | null | undefined, f: LiteFeature): boolean => !!s?.lite?.on && !s.lite.keep.includes(f);

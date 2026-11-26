@@ -3,6 +3,7 @@
 // people of every sorted folder (their best faces, as Combine does). A person counts when they are matched in at
 // least two frames, or once very clearly. No Electron imports (runs in a worker; tests run it directly).
 import { spawn } from 'node:child_process';
+import { lowPriority } from '../library/ffmpeg';
 import { dot, nearestK, type FaceSet } from './cluster';
 
 export interface VideoFrame { t: number; rgb: Buffer; W: number; H: number }
@@ -24,6 +25,7 @@ export function frameSize(width: number, height: number): { W: number; H: number
  * Attic URL with its cookie). Stops early when `stop()` says so. */
 export async function* videoFrames(ffmpeg: string, input: string[], step: number, W: number, H: number, stop: () => boolean = () => false): AsyncGenerator<VideoFrame> {
   const proc = spawn(ffmpeg, ['-v', 'error', '-nostdin', ...input, '-an', '-sn', '-vf', `fps=1/${step},scale=${W}:${H}`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { windowsHide: true });
+  lowPriority(proc);   // 1.1.2
   const size = W * H * 3;
   let buf: Buffer = Buffer.alloc(0), n = 0, err = '';
   proc.stderr.on('data', d => { if (err.length < 2000) err += d; });

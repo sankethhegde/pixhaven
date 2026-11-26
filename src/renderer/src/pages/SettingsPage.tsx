@@ -5,6 +5,7 @@ import { api, errorText, fmtBytes } from '../api';
 import { Button, Icon, Notice, Segmented, Toggle } from '../components/ui';
 import { LabelsSettings } from '../components/LabelsSettings';
 import { ShortcutsSettings, WatchedSettings } from '../components/WatchedSettings';
+import { LITE_FEATURES } from '@shared/types';
 import { askPassword, toggleLock, usePrivacy } from '../components/Privacy';
 
 interface Props {
@@ -56,6 +57,28 @@ export function SettingsPage({ settings, gpu, dedicated, version, onSettings, on
     <div className="h-full overflow-auto p-8">
       <div className="max-w-2xl mx-auto space-y-6">
         <h1 className="text-2xl font-semibold">Settings</h1>
+
+        {/* 1.1.2 Light mode */}
+        <Card title="Light mode">
+          <div className="flex items-center gap-3" data-testid="lite-settings">
+            <div className="flex-1 text-sm text-muted">On: only browsing, playing and the features ticked below run. The rest is switched off (its tab is hidden and nothing of it runs in the background). Also on Home.</div>
+            <Toggle checked={!!settings.lite?.on} onChange={on => void set({ lite: { ...(settings.lite ?? { keep: [] }), on } })} label="Light mode" />
+          </div>
+          <div className="space-y-1">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted">Keep these in Light mode</div>
+            {LITE_FEATURES.map(f => {
+              const keep = settings.lite?.keep ?? [];
+              const on = keep.includes(f.id);
+              return (
+                <label key={f.id} className="flex items-start gap-2.5 py-1.5 cursor-pointer" data-lite-feature={f.id}>
+                  <input type="checkbox" className="mt-1" checked={on} aria-label={f.label}
+                    onChange={() => void set({ lite: { on: !!settings.lite?.on, keep: on ? keep.filter(x => x !== f.id) : [...keep, f.id] } })} />
+                  <span><span className="text-sm">{f.label}</span><span className="block text-xs text-muted">{f.note}</span></span>
+                </label>
+              );
+            })}
+          </div>
+        </Card>
 
         <Card title="Graphics">
           {gpu === null ? <div className="text-sm text-muted">Detecting…</div> : (

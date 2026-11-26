@@ -196,6 +196,8 @@ const api = {
     remove: (dir: string) => invoke('watch:remove', dir),
     reindex: (dir: string) => invoke('watch:reindex', dir),
     query: (q: unknown) => invoke('watch:query', q),
+    pauseUser: (on: boolean) => invoke('watch:pauseUser', on),
+    pausedBy: () => invoke('watch:pausedBy'),
   },
   onWatchStatus: listen('watch:status'),
   onWatchChanged: listen('watch:changed'),

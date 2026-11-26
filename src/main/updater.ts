@@ -5,6 +5,8 @@ import path from 'node:path';
 import { app } from 'electron';
 import electronUpdater from 'electron-updater';
 import type { UpdateStatus } from '@shared/types';
+import { getSettings } from './settings';
+import { liteOff } from '@shared/types';
 import { log } from './logger';
 
 const { autoUpdater } = electronUpdater;
@@ -26,7 +28,8 @@ export function initUpdater(onStatus: (s: UpdateStatus) => void): void {
   autoUpdater.on('download-progress', p => set({ state: 'downloading', version: status.version, progress: p.percent / 100 }));
   autoUpdater.on('update-downloaded', i => set({ state: 'ready', version: i.version }));
   autoUpdater.on('error', e => set(failed(e)));
-  setTimeout(() => { void checkForUpdates(); }, 15000);
+  // 1.1.2: Light mode without "Check for updates" does not look at start (Settings → Check still works).
+  setTimeout(() => { if (!liteOff(getSettings(), 'updates')) void checkForUpdates(); }, 15000);
 }
 
 export async function checkForUpdates(): Promise<UpdateStatus> {

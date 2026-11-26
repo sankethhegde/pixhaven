@@ -10,7 +10,7 @@ import { spawn, execFile } from 'node:child_process';
 import sharp from 'sharp';
 import type { ConvertCaps, ConvertFile, ConvertOptions, ConvertProgress, ConvertResult, ConvertTarget, EditSpec } from '@shared/types';
 import { mediaKind } from '@shared/types';
-import { run, tool, decodeStill } from './library/ffmpeg';
+import { run, tool, decodeStill, lowPriority } from './library/ffmpeg';
 import { app } from 'electron';
 import { keyframeAtOrBefore, probeMedia, type MediaProbe } from './library/player';
 import { onlyCuts, outputsOf, planEdit, planJoin, type Run } from './convert/edit';
@@ -91,6 +91,7 @@ export const cancel = () => stop?.();
 function ffmpeg(args: string[], duration: number, onTime: (t: number) => void, signal: { kill?: () => void }): Promise<void> {
   return new Promise((resolve, reject) => {
     const p = spawn(tool('ffmpeg'), args, { windowsHide: true });
+    lowPriority(p);
     signal.kill = () => p.kill();
     let err = '';
     p.stdout.on('data', d => { const t = progressSeconds(String(d)); if (t !== null) onTime(Math.min(duration || t, t)); });

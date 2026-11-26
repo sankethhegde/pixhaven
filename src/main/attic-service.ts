@@ -54,8 +54,11 @@ export function init(): void {
     const { share, rel } = parseAttic(f);
     return need().read(share, rel);
   });
-  setInterval(() => { if (client) void status(); }, 30_000).unref();
+  setInterval(() => { if (client && enabled) void status(); }, 30_000).unref();
 }
+/** 1.1.2 Light mode: Attic switched off: no connection checks, no Attic videos in Videos or Duplicate videos. */
+let enabled = true;
+export function setEnabled(on: boolean): void { enabled = on; forgetVideos(); }
 
 // ---------- status, finding, pairing, signing in ----------
 function changed(s: AtticStatus): AtticStatus {
@@ -133,7 +136,7 @@ export async function list(p: string): Promise<AtticListing> {
 let videoCache: { at: number; list: MediaEntry[] } | null = null;
 /** Every video on Attic the account can see (its index), for the Videos tab. Kept for a minute. */
 export async function videos(fresh = false): Promise<MediaEntry[]> {
-  if (!client || last.state !== 'connected') return [];
+  if (!client || last.state !== 'connected' || !enabled) return [];
   if (!fresh && videoCache && Date.now() - videoCache.at < 60_000) return videoCache.list;
   const idx = await need().index(fresh);
   // 1.1.0: what Duplicate videos set aside on Attic is not listed again.

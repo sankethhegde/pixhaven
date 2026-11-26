@@ -383,17 +383,26 @@ export function setWriteHooks(busy: (p: string) => boolean, status: (s: FileWrit
 let inFlight = 0;
 export const writeStatus = (): FileWriteStatus => ({ ...writeStats, pending: toWrite.size + inFlight });
 
+/** 1.1.2 Light mode: writing into files held back (kept, and written when it is switched on again). */
+let held = false;
+export function holdWrites(on: boolean): void {
+  held = on;
+  if (!on && toWrite.size && !writeTimer) writeTimer = setTimeout(() => void flushWrites(), 1500);
+}
+
 /** Changes are collected for a moment (stars clicked a few times in a row become one write). */
 export function queueWrite(paths: string[], force = false): void {
   if (!getSettings().library.writeToFiles && !force) return;
   for (const p of paths) if (mediaKind(p) && !p.startsWith('missing:') && !p.startsWith('attic://')) toWrite.add(p);
   if (!toWrite.size) return;
   onWriteStatus(writeStatus());
+  if (held) return;
   if (writeTimer) clearTimeout(writeTimer);
   writeTimer = setTimeout(() => void flushWrites(), 1500);
 }
 
 async function flushWrites(): Promise<void> {
+  if (held) { writeTimer = null; return; }
   if (writing) { writeTimer = setTimeout(() => void flushWrites(), 1000); return; }
   writing = true;
   writeTimer = null;
@@ -432,6 +441,7 @@ async function flushWrites(): Promise<void> {
 
 /** Before quitting: writes still waiting go into the files now (up to 15 s; the rest is picked up at next start). */
 export async function flushNow(): Promise<void> {
+  if (held) return;   // written at the next start that allows it (they stay unwritten in the library)
   if (writeTimer) { clearTimeout(writeTimer); writeTimer = null; }
   const end = Date.now() + 15_000;
   while ((toWrite.size || writing) && Date.now() < end) {

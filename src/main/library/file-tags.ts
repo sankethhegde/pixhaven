@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { lowPriority } from './ffmpeg';
 import { writeTarget } from './xmp';
 
 export interface FileTags { stars: number; labels: string[]; people: string[] }
@@ -66,6 +67,7 @@ export class TagReader {
   private start(): ChildProcessWithoutNullStreams {
     if (this.proc) return this.proc;
     const p = spawn(this.exe, ['-stay_open', 'True', '-@', '-', '-common_args', '-j', '-G1', '-n', '-charset', 'filename=utf8', '-q', '-q'], { windowsHide: true });
+    lowPriority(p);   // 1.1.2: ExifTool works in the background
     p.stdout.setEncoding('utf8');
     p.stdout.on('data', (d: string) => {
       this.out += d;

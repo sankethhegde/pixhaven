@@ -6,7 +6,7 @@
 // every 30 seconds; their index (and labels) are kept.
 import fs from 'node:fs';
 import path from 'node:path';
-import { app } from 'electron';
+import { app, powerMonitor } from 'electron';
 import type { MediaEntry, MediaKind, TaggedMedia, WatchChange, WatchedFolder, WatchQuery, WatchResult } from '@shared/types';
 import { getSettings, updateSettings } from './settings';
 import { log } from './logger';
@@ -31,6 +31,7 @@ let sendStatus: (s: WatchedFolder[]) => void = () => {};
 let sendChange: (c: WatchChange) => void = () => {};
 let statusTimer: NodeJS.Timeout | null = null;
 let closing = false;
+let enabled = true;                        // 1.1.2: Light mode can switch watching off
 
 export const indexFile = () => path.join(app.getPath('userData'), 'library', 'index.db');
 function idx(): MediaIndex { if (!index) index = new MediaIndex(indexFile()); return index; }
@@ -49,14 +50,38 @@ export function init(status: (s: WatchedFolder[]) => void, change: (c: WatchChan
     log('info', `Removed ${gone.length} TypeScript code file(s) that were listed as videos`);
     sendChange({ dirs: [...new Set(gone.map(p => path.dirname(p)))], added: 0, removed: gone.length, relinked: 0 });
   }).catch(e => log('warn', 'Cleaning code files from the index failed', e));
-  for (const f of folders()) {
-    ix.addRoot(f);
+  for (const f of folders()) ix.addRoot(f);
+  if (enabled) for (const f of folders()) {
     fullScan.add(f);     // a quick check at every start finds what changed while PixHaven was closed (or resumes)
     startWatch(f);
   }
   // Start quietly a few seconds after the window opens.
   setTimeout(() => void pump(), app.isPackaged ? 8000 : 1500);
   setInterval(checkOffline, 30_000);
+  setInterval(dailyPass, 5 * 60_000).unref();
+}
+
+/**
+ * 1.1.2 Light mode: watching switched off stops the watchers and any walk under way (the Videos list stays as it
+ * was); switched on again, a quick check catches up.
+ */
+export function setEnabled(on: boolean): void {
+  if (on === enabled) return;
+  enabled = on;
+  if (!index) return;
+  if (!on) {
+    abort?.abort();
+    for (const w of watchers.values()) w.close();
+    watchers.clear();
+    fullScan.clear();
+    dirty.clear();
+    log('info', 'Light mode: watched folders are not kept up to date');
+  } else {
+    for (const f of folders()) { fullScan.add(f); startWatch(f); }
+    void pump();
+    log('info', 'Watched folders are kept up to date again');
+  }
+  pushStatus();
 }
 
 export function close(): void {
@@ -131,6 +156,8 @@ export function reindex(dir: string): WatchedFolder[] {
 }
 
 /** Low-spec: no indexing while a video plays (and while the user pauses it). */
+/** 1.1.2: why indexing waits ("battery", "user", a job…), for the background note. */
+export const pausedReasons = (): string[] => [...pausedBy];
 export function pause(reason: string, on: boolean): void {
   if (on) pausedBy.add(reason); else pausedBy.delete(reason);
   if (!pausedBy.size && resume) { const r = resume; resume = null; r(); }
@@ -141,7 +168,7 @@ const gate = () => (pausedBy.size ? new Promise<void>(r => { resume = r; abort?.
 // ---------- indexing passes ----------
 
 async function pump(): Promise<void> {
-  if (running || closing) return;
+  if (running || closing || !enabled) return;
   for (;;) {
     const f = folders().find(x => fullScan.has(x));
     if (!f || closing) break;
@@ -209,7 +236,7 @@ async function changed(dirs: string[], c: DirChange): Promise<void> {
 // ---------- live changes ----------
 
 function startWatch(f: string): void {
-  if (watchers.has(key(f))) return;
+  if (watchers.has(key(f)) || !enabled) return;
   try {
     const w = fs.watch(f, { recursive: true }, (_ev, name) => {
       if (!name) { overflow(f); return; }                         // too many changes at once: walk again (now and then)
@@ -240,18 +267,43 @@ function startWatch(f: string): void {
   }
 }
 
-/** Windows lost track (too many changes at once): walk the folder again, but at most every 15 minutes. */
+/**
+ * Windows lost track (too many changes at once). 1.1.2: a whole system drive does this all the time, and walking all
+ * of it again took up to 10 minutes of disk and CPU every 15 minutes (the fans ran while PixHaven was open). Now only
+ * the folders that hold photos or videos are read again (seconds), at most every 2 minutes; a full walk, for new
+ * folders Windows' report missed, waits for the daily pass (plugged in, and nobody using the laptop).
+ */
 const lastOverflow = new Map<string, number>();
+const needsFull = new Set<string>();
 function overflow(f: string): void {
+  needsFull.add(key(f));
   const t = lastOverflow.get(key(f)) ?? 0;
-  if (Date.now() - t < 15 * 60_000) return;
+  if (Date.now() - t < 2 * 60_000) return;
   lastOverflow.set(key(f), Date.now());
-  log('info', `Many changes at once in ${f}: indexing it again`);
-  fullScan.add(f); void pump();
+  const dirs = idx().mediaDirs(f);
+  log('info', `Many changes at once in ${f}: checking the ${dirs.length} folder(s) with photos and videos again`);
+  for (const d of dirs) dirty.add(d);
+  dirty.add(f);
+  if (dirtyTimer) clearTimeout(dirtyTimer);
+  dirtyTimer = setTimeout(() => void flushDirty(), 5000);
+}
+const lastFull = new Map<string, number>();
+/** Once a day, when plugged in and the laptop has not been used for 5 minutes: a full walk of what lost track. */
+function dailyPass(): void {
+  if (!enabled || closing || running || !needsFull.size) return;
+  try { if (powerMonitor.isOnBatteryPower() || powerMonitor.getSystemIdleTime() < 300) return; } catch { return; }
+  for (const f of folders()) {
+    if (!needsFull.has(key(f)) || Date.now() - (lastFull.get(key(f)) ?? 0) < 24 * 3600_000) continue;
+    needsFull.delete(key(f)); lastFull.set(key(f), Date.now());
+    log('info', `Daily check of ${f} (idle and plugged in)`);
+    fullScan.add(f);
+  }
+  void pump();
 }
 
 async function flushDirty(): Promise<void> {
   dirtyTimer = null;
+  if (!enabled) { dirty.clear(); return; }
   const list = [...dirty];
   dirty.clear();
   // Re-read each changed folder once; a folder whose parent is also listed is covered by the parent's re-read only
@@ -280,6 +332,7 @@ function checkOffline(): void {
     const r = ix.rootOf(f);
     if (!r) continue;
     const there = fs.existsSync(f);
+    if (!enabled) continue;
     if (r.offline && there) {             // drive plugged back in
       ix.setOffline(r.id, false);
       fullScan.add(f);
@@ -288,7 +341,7 @@ function checkOffline(): void {
     } else if (!r.offline && !there) {
       ix.setOffline(r.id, true);
       watchers.get(key(f))?.close(); watchers.delete(key(f));
-    } else if (!live.get(key(f)) && there && r.last_scan && Date.now() - r.last_scan > 15 * 60_000) {
+    } else if (enabled && !live.get(key(f)) && there && r.last_scan && Date.now() - r.last_scan > 15 * 60_000) {
       fullScan.add(f); void pump();
     }
   }

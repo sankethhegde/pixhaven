@@ -9,6 +9,7 @@ import { Icon } from './ui';
 import { LabelChip, Stars } from './Tags';
 import * as T from '../tags';
 import * as P from '../positions';
+import { useLite } from '../lite';
 import { HOVER_DELAY_MS, HoverPreview } from './HoverPreview';
 
 export const TILE: Record<'s' | 'm' | 'l', number> = { s: 120, m: 168, l: 240 };
@@ -39,6 +40,7 @@ export const alsoText = (names: string[]) => {
 const fmtDate = (ms: number) => ms ? new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
 
 export function MediaGrid({ items, infos, view, size, selected, showFolder, onVisible, onClick, onOpen, focused = null, onCols, resetKey, onDragItem }: Props) {
+  const lite = useLite();   // 1.1.2: Light mode can switch the hover preview off
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
   const [height, setHeight] = useState(600);
@@ -129,7 +131,7 @@ export function MediaGrid({ items, infos, view, size, selected, showFolder, onVi
       cells.push(
         <div key={e.path} {...common} className={`absolute rounded-xl p-1.5 cursor-default ${sel ? 'bg-accent-soft ring-2 ring-accent' : 'hover:bg-panel-2'} ${foc ? 'outline-2 outline-dashed outline-offset-2 outline-accent' : ''}`}
           style={{ left: left + c * (tile + GAP), top: 8 + r * rowH, width: tile, height: tile + LABEL }}>
-          <div className="relative" {...(e.kind === 'video' && !(e as { offline?: boolean }).offline ? { onMouseEnter: () => hoverOn(e.path), onMouseLeave: hoverOff } : {})}>
+          <div className="relative" {...(e.kind === 'video' && !(e as { offline?: boolean }).offline && !lite.off('hover') ? { onMouseEnter: () => hoverOn(e.path), onMouseLeave: hoverOff } : {})}>
             <Thumb entry={e} info={info} px={tile - 12} offline={(e as { offline?: boolean }).offline} />
             {hovered === e.path && <HoverPreview path={e.path} />}
             {e.kind === 'video' && P.watched(e.path) !== null && (

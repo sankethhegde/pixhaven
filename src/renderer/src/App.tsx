@@ -17,8 +17,14 @@ import { Wallpaper } from './pages/Wallpaper';
 import { VideoEditor } from './pages/VideoEditor';
 import { ImageGenerator } from './pages/ImageGenerator';
 import { Icon, Notice } from './components/ui';
+import { BackgroundNote } from './components/BackgroundNote';
+import { setBattery, setLite } from './lite';
+import type { LiteFeature } from '@shared/types';
+import { liteOff } from '@shared/types';
 
 type Page = 'home' | 'library' | 'photos' | 'videos' | 'attic' | 'wallpaper' | 'editor' | 'generator' | 'upscale' | 'sort' | 'tidy' | 'settings';
+/** 1.1.2: tabs Light mode can switch off. */
+const PAGE_FEATURE: Partial<Record<Page, LiteFeature>> = { attic: 'attic', wallpaper: 'wallpaper', editor: 'editor', upscale: 'upscale', generator: 'generator', sort: 'sort', tidy: 'tidy' };
 
 export default function App() {
   const [page, setPage] = useState<Page>('home');
@@ -63,6 +69,11 @@ export default function App() {
     return () => offs.forEach(o => o());
   }, []);
 
+  // 1.1.2 Light mode: the player and thumbnails read it from here; a tab switched off is left for Home.
+  useEffect(() => { setLite(settings); }, [settings]);
+  useEffect(() => { setBattery(onBattery); }, [onBattery]);
+  useEffect(() => { const f = PAGE_FEATURE[page]; if (f && liteOff(settings, f)) setPage('home'); }, [settings, page]);
+
   // Lets automated end-to-end tests open files without the OS file dialog.
   useEffect(() => {
     const w = window as unknown as { __clearupOpen?: (p: string[]) => void; __clearupSort?: (f: string) => void; __clearupTidy?: (f: string, t: TidyTab) => void; __clearupLibrary?: (f: string) => void };
@@ -81,7 +92,7 @@ export default function App() {
 
   const allow4k = dedicated || !settings.lowSpec;
   const upscaleFiles = (paths: string[]) => { setPending(paths); setPage('upscale'); };
-  const nav: { id: Page; label: string; icon: string }[] = [
+  const nav = ([
     { id: 'home', label: 'Home', icon: 'home' },
     { id: 'library', label: 'Library', icon: 'library' },
     { id: 'photos', label: 'Photos', icon: 'image' },
@@ -94,7 +105,7 @@ export default function App() {
     { id: 'sort', label: 'Sort by person', icon: 'people' },
     { id: 'tidy', label: 'Tidy up', icon: 'broom' },
     { id: 'settings', label: 'Settings', icon: 'settings' },
-  ];
+  ] as { id: Page; label: string; icon: string }[]).filter(n => !PAGE_FEATURE[n.id] || !liteOff(settings, PAGE_FEATURE[n.id]!));   // 1.1.2: Light mode hides what is off
   const running = queue.find(q => q.state === 'running');
   if (page === 'library' && !libVisited) setLibVisited(true);
   if (page === 'photos' && !photosVisited) setPhotosVisited(true);
@@ -124,6 +135,12 @@ export default function App() {
           </button>
         ))}
         <div className="mt-auto space-y-2 relative">
+          {settings.lite?.on && (
+            <button onClick={() => setPage('settings')} className="w-full text-left rounded-lg bg-accent-soft text-accent px-2.5 py-1.5 text-xs font-medium flex items-center gap-1.5" data-testid="lite-badge" title="Light mode is on: only what you chose runs (Settings)">
+              <Icon name="sparkle" size={13} />Light mode
+            </button>
+          )}
+          <BackgroundNote />
           {queue.length > 0 && (
             <button onClick={() => setShowQueue(!showQueue)} className="w-full text-left rounded-lg border border-line px-2.5 py-2 hover:bg-panel-2" aria-expanded={showQueue}>
               <div className="flex items-center gap-1.5 text-xs font-medium">
@@ -161,7 +178,7 @@ export default function App() {
         <div className="flex-1 min-h-0">
           {page === 'home' && <Home settings={settings} onSettings={setSettings} onUpscale={upscaleFiles} onSort={f => { setPendingSort(f); setPage('sort'); }}
             onTidy={tab => { setTidyTab(tab); setPage('tidy'); }} onLibrary={() => setPage('library')}
-            onPlay={p => { setPendingLib(p.replace(/[\\/][^\\/]*$/, '')); setPendingPlay(p); setPage('library'); }} />}
+            onPlay={p => { setPendingLib(p.replace(/[\\/][^\\/]*$/, '')); setPendingPlay(p); setPage('library'); }} onSettingsPage={() => setPage('settings')} />}
           {/* Mounted on first visit, then kept: the folder, scroll position and thumbnails stay. */}
           {libVisited && (
             <div className={page === 'library' ? 'h-full' : 'hidden'}>

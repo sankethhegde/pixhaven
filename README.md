@@ -253,6 +253,14 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
   1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
+- **Lighter on the laptop (1.1.2):** with a whole drive watched, Windows' "too many changes" made PixHaven walk all of it
+  again (up to 10 min of disk and CPU, every 15 min: the fans ran while it was open). Now only the folders holding
+  photos or videos are read again (`mediaDirs`, at most every 2 min); a full walk waits for a daily pass, plugged in and
+  idle 5 min. Background FFmpeg, ExifTool and face-search frames run below normal priority (`lowPriority`); on battery
+  the face search does not start by itself. A sidebar note shows background checking, with Pause / Resume.
+- **Light mode (1.1.2):** a switch on Home (and Settings): on, only browsing, playing and the features kept in
+  Settings run (`settings.lite`, `liteOff`): tabs not kept are hidden, watching folders stops, Attic is not checked,
+  writing into files waits, no update check, no hover preview or face search. `lite.ts`, `applyLite` in main.
 - **Duplicate videos (Tidy up, 1.1.0; Attic and altered copies 1.1.1):** every video in the Videos tab gets a fingerprint (a 9×8 picture hash every
   second, read once with FFmpeg and kept until the file changes; ~0.7 s per minute of 480p video, two at a time).
   Each sample is hashed three ways (black bars left out; its middle 75 %, for cropped copies; mirrored), and videos

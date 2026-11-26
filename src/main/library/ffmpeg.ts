@@ -1,7 +1,16 @@
 // Bundled FFmpeg / FFprobe (LGPL build): video facts, video frames and HEIC photos for the media library.
 // No Electron imports: the app (or a test) says where the tools are with setFfmpegDir().
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import os from 'node:os';
+import { spawn, type ChildProcess } from 'node:child_process';
+
+/**
+ * 1.1.2: background work (thumbnails, video facts, fingerprints, face search frames, converting) runs below normal
+ * priority, so it always gives way to what you are doing; the fans stay quieter. Playing a video is not lowered.
+ */
+export function lowPriority(p: ChildProcess): void {
+  try { if (p.pid) os.setPriority(p.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* not allowed: runs as is */ }
+}
 
 const IS_WIN = process.platform === 'win32';
 let toolDir = '';
@@ -20,6 +29,7 @@ export const inputArgs = (file: string): string[] => resolver(file) ?? ['-i', fi
 export function run(name: 'ffmpeg' | 'ffprobe', args: string[], timeoutMs = 20000): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const p = spawn(tool(name), args, { windowsHide: true });
+    lowPriority(p);
     const out: Buffer[] = [];
     let err = '';
     const timer = setTimeout(() => { p.kill(); reject(new Error(`${name} took too long`)); }, timeoutMs);

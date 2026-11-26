@@ -26,6 +26,7 @@ const DEFAULTS: Settings = {
   tidy: { includeSubfolders: false, match: 'same', blurThreshold: 150, by: 'date', dateDepth: 'month', placeDepth: 'city', useFileDate: true, unknownFolder: false },
   generator: { outputDir: null, style: 'photo', size: 'square', count: 2, quality: 'fast', format: 'jpg' },
   library: { showSystem: false, view: 'grid', size: 'm', sortBy: 'name', sortDesc: false, type: 'all', lastDir: null, dbPath: null, watched: [], writeToFiles: true },
+  lite: { on: false, keep: ['watch', 'updates', 'attic'] },
   version: SETTINGS_VERSION,
 };
 
@@ -36,7 +37,7 @@ export function getSettings(): Settings {
   if (!current) {
     try {
       const saved = JSON.parse(fs.readFileSync(file(), 'utf8'));
-      current = { ...DEFAULTS, ...saved, last: { ...DEFAULTS.last, ...saved.last }, sort: { ...DEFAULTS.sort, ...saved.sort }, tidy: { ...DEFAULTS.tidy, ...saved.tidy }, library: { ...DEFAULTS.library, ...saved.library }, generator: { ...DEFAULTS.generator, ...saved.generator } };
+      current = { ...DEFAULTS, ...saved, last: { ...DEFAULTS.last, ...saved.last }, sort: { ...DEFAULTS.sort, ...saved.sort }, tidy: { ...DEFAULTS.tidy, ...saved.tidy }, library: { ...DEFAULTS.library, ...saved.library }, generator: { ...DEFAULTS.generator, ...saved.generator }, lite: { ...DEFAULTS.lite, ...saved.lite } };
       // v2: the default "minimum photos per person" became 2, so one-off faces in group photos go to "Unsorted".
       if ((saved.version ?? 1) < 2) {
         if (current!.sort.minPhotos === 1) current!.sort.minPhotos = 2;
