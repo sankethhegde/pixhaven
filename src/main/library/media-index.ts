@@ -181,6 +181,9 @@ export class MediaIndex {
   private async readDir(dir: string, showSystem: boolean) {
     let list: fs.Dirent[];
     try { list = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return null; }
+    // 1.1.3: a code project (it has a .git folder) is not walked: its test videos are not your videos. (A watched folder
+    // that is itself a project is walked.)
+    if (list.some(d => d.name === '.git') && !this.roots().some(r => same(r.path, dir))) list = [];
     const subdirs: string[] = [];
     let media: fs.Dirent[] = [];
     for (const d of list) {
@@ -225,6 +228,7 @@ export class MediaIndex {
     // 1.0.9: only folders the index knows (or new ones right inside a known one). An unknown folder deep in a part
     // never walked used to be read "all the way down" on every change.
     if (!same(dir, r.path) && !this.knowsDir(dir) && !this.knowsDir(path.dirname(dir))) return out;
+    if (this.inProject(dir, r.path)) return out;   // 1.1.3: inside a code project
     const res = await this.readDir(dir, showSystem);
     if (!res) {
       // The folder itself is gone (deleted or moved away): forget it and everything below.
@@ -317,6 +321,36 @@ export class MediaIndex {
   /** Indexed files of this size (to find where a labelled file went). */
   bySize(size: number): FileRef[] {
     return this.db.prepare('SELECT path, size, mtime FROM files WHERE size = ?').all(size) as unknown as FileRef[];
+  }
+
+  /**
+   * 1.1.3: is this folder inside a code project (a folder with .git, below the watched folder)? Asked for changes
+   * deep inside one; answers kept 10 minutes.
+   */
+  private projectCache = new Map<string, { at: number; yes: boolean }>();
+  inProject(dir: string, root: string): boolean {
+    for (let d = dir; !same(d, root) && isInside(d, root); d = path.dirname(d)) {
+      const c = this.projectCache.get(d);
+      const yes = c && Date.now() - c.at < 600_000 ? c.yes : fs.existsSync(path.join(d, '.git'));
+      if (!c || c.yes !== yes) this.projectCache.set(d, { at: Date.now(), yes });
+      if (yes) return true;
+      if (path.dirname(d) === d) break;
+    }
+    return false;
+  }
+
+  /** 1.1.3: photos and videos indexed by earlier versions inside code projects go. Returns those removed. */
+  purgeProjects(): string[] {
+    const gone: string[] = [];
+    for (const r of this.roots()) {
+      const bad = this.mediaDirs(r.path).filter(d => !same(d, r.path) && this.inProject(d, r.path));
+      if (!bad.length) continue;
+      this.tx(() => {
+        const list = this.db.prepare('SELECT path FROM files WHERE dir = ?'), del = this.db.prepare('DELETE FROM files WHERE dir = ?');
+        for (const d of bad) { for (const x of list.all(d) as { path: string }[]) gone.push(x.path); del.run(d); }
+      });
+    }
+    return gone;
   }
 
   /** 1.1.2: the folders of a watched folder that hold photos or videos (what a quick re-check reads). */

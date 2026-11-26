@@ -278,3 +278,26 @@ test('1.1.2: after "too many changes", only the folders holding photos or videos
   assert.deepEqual(ix.mediaDirs(root).map(d => path.relative(root, d)).sort(), [path.join('Phone', 'Camera'), 'Videos']);
   ix.close();
 });
+
+test('1.1.3: code projects (folders with .git) are left out: their test videos are not your videos', async () => {
+  const root = path.join(tmp, 'ProjDrive');
+  put(path.join(root, 'Videos', 'holiday.mp4'));
+  put(path.join(root, 'Code', 'grabber', '.git', 'HEAD'), 20);
+  put(path.join(root, 'Code', 'grabber', 'test', 'video', 'sample-360.webm'));
+  put(path.join(root, 'Code', 'attic', '.git', 'HEAD'), 20);
+  put(path.join(root, 'Code', 'attic', 'fixtures', 'clip.mp4'));
+  const ix = new MediaIndex(path.join(tmp, 'idx-proj', 'index.db'));
+  const id = ix.addRoot(root);
+  assert.equal(await ix.scan(id, {}), 'done');
+  assert.deepEqual(ix.query({ kind: 'video' }).items.map(e => e.name), ['holiday.mp4']);
+  // A change inside a project is not read either.
+  put(path.join(root, 'Code', 'grabber', 'test', 'video', 'sample-720.webm'));
+  const c = await ix.rescanDir(path.join(root, 'Code', 'grabber', 'test', 'video'));
+  assert.equal(c.added.length, 0);
+  // What an earlier version indexed inside a project is cleaned at start.
+  const stray = path.join(root, 'Code', 'attic', 'fixtures', 'clip.mp4');
+  ix.db.prepare('INSERT INTO files (path, root, dir, name, kind, size, mtime, gen) VALUES (?, ?, ?, ?, ?, ?, ?, 0)').run(stray, id, path.dirname(stray), 'clip.mp4', 'video', 2048, 1);
+  assert.deepEqual(ix.purgeProjects(), [stray]);
+  assert.deepEqual(ix.query({ kind: 'video' }).items.map(e => e.name), ['holiday.mp4']);
+  ix.close();
+});

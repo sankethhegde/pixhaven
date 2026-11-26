@@ -253,6 +253,9 @@ phase0/              proof of concept + PHASE0-RESULTS.md
 - **Live wallpapers for nightOwl (Video editor, 1.0.5):** a tip says which format to use: MP4 (H.264), sound off,
   1080p (WebM VP9 second; HEVC needs Microsoft's HEVC Video Extensions, so a wallpaper may stay blank). "Use live
   wallpaper settings" sets that in one click; H.264 carries a "Best for nightOwl live wallpaper" badge.
+- **Code projects left out (1.1.3):** folders with a .git folder (below a watched folder) are not indexed, so test videos
+  of programming projects do not show in Videos or Duplicate videos (`inProject`, `purgeProjects` at start). The
+  Library still shows them when browsed.
 - **Lighter on the laptop (1.1.2):** with a whole drive watched, Windows' "too many changes" made PixHaven walk all of it
   again (up to 10 min of disk and CPU, every 15 min: the fans ran while it was open). Now only the folders holding
   photos or videos are read again (`mediaDirs`, at most every 2 min); a full walk waits for a daily pass, plugged in and
